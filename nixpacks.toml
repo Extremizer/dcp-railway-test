@@ -1,0 +1,8 @@
+[phases.setup]
+nixPkgs = ["python313", "playwright-driver.browsers"]
+
+[phases.install]
+cmds = ["pip install -r requirements_browser.txt"]
+
+[start]
+cmd = "python dcp_cloud_browser_test.py"
