@@ -1,2 +1,5 @@
-requests==2.32.5
-playwright==1.55.0
+python-telegram-bot>=22.8,<23
+playwright>=1.50
+websocket-client>=1.9,<2
+openpyxl>=3.1,<4
+xlrd>=2.0,<3
