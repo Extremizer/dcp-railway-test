@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def _load_json_env(name, default):
-    raw = os.getenv(name, "").strip()
+    raw = os.getenv(name, "").lstrip("\ufeff").strip()
     if not raw:
         return default
     return json.loads(raw)
