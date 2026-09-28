@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 from playwright.async_api import async_playwright
 
+from cache_volume_seed import seed_persistent_cache
+
 
 TARGETS = [
     "https://www.dealercostparts.com/",
@@ -75,6 +77,16 @@ async def test_page(page, url):
 
 
 async def main():
+    try:
+        seed_persistent_cache()
+    except Exception as exc:
+        print(
+            "PERSISTENT_CACHE_ERROR",
+            type(exc).__name__,
+            str(exc),
+            flush=True,
+        )
+
     print("#" * 78)
     print("DCP CLOUD BROWSER TEST")
     print("UTC:", datetime.now(timezone.utc).isoformat())
