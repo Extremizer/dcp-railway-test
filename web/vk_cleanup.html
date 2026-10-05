@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EXTREMIZER VK Wall Cleanup</title>
+<style>
+body{font-family:Arial,sans-serif;background:#111;color:#eee;margin:0;padding:30px}
+main{max-width:840px;margin:auto;background:#1b1b1b;border:1px solid #333;border-radius:16px;padding:28px}
+h1{color:#cfff00;margin-top:0}.muted{color:#aaa}.ok{color:#8ee28e}.err{color:#ff8d8d}
+button{background:#cfff00;color:#111;border:0;border-radius:10px;padding:13px 18px;font-weight:700;cursor:pointer;margin:8px 8px 8px 0}
+button.danger{background:#ff5252;color:#fff}button:disabled{opacity:.45;cursor:not-allowed}
+pre{background:#0c0c0c;padding:16px;border-radius:10px;white-space:pre-wrap;word-break:break-word;min-height:120px}
+</style>
+</head>
+<body>
+<main>
+<h1>EXTREMIZER PRO — VK CLEANUP</h1>
+<p class="muted">Служебная страница для резервной копии и полной очистки стены сообщества EXTREMIZER.</p>
+<div>
+<button id="auth">1. Авторизовать VK</button>
+<button id="scan" disabled>2. Проверить стену</button>
+<button id="backup" disabled>3. Скачать backup JSON</button>
+<button id="delete" class="danger" disabled>4. Удалить ВСЕ записи</button>
+</div>
+<p id="summary"></p>
+<pre id="log"></pre>
+</main>
+<script>
+const APP_ID='54800337';
+const REDIRECT='https://dcp-railway-test-production.up.railway.app/vk-auth/callback';
+const OWNER_ID='-57091749';
+const API_V='5.199';
+const logEl=document.getElementById('log'), summary=document.getElementById('summary');
+let token=sessionStorage.getItem('vk_access_token')||'';
+let posts=[];
+function log(s,cls=''){logEl.textContent+=s+'\n'; if(cls) summary.className=cls;}
+function b64url(bytes){return btoa(String.fromCharCode(...bytes)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');}
+async function sha256(s){return new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s)));}
+function randomString(n=64){const a=new Uint8Array(n);crypto.getRandomValues(a);return b64url(a);}
+async function startAuth(){
+ const verifier=randomString(48), state=randomString(24);
+ const challenge=b64url(await sha256(verifier));
+ sessionStorage.setItem('vk_verifier',verifier);sessionStorage.setItem('vk_state',state);
+ const q=new URLSearchParams({client_id:APP_ID,app_id:APP_ID,response_type:'code',redirect_uri:REDIRECT,code_challenge:challenge,code_challenge_method:'s256',state,prompt:'consent'});
+ location.href='https://id.vk.ru/authorize?'+q.toString();
+}
+async function exchangeIfCallback(){
+ const q=new URLSearchParams(location.search);
+ const code=q.get('code'), device=q.get('device_id'), state=q.get('state');
+ if(!code||!device) return;
+ const expected=sessionStorage.getItem('vk_state'), verifier=sessionStorage.getItem('vk_verifier');
+ if(!verifier||!expected||state!==expected) throw new Error('PKCE state/verifier mismatch');
+ const r=await fetch('/vk-auth/exchange',{
+   method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({code,device_id:device,state,code_verifier:verifier})
+ });
+ const j=await r.json(); if(!r.ok||!j.access_token) throw new Error('Token exchange: '+JSON.stringify(j.detail||j));
+ token=j.access_token;sessionStorage.setItem('vk_access_token',token);
+ history.replaceState({},'', '/vk-cleanup');
+ log('VK ID авторизация получена.','ok');
+ document.getElementById('scan').disabled=false;
+}
+async function vk(method,params={}){
+ if(!token) throw new Error('Нет access token');
+ const r=await fetch('/vk-maintenance/api',{
+   method:'POST',
+   headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({access_token:token,method,params})
+ });
+ const j=await r.json();
+ if(!r.ok) throw new Error(method+': '+JSON.stringify(j.detail||j));
+ return j.response;
+}
+async function scan(){
+ posts=[];let offset=0;
+ log('Читаю стену...');
+ while(true){
+  const r=await vk('wall.get',{owner_id:OWNER_ID,count:'100',offset:String(offset),filter:'all'});
+  const items=r.items||[]; posts.push(...items); offset+=items.length;
+  if(!items.length||offset>=r.count) break;
+ }
+ summary.textContent='Найдено записей: '+posts.length;summary.className='ok';
+ log('Стена прочитана: '+posts.length+' записей.');
+ document.getElementById('backup').disabled=false;
+ document.getElementById('delete').disabled=false;
+}
+async function downloadBackup(){
+ if(!token) throw new Error('Нет access token');
+ log('Создаю серверный backup...');
+ const r=await fetch('/vk-maintenance/backup',{
+  method:'POST',headers:{'Content-Type':'application/json'},
+  body:JSON.stringify({access_token:token})
+ });
+ const j=await r.json();
+ if(!r.ok||!j.ok) throw new Error('Backup: '+JSON.stringify(j.detail||j));
+ log('Серверный backup готов: '+j.count+' записей, '+j.bytes+' bytes, sha256='+j.sha256,'ok');
+ const a=document.createElement('a');a.href=j.download_url;a.style.display='none';document.body.appendChild(a);a.click();setTimeout(()=>a.remove(),30000);
+}
+async function deleteAll(){
+ if(!posts.length){log('Удалять нечего.');return;}
+ document.getElementById('delete').disabled=true;
+ let done=0,failed=[];
+ for(const p of posts){
+  try{await vk('wall.delete',{owner_id:OWNER_ID,post_id:String(p.id)});done++;log('Удалено '+done+'/'+posts.length+' (post_id='+p.id+')');}
+  catch(e){
+   const msg=String(e);
+   failed.push({id:p.id,error:msg});
+   log('ОШИБКА post_id='+p.id+': '+msg,'err');
+   if(msg.includes('access_token has expired') || msg.includes('error_code":5') || msg.includes("error_code': 5")){
+    log('Токен VK истёк. Удаление остановлено — нужна повторная авторизация.','err');
+    break;
+   }
+  }
+  await new Promise(r=>setTimeout(r,420));
+ }
+ log('Удаление завершено. Успешно: '+done+', ошибок: '+failed.length, failed.length?'err':'ok');
+ await scan();
+}
+document.getElementById('auth').onclick=startAuth;
+document.getElementById('scan').onclick=()=>scan().catch(e=>log('ОШИБКА: '+e,'err'));
+document.getElementById('backup').onclick=()=>downloadBackup().catch(e=>log('ОШИБКА BACKUP: '+e,'err'));
+document.getElementById('delete').onclick=()=>deleteAll().catch(e=>log('ОШИБКА: '+e,'err'));
+if(token) document.getElementById('scan').disabled=false;
+exchangeIfCallback().catch(e=>log('ОШИБКА AUTH: '+e,'err'));
+</script>
+</body></html>
