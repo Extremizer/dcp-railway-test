@@ -27,12 +27,13 @@ import re
 import secrets
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from html import escape
 from pathlib import Path
 
+from common_finance_contract import PaymentRoute, default_client_payment_route
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import RetryAfter
 from telegram.constants import ParseMode
@@ -356,6 +357,7 @@ def init_orders_db() -> None:
             ("reference_weight_state", "TEXT"),
             ("reference_weight_source", "TEXT"),
             ("offer_source", "TEXT NOT NULL DEFAULT 'usa'"),
+            ("payment_route", "TEXT NOT NULL DEFAULT 'extremizer_balance'"),
             ("warehouse_id", "INTEGER"),
             ("warehouse_public_name", "TEXT"),
             ("price_snapshot_rub", "REAL"),
@@ -1616,9 +1618,18 @@ def save_order_to_history(
     cart: dict,
     delivery_preference: str | None = None,
     origin: str = "telegram",
+    conn: sqlite3.Connection | None = None,
 ) -> None:
     """Persist one confirmed request and all of its cart positions."""
-    init_orders_db()
+    owns_connection = conn is None
+    if owns_connection:
+        init_orders_db()
+    else:
+        order_item_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(order_items)").fetchall()
+        }
+        if "payment_route" not in order_item_columns:
+            raise RuntimeError("orders schema is not initialized for payment_route")
     origin = "web" if str(origin or "").strip().lower() == "web" else "telegram"
 
     total_usd = 0.0
@@ -1662,6 +1673,12 @@ def save_order_to_history(
                 PRICE_COEFFICIENT,
                 USD_RUB_RATE,
             )
+        requested_payment_route = str(item.get("payment_route") or "").strip().lower()
+        payment_route = (
+            PaymentRoute(requested_payment_route).value
+            if requested_payment_route
+            else default_client_payment_route(offer_source).value
+        )
         if customer_unit_rub is None:
             auto_pricing_complete = False
         else:
@@ -1721,7 +1738,8 @@ def save_order_to_history(
                 reference_volume_weight_kg,
                 reference_weight_state,
                 reference_weight_source,
-                str(item.get("offer_source") or "usa"),
+                offer_source,
+                payment_route,
                 item.get("warehouse_id"),
                 item.get("warehouse_public_name"),
                 item.get("price_snapshot_rub"),
@@ -1739,9 +1757,15 @@ def save_order_to_history(
     )
     created_at = datetime.now().astimezone().isoformat(timespec="seconds")
 
-    with sqlite3.connect(ORDERS_DB_FILE) as conn:
+    with (
+        sqlite3.connect(ORDERS_DB_FILE)
+        if owns_connection
+        else nullcontext(conn)
+    ) as active_conn:
+        conn = active_conn
         try:
-            conn.execute("BEGIN")
+            if owns_connection:
+                conn.execute("BEGIN")
 
             conn.execute(
                 """
@@ -1837,6 +1861,7 @@ def save_order_to_history(
                     reference_weight_state,
                     reference_weight_source,
                     offer_source,
+                    payment_route,
                     warehouse_id,
                     warehouse_public_name,
                     price_snapshot_rub,
@@ -1899,6 +1924,7 @@ def save_order_to_history(
                         reference_weight_state,
                         reference_weight_source,
                         offer_source,
+                        payment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -1906,7 +1932,7 @@ def save_order_to_history(
                         selected_delivery_tariff,
                         delivery_selected_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item_order_id,
@@ -1929,6 +1955,7 @@ def save_order_to_history(
                         reference_weight_state,
                         reference_weight_source,
                         offer_source,
+                        payment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -1938,10 +1965,12 @@ def save_order_to_history(
                     ),
                 )
 
-            conn.commit()
+            if owns_connection:
+                conn.commit()
 
         except Exception:
-            conn.rollback()
+            if owns_connection:
+                conn.rollback()
             raise
 
 
