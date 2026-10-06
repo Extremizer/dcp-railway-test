@@ -1,0 +1,24 @@
+name: Common Finance Branch Run Gate
+
+on:
+  push:
+    branches:
+      - common-finance-run-gate-20261006
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile COMMON FINANCE modules
+        run: |
+          python -m py_compile             oemixibot_finance.py             common_finance_contract.py             client_finance_adapter.py             client_order_finance_bridge.py             _save_order_shared_tx_regression.py             _atomic_client_finance_regression.py
+      - name: Run shared transaction regression
+        run: python _save_order_shared_tx_regression.py
+      - name: Run atomic order finance regression
+        run: python _atomic_client_finance_regression.py
