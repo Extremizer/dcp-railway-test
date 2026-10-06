@@ -24,6 +24,8 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 import dealercostparts_manufacturer_finder_v6_6 as finder
 import warehouse_stock_service
 import dp_live_bridge
+from common_price_source_service import CACHE_FIRST, choose_initial_action, resolve_after_live
+from common_pricing_service import customer_price_rub_from_dp
 
 TOKEN = os.getenv("PROBNIK_BOT_TOKEN", "").strip()
 ORDERS_DB = Path(
@@ -56,10 +58,11 @@ def _format_rub(value: int | float) -> str:
 
 
 def _customer_price_rub(dp_usd: float) -> int | None:
-    if dp_usd <= 0 or PRICE_COEFFICIENT <= 0 or USD_RUB_RATE <= 0:
-        return None
-    raw = dp_usd * PRICE_COEFFICIENT * USD_RUB_RATE
-    return int(math.ceil(raw / 100.0) * 100)
+    return customer_price_rub_from_dp(
+        dp_usd,
+        PRICE_COEFFICIENT,
+        USD_RUB_RATE,
+    )
 
 
 def _db_tables(conn: sqlite3.Connection) -> set[str]:
@@ -486,14 +489,15 @@ def _identity_and_price(oem: str) -> dict:
                 live_manufacturer = finder.manufacturer_alias(
                     str(live.get("manufacturer") or "").strip()
                 )
-                if (
-                    str(live.get("status") or "").upper() == "FOUND"
-                    and live_manufacturer
-                    and isinstance(live.get("dealer_price_usd"), (int, float))
-                    and float(live["dealer_price_usd"]) > 0
-                ):
+                resolved_live = resolve_after_live(
+                    CACHE_FIRST,
+                    live.get("status"),
+                    live.get("dealer_price_usd"),
+                    None,
+                )
+                if resolved_live["source"] == "LIVE" and live_manufacturer:
                     result["manufacturer"] = live_manufacturer
-                    result["dp_usd"] = float(live["dealer_price_usd"])
+                    result["dp_usd"] = float(resolved_live["dealer_price_usd"])
                     result["customer_rub"] = _customer_price_rub(result["dp_usd"])
                     result["price_fresh"] = True
                     result["dp_oem"] = normalize_oem(
@@ -522,7 +526,16 @@ def _identity_and_price(oem: str) -> dict:
         ).fetchall()
 
         dp_row = next((row for row in rows if fresh_dp(row)), None)
-        if not dp_row:
+        cache_candidate = (
+            {
+                "fresh": True,
+                "dealer_price_usd": float(dp_row["dealer_price_usd"]),
+            }
+            if dp_row
+            else None
+        )
+        source_decision = choose_initial_action(CACHE_FIRST, cache_candidate)
+        if source_decision["action"] == "LIVE":
             # CACHE-FIRST: only a real cache miss is allowed to request live DP.
             # Railway never talks to the user's Chrome directly. A trusted local
             # agent claims this short-lived request, verifies DCP, and returns
@@ -534,12 +547,14 @@ def _identity_and_price(oem: str) -> dict:
                 oem,
                 wait_seconds=10.0,
             )
-            if (
-                str(live.get("status") or "").upper() == "FOUND"
-                and isinstance(live.get("dealer_price_usd"), (int, float))
-                and float(live["dealer_price_usd"]) > 0
-            ):
-                result["dp_usd"] = float(live["dealer_price_usd"])
+            resolved = resolve_after_live(
+                CACHE_FIRST,
+                live.get("status"),
+                live.get("dealer_price_usd"),
+                cache_candidate,
+            )
+            if resolved["source"] == "LIVE":
+                result["dp_usd"] = float(resolved["dealer_price_usd"])
                 result["customer_rub"] = _customer_price_rub(result["dp_usd"])
                 result["price_fresh"] = True
                 result["dp_oem"] = (
@@ -549,7 +564,7 @@ def _identity_and_price(oem: str) -> dict:
                     result["name"] = str(live["name"]).strip()
             return result
 
-        result["dp_usd"] = float(dp_row["dealer_price_usd"])
+        result["dp_usd"] = float(cache_candidate["dealer_price_usd"])
         result["customer_rub"] = _customer_price_rub(result["dp_usd"])
         result["price_fresh"] = True
         result["dp_oem"] = str(dp_row["oem"])
