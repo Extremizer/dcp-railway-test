@@ -55,6 +55,23 @@ for _p in (SOURCE_DIR, REPORT_DIR, BACKUP_DIR, JOB_DIR):
 
 # Reusable profiles. More can be added without changing the runner.
 PROFILES: dict[str, dict[str, Any]] = {
+    "SUZUKI_DEALER_2021": {
+        "label": "SUZUKI DEALER 2021",
+        "manufacturer": "SUZUKI",
+        "source_year": 2021,
+        "source_kind": "legacy_price_list",
+        "trust_level": "legacy",
+        "header_row": 1,
+        "oem_header": "part_number",
+        "name_header": "part_name",
+        "replacement_header": "ЗАМЕНА НОМЕРА",
+        "uom_header": "uom",
+        "oem_regex": r"^[A-Z0-9][A-Z0-9./-]*$",
+        "ignore_name_equal_oem": True,
+        "ignore_name_equal_replacement": True,
+        "skip_ambiguous_replacement_sources": True,
+        "create_target_only": True,
+    },
     "SPI_DEALER_PRICE_LIST": {
         "label": "SPI DEALER PRICE LIST",
         "manufacturer": "SPI",
@@ -301,6 +318,8 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
         skipped_blank_oem_rows = 0
         rejected_oem_rows = 0
         rejected_oem_examples: list[dict[str, Any]] = []
+        rejected_replacement_rows = 0
+        rejected_replacement_examples: list[dict[str, Any]] = []
         invalid_self: set[tuple[str, str]] = set()
         start_row = int(profile.get("data_start_row") or (int(profile["header_row"]) + 1))
         for sheet_row_num, row in enumerate(ws.iter_rows(min_row=start_row, values_only=True), start=start_row):
@@ -326,15 +345,59 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
                     uoms.setdefault(oem, set()).add(raw_uom)
             repl = _normalize_oem(row[idx["replacement"]] if idx.get("replacement", -1) < len(row) and "replacement" in idx else None)
             if repl and repl not in {"0", "N/A", "NA", "NONE", "-"}:
-                if repl == oem:
+                repl_regex = profile.get("replacement_regex") or profile.get("oem_regex")
+                if repl_regex and re.fullmatch(str(repl_regex), repl) is None:
+                    rejected_replacement_rows += 1
+                    if len(rejected_replacement_examples) < 25:
+                        rejected_replacement_examples.append(
+                            {"row": sheet_row_num, "oem": oem, "value": repl}
+                        )
+                elif repl == oem:
                     invalid_self.add((oem, repl))
                 else:
                     pairs.add((oem, repl))
+
+        # Some legacy lists use the OEM itself or replacement number as a placeholder "name".
+        # Profile flags let us suppress those placeholders without changing other sources.
+        if profile.get("ignore_name_equal_oem"):
+            for o in list(names):
+                names[o] = {n for n in names[o] if _normalize_oem(n) != o}
+                if not names[o]:
+                    del names[o]
+
+        if profile.get("ignore_name_equal_replacement"):
+            targets_by_oem: dict[str, set[str]] = {}
+            for a, b in pairs:
+                targets_by_oem.setdefault(a, set()).add(b)
+            for o in list(names):
+                targets = targets_by_oem.get(o, set())
+                if targets:
+                    names[o] = {n for n in names[o] if _normalize_oem(n) not in targets}
+                    if not names[o]:
+                        del names[o]
+
+        targets_by_oem: dict[str, set[str]] = {}
+        for a, b in pairs:
+            targets_by_oem.setdefault(a, set()).add(b)
+        ambiguous_replacement_sources = {
+            o: sorted(v) for o, v in targets_by_oem.items() if len(v) > 1
+        }
+        skipped_ambiguous_replacement_edges = 0
+        if profile.get("skip_ambiguous_replacement_sources") and ambiguous_replacement_sources:
+            ambiguous_oems = set(ambiguous_replacement_sources)
+            before = len(pairs)
+            pairs = {(a, b) for a, b in pairs if a not in ambiguous_oems}
+            skipped_ambiguous_replacement_edges = before - len(pairs)
+
         return {
             "source_rows": source_rows,
             "skipped_blank_oem_rows": skipped_blank_oem_rows,
             "rejected_oem_rows": rejected_oem_rows,
             "rejected_oem_examples": rejected_oem_examples,
+            "rejected_replacement_rows": rejected_replacement_rows,
+            "rejected_replacement_examples": rejected_replacement_examples,
+            "ambiguous_replacement_sources": ambiguous_replacement_sources,
+            "skipped_ambiguous_replacement_edges": skipped_ambiguous_replacement_edges,
             "source_oems": source_oems,
             "names": names,
             "pairs": pairs,
@@ -445,6 +508,11 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "skipped_blank_oem_rows": parsed.get("skipped_blank_oem_rows", 0),
         "rejected_oem_rows": parsed.get("rejected_oem_rows", 0),
         "rejected_oem_examples": parsed.get("rejected_oem_examples", []),
+        "rejected_replacement_rows": parsed.get("rejected_replacement_rows", 0),
+        "rejected_replacement_examples": parsed.get("rejected_replacement_examples", []),
+        "ambiguous_replacement_source_oems": len(parsed.get("ambiguous_replacement_sources", {})),
+        "ambiguous_replacement_sources": parsed.get("ambiguous_replacement_sources", {}),
+        "skipped_ambiguous_replacement_edges": parsed.get("skipped_ambiguous_replacement_edges", 0),
         "source_distinct_name_observations": observations,
         "source_oems_with_name": len(names),
         "source_oems_without_name": len(source_oems - set(names)),
