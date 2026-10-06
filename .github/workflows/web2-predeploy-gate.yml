@@ -43,6 +43,22 @@ jobs:
           echo "TARGET_REF=${{ inputs.target_ref }}"
           echo "TARGET_SHA=$actual_sha"
 
+      - name: Checkout frozen WEB2 regression suite
+        uses: actions/checkout@v4
+        with:
+          ref: 8d0933e96dcac104ba8ebbff7090f2989af95a8b
+          path: _frozen_web2_tests
+          sparse-checkout: |
+            tests
+          sparse-checkout-cone-mode: true
+
+      - name: Verify frozen regression source
+        run: |
+          set -euxo pipefail
+          test "$(git -C _frozen_web2_tests rev-parse HEAD)" = "8d0933e96dcac104ba8ebbff7090f2989af95a8b"
+          test -d _frozen_web2_tests/tests
+          echo "FROZEN_TEST_SHA=$(git -C _frozen_web2_tests rev-parse HEAD)"
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -64,7 +80,7 @@ jobs:
       - name: COMMON CORE regression
         run: |
           set -euxo pipefail
-          pytest -q tests
+          pytest -q _frozen_web2_tests/tests
 
       - name: Import smoke
         run: |
@@ -131,6 +147,7 @@ jobs:
             echo
             echo "Branch: ${{ inputs.target_ref }}"
             echo "Commit: $commit_sha"
+            echo "Frozen regression source: 8d0933e96dcac104ba8ebbff7090f2989af95a8b"
             echo
             echo 'No Railway deployment is performed by this workflow.'
           } >> "$GITHUB_STEP_SUMMARY"
