@@ -90,6 +90,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "oem_header": "part_number",
         "name_header": "part_name",
         "replacement_header": "superseded #",
+        "uom_header": "uom",
         "create_target_only": True,
     },
     "BRP_CANAM_SEADOO_DEALER_2021": {
