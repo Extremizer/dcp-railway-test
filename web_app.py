@@ -38,6 +38,12 @@ import supplier_channels
 import supplier_channel_web
 import supplier_admin_auth
 import oem_import_maintenance
+from common_price_source_service import CACHE_ONLY, choose_initial_action
+from common_pricing_service import (
+    customer_price_rub_from_dp,
+    msrp_offer,
+    rrp_rub_from_msrp,
+)
 try:
     import oem_reference_service
 except ImportError:
@@ -485,30 +491,20 @@ def build_oem_card(
     rate = core.load_usd_rub_rate()
     coefficient = core.load_price_coefficient()
     dp = core.get_dealer_price_cache(canonical, current_oem, mark_used=False)
+    source_decision = choose_initial_action(CACHE_ONLY, dp)
     customer_rub = None
-    if dp and dp.get("fresh"):
-        customer_rub = core.customer_rub_price_from_dp(
+    if source_decision["action"] == "CACHE":
+        customer_rub = customer_price_rub_from_dp(
             dp.get("dealer_price_usd"),
-            coefficient=coefficient,
-            rate=rate,
+            coefficient,
+            rate,
         )
 
     msrp_usd = result.get("price")
-    msrp_rub = (
-        int(round(float(msrp_usd) * rate))
-        if isinstance(msrp_usd, (int, float)) and rate > 0
-        else None
-    )
-    show_msrp = (
-        customer_rub is not None
-        and msrp_rub is not None
-        and msrp_rub > customer_rub
-    )
-    benefit_pct = (
-        round((msrp_rub - customer_rub) / msrp_rub * 100, 1)
-        if show_msrp
-        else None
-    )
+    msrp_rub = rrp_rub_from_msrp(msrp_usd, rate)
+    msrp_decision = msrp_offer(customer_rub, msrp_rub)
+    show_msrp = msrp_decision["show_msrp"]
+    benefit_pct = msrp_decision["benefit_pct"]
 
     stock_rows = _stock_rows(current_oem)
     positive_stock = []
