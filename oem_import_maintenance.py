@@ -55,6 +55,19 @@ for _p in (SOURCE_DIR, REPORT_DIR, BACKUP_DIR, JOB_DIR):
 
 # Reusable profiles. More can be added without changing the runner.
 PROFILES: dict[str, dict[str, Any]] = {
+    "WPS_DEALER_2021_CORRECTED": {
+        "label": "WPS DEALER 2021 исправленный",
+        "manufacturer": None,
+        "manufacturer_header": "BRAND",
+        "source_year": 2021,
+        "source_kind": "legacy_price_list",
+        "trust_level": "legacy",
+        "header_row": 1,
+        "oem_header": "PART #",
+        "name_header": "NAME",
+        "oem_regex": r"^[A-Z0-9][A-Z0-9./ -]*$",
+        "create_target_only": False,
+    },
     "SUZUKI_DEALER_2021": {
         "label": "SUZUKI DEALER 2021",
         "manufacturer": "SUZUKI",
@@ -295,6 +308,7 @@ def _resolve_headers(ws, profile: dict[str, Any]) -> dict[str, int]:
         ("name", "name_header"),
         ("replacement", "replacement_header"),
         ("uom", "uom_header"),
+        ("manufacturer", "manufacturer_header"),
     ):
         wanted = _norm_header(profile.get(config_key))
         if not wanted:
@@ -314,6 +328,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
         source_oems: set[str] = set()
         pairs: set[tuple[str, str]] = set()
         uoms: dict[str, set[str]] = {}
+        manufacturers: dict[str, set[str]] = {}
         source_rows = 0
         skipped_blank_oem_rows = 0
         rejected_oem_rows = 0
@@ -343,6 +358,12 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
                 raw_uom = _clean_text(row[idx["uom"]] if idx["uom"] < len(row) else None)
                 if raw_uom:
                     uoms.setdefault(oem, set()).add(raw_uom)
+            if "manufacturer" in idx:
+                raw_manufacturer = _clean_text(
+                    row[idx["manufacturer"]] if idx["manufacturer"] < len(row) else None
+                )
+                if raw_manufacturer:
+                    manufacturers.setdefault(oem, set()).add(raw_manufacturer)
             repl = _normalize_oem(row[idx["replacement"]] if idx.get("replacement", -1) < len(row) and "replacement" in idx else None)
             if repl and repl not in {"0", "N/A", "NA", "NONE", "-"}:
                 repl_regex = profile.get("replacement_regex") or profile.get("oem_regex")
@@ -402,6 +423,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
             "names": names,
             "pairs": pairs,
             "uoms": uoms,
+            "manufacturers": manufacturers,
             "invalid_self": invalid_self,
         }
     finally:
@@ -427,6 +449,7 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
     names: dict[str, set[str]] = parsed["names"]
     pairs: set[tuple[str, str]] = parsed["pairs"]
     uoms: dict[str, set[str]] = parsed["uoms"]
+    row_manufacturers: dict[str, set[str]] = parsed.get("manufacturers", {})
     source_oems: set[str] = parsed["source_oems"]
     conflicts = {o: sorted(v) for o, v in names.items() if len(v) > 1}
     safe_names = {o: next(iter(v)) for o, v in names.items() if len(v) == 1}
@@ -436,6 +459,12 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
     safe_uoms = {o: next(iter(v)) for o, v in uoms.items() if len(v) == 1}
     parsed_packs: dict[str, tuple[str, int]] = {}
     unrecognized_uom_values: dict[str, int] = {}
+    row_manufacturer_conflicts = {
+        o: sorted(v) for o, v in row_manufacturers.items() if len(v) > 1
+    }
+    safe_row_manufacturers = {
+        o: next(iter(v)) for o, v in row_manufacturers.items() if len(v) == 1
+    }
     for o, raw in safe_uoms.items():
         raw_norm, qty = _parse_pack_uom(raw)
         if qty is not None:
@@ -473,6 +502,18 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         pack_existing_same = 0
         pack_existing_conflicts = 0
         pack_would_set_existing = 0
+        row_manufacturer_existing_conflicts = 0
+        row_manufacturer_would_set_existing = 0
+        for o, row_mfr in safe_row_manufacturers.items():
+            row = prod.get(o)
+            if not row:
+                continue
+            existing_mfr = (row["manufacturer"] or "").strip()
+            if not existing_mfr:
+                row_manufacturer_would_set_existing += 1
+            elif existing_mfr.upper() != row_mfr.upper():
+                row_manufacturer_existing_conflicts += 1
+
         for o, (_raw, qty) in parsed_packs.items():
             row = prod.get(o)
             if not row:
@@ -546,6 +587,12 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "pack_would_set_new_source_oems": sum(1 for o in parsed_packs if o in new_source),
         "pack_observations_to_add": len(parsed_packs),
         "manufacturer_observations_named_oems": len(source_oems) if manufacturer else 0,
+        "row_manufacturer_observation_oems": len(row_manufacturers),
+        "row_manufacturer_single_oems": len(safe_row_manufacturers),
+        "row_manufacturer_conflict_oems": len(row_manufacturer_conflicts),
+        "row_manufacturer_conflicts": row_manufacturer_conflicts,
+        "row_manufacturer_would_set_existing_oems": row_manufacturer_would_set_existing,
+        "row_manufacturer_existing_conflicts": row_manufacturer_existing_conflicts,
         "manufacturer_observations_target_only": len(target_only_new) if manufacturer and profile.get("create_target_only") else 0,
         "existing_manufacturer_conflicts": sum(
             1 for o in existing
@@ -568,10 +615,12 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
             and schema_version == "OEM_REFERENCE_V2"
             and integrity == "ok"
             and not uom_conflicts
+            and not row_manufacturer_conflicts
             and pack_existing_conflicts == 0
         ),
         "apply_blocked_reason": (
             "source_key_sha_mismatch" if source_key_conflict
+            else "row_manufacturer_conflict_in_source" if row_manufacturer_conflicts
             else "uom_conflict_in_source" if uom_conflicts
             else "pack_conflict_with_production" if pack_existing_conflicts
             else "schema_version_mismatch" if schema_version != "OEM_REFERENCE_V2"
@@ -642,11 +691,13 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
     names: dict[str, set[str]] = parsed["names"]
     pairs: set[tuple[str, str]] = parsed["pairs"]
     uoms: dict[str, set[str]] = parsed["uoms"]
+    row_manufacturers: dict[str, set[str]] = parsed.get("manufacturers", {})
     source_oems: set[str] = parsed["source_oems"]
     conflicts = {o for o, v in names.items() if len(v) > 1}
     safe_names = {o: next(iter(v)) for o, v in names.items() if len(v) == 1}
     target_only = {b for _, b in pairs} - source_oems
     safe_uoms = {o: next(iter(v)) for o, v in uoms.items() if len(v) == 1}
+    safe_row_manufacturers = {o: next(iter(v)) for o, v in row_manufacturers.items() if len(v) == 1}
     parsed_packs: dict[str, tuple[str, int]] = {}
     for o, raw in safe_uoms.items():
         raw_norm, qty = _parse_pack_uom(raw)
@@ -695,6 +746,7 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
         for o in sorted(new_source):
             nm = safe_names.get(o)
             conflict = o in conflicts
+            row_manufacturer = safe_row_manufacturers.get(o) or manufacturer
             cur = conn.execute(
                 """INSERT OR IGNORE INTO oem_reference(
                      oem,item_type,actual_weight_kg,volume_weight_kg,weight_state,
@@ -707,11 +759,11 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
                     o,
                     1 if conflict else 0,
                     None if conflict else nm,
-                    manufacturer,
+                    row_manufacturer,
                     "CONFLICT" if conflict else ("LEGACY_SINGLE_SOURCE" if nm else None),
-                    "LEGACY_SINGLE_SOURCE" if manufacturer else None,
+                    "LEGACY_SINGLE_SOURCE" if row_manufacturer else None,
                     1 if names.get(o) else 0,
-                    1 if manufacturer else 0,
+                    1 if row_manufacturer else 0,
                 ),
             )
             inserted_source += cur.rowcount
@@ -759,6 +811,7 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
         set_existing_names = 0
         for o in sorted(existing):
             row = prod[o]
+            desired_manufacturer = safe_row_manufacturers.get(o) or manufacturer
             if o in safe_names and not (row["canonical_name"] or "").strip():
                 set_existing_names += conn.execute(
                     """UPDATE oem_reference
@@ -766,14 +819,14 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
                         WHERE oem=? AND (canonical_name IS NULL OR trim(canonical_name)='')""",
                     (safe_names[o], o),
                 ).rowcount
-            if manufacturer and not (row["manufacturer"] or "").strip():
+            if desired_manufacturer and not (row["manufacturer"] or "").strip():
                 conn.execute(
                     """UPDATE oem_reference
                           SET manufacturer=?,manufacturer_state='LEGACY_SINGLE_SOURCE'
                         WHERE oem=? AND (manufacturer IS NULL OR trim(manufacturer)='')""",
-                    (manufacturer, o),
+                    (desired_manufacturer, o),
                 )
-            elif manufacturer and (row["manufacturer"] or "").strip().upper() != manufacturer.upper():
+            elif desired_manufacturer and (row["manufacturer"] or "").strip().upper() != desired_manufacturer.upper():
                 conn.execute(
                     "UPDATE oem_reference SET needs_review=1,manufacturer_state='CONFLICT' WHERE oem=?",
                     (o,),
@@ -794,6 +847,7 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
         manufacturer_obs = 0
         for o in sorted(source_oems):
             status = "review" if o in conflicts else "active"
+            desired_manufacturer = safe_row_manufacturers.get(o) or manufacturer
             for nm in sorted(names.get(o, set())):
                 name_obs += conn.execute(
                     """INSERT OR IGNORE INTO oem_fact_observations(
@@ -801,12 +855,12 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
                        VALUES(?,'name',?,?,?,?)""",
                     (o, nm, profile_key, profile.get("trust_level"), status),
                 ).rowcount
-            if manufacturer:
+            if desired_manufacturer:
                 manufacturer_obs += conn.execute(
                     """INSERT OR IGNORE INTO oem_fact_observations(
                          oem,fact_type,value_text,source_key,trust_level,status)
                        VALUES(?,'manufacturer',?,?,?,'active')""",
-                    (o, manufacturer, profile_key, profile.get("trust_level")),
+                    (o, desired_manufacturer, profile_key, profile.get("trust_level")),
                 ).rowcount
 
         if manufacturer and profile.get("create_target_only"):
@@ -938,6 +992,7 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
             "set_existing_canonical_names": set_existing_names,
             "inserted_name_observations": name_obs,
             "inserted_manufacturer_observations": manufacturer_obs,
+            "row_manufacturer_observations": len(safe_row_manufacturers),
             "inserted_relation_observations": rel_obs,
             "inserted_relation_rows": rel_rows,
             "inserted_pack_observations": pack_obs,
