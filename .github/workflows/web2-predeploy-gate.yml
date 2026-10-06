@@ -1,0 +1,124 @@
+name: WEB2 Pre-Deploy Gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  predeploy:
+    name: Syntax, regression, imports, startup smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      EXTREMIZER_ORDERS_DB_FILE: /tmp/extremizer_web2_gate.db
+      EXTREMIZER_PRICE_COEFFICIENT: "1.34"
+      EXTREMIZER_USD_RUB_RATE: "105"
+      EXTREMIZER_DP_CACHE_MAX_AGE_HOURS: "168"
+
+    steps:
+      - name: Checkout exact WEB2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: web2-development
+
+      - name: Verify branch and commit
+        run: |
+          set -euxo pipefail
+          test "$(git branch --show-current)" = "web2-development"
+          git status --short
+          git rev-parse HEAD
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project and test dependencies
+        run: |
+          set -euxo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest httpx
+
+      - name: Python syntax gate
+        run: |
+          set -euxo pipefail
+          python -m py_compile             common_weight_service.py             common_pricing_service.py             common_price_source_service.py             extremizer_bot.py             probnik_app.py             web_app.py
+
+      - name: COMMON CORE regression
+        run: |
+          set -euxo pipefail
+          pytest -q tests
+
+      - name: Import smoke
+        run: |
+          set -euxo pipefail
+          python - <<'PY'
+          import common_weight_service
+          import common_pricing_service
+          import common_price_source_service
+          import extremizer_bot
+          import probnik_app
+          import web_app
+          assert web_app.app is not None
+          print("IMPORT_SMOKE_PASS")
+          PY
+
+      - name: WEB startup smoke
+        shell: bash
+        run: |
+          set -euxo pipefail
+          rm -f "$EXTREMIZER_ORDERS_DB_FILE"
+          python -m uvicorn web_app:app --host 127.0.0.1 --port 18080 > /tmp/web2-uvicorn.log 2>&1 &
+          PID=$!
+          cleanup() {
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          ok=0
+          for i in {1..30}; do
+            if python - <<'PY'
+          import json, urllib.request
+          try:
+              with urllib.request.urlopen("http://127.0.0.1:18080/health", timeout=1) as r:
+                  data=json.load(r)
+              assert data.get("ok") is True
+              print(data)
+          except Exception:
+              raise SystemExit(1)
+          PY
+            then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "STARTUP_SMOKE_FAIL"
+            cat /tmp/web2-uvicorn.log
+            exit 1
+          fi
+
+          kill -0 "$PID"
+          echo "STARTUP_SMOKE_PASS"
+          cat /tmp/web2-uvicorn.log
+
+      - name: Gate summary
+        if: always()
+        run: |
+          {
+            echo "## WEB2 Pre-Deploy Gate"
+            echo
+            echo "Branch: `web2-development`"
+            echo "Commit: `$(git rev-parse HEAD 2>/dev/null || echo unavailable)`"
+            echo
+            echo "No Railway deployment is performed by this workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
