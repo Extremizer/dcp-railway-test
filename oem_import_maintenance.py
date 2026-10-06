@@ -65,6 +65,7 @@ PROFILES: dict[str, dict[str, Any]] = {
         "oem_header": "part_number",
         "name_header": "part_name",
         "replacement_header": "ЗАМЕНА НОМЕРА !!!",
+        "uom_header": "uom",
         "create_target_only": True,
     },
     "KAWASAKI_DEALER_2020": {
@@ -137,6 +138,52 @@ def _norm_header(value: Any) -> str:
     return _clean_text(value).casefold()
 
 
+def _parse_pack_uom(value: Any) -> tuple[str | None, int | None]:
+    raw = _clean_text(value)
+    if not raw:
+        return None, None
+    m = re.fullmatch(r"(\\d+)\\s*-\\s*Pack", raw, flags=re.IGNORECASE)
+    if not m:
+        return raw, None
+    qty = int(m.group(1))
+    return (raw, qty) if qty > 0 else (raw, None)
+
+
+def init_schema() -> None:
+    """Add pack/UOM support without changing existing canonical facts."""
+    if not DB_PATH.exists():
+        return
+    with sqlite3.connect(DB_PATH, timeout=60) as conn:
+        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(oem_reference)")}
+        for name, ddl in (
+            ("uom_raw", "TEXT"),
+            ("pack_qty", "INTEGER"),
+            ("order_multiple", "INTEGER"),
+            ("pack_state", "TEXT"),
+            ("pack_source_count", "INTEGER NOT NULL DEFAULT 0"),
+        ):
+            if name not in cols:
+                conn.execute(f"ALTER TABLE oem_reference ADD COLUMN {name} {ddl}")
+        conn.execute("""CREATE TABLE IF NOT EXISTS oem_pack_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            oem TEXT NOT NULL,
+            uom_raw TEXT NOT NULL,
+            pack_qty INTEGER,
+            order_multiple INTEGER,
+            source_key TEXT NOT NULL,
+            trust_level TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'active',
+            observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(oem,uom_raw,source_key)
+        )""")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_oem_pack_obs_oem ON oem_pack_observations(oem)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_oem_pack_obs_source ON oem_pack_observations(source_key)")
+        conn.execute("""INSERT INTO oem_reference_meta(key,value)
+                        VALUES('pack_uom_schema','1')
+                        ON CONFLICT(key) DO UPDATE SET value=excluded.value""")
+        conn.commit()
+
+
 def _sha256(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
@@ -187,6 +234,7 @@ def _resolve_headers(ws, profile: dict[str, Any]) -> dict[str, int]:
         ("oem", "oem_header"),
         ("name", "name_header"),
         ("replacement", "replacement_header"),
+        ("uom", "uom_header"),
     ):
         wanted = _norm_header(profile.get(config_key))
         if not wanted:
