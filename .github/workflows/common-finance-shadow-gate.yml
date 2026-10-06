@@ -1,0 +1,30 @@
+name: Common Finance Shadow Checkout Gate
+
+on:
+  push:
+    branches:
+      - common-finance-shadow-gate-20261006
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile COMMON FINANCE modules
+        run: |
+          python -m py_compile             oemixibot_finance.py             common_finance_contract.py             client_finance_adapter.py             client_order_finance_bridge.py             client_checkout_orchestrator.py             client_checkout_callback_adapter.py             extremizer_bot.py             _save_order_shared_tx_regression.py             _atomic_client_finance_regression.py             _client_checkout_orchestrator_regression.py             _client_checkout_callback_adapter_regression.py             _shadow_checkout_callback_regression.py
+      - name: Run shared transaction regression
+        run: python _save_order_shared_tx_regression.py
+      - name: Run atomic order finance regression
+        run: python _atomic_client_finance_regression.py
+      - name: Run checkout orchestrator regression
+        run: python _client_checkout_orchestrator_regression.py
+      - name: Run callback adapter regression
+        run: python _client_checkout_callback_adapter_regression.py
+      - name: Run shadow checkout callback regression
+        run: python _shadow_checkout_callback_regression.py
