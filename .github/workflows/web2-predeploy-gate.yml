@@ -24,12 +24,13 @@ jobs:
       - name: Checkout exact WEB2 branch
         uses: actions/checkout@v4
         with:
-          ref: web2-development
+          ref: ${{ github.ref_name }}
 
       - name: Verify branch and commit
         run: |
           set -euxo pipefail
-          test "$(git branch --show-current)" = "web2-development"
+          test "$(git branch --show-current)" = "$GITHUB_REF_NAME"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           git status --short
           git rev-parse HEAD
 
@@ -119,7 +120,7 @@ jobs:
           {
             echo '## WEB2 Pre-Deploy Gate'
             echo
-            echo 'Branch: web2-development'
+            echo "Branch: $GITHUB_REF_NAME"
             echo "Commit: $commit_sha"
             echo
             echo 'No Railway deployment is performed by this workflow.'
