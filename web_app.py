@@ -37,6 +37,7 @@ import supplier_web_admin
 import supplier_channels
 import supplier_channel_web
 import supplier_admin_auth
+import oem_import_maintenance
 try:
     import oem_reference_service
 except ImportError:
@@ -65,6 +66,7 @@ app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 # Supplier Orders uses the exact same persistent orders DB as Telegram.
 supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
 app.include_router(supplier_api.build_supplier_router(supplier_order_service))
+app.include_router(oem_import_maintenance.router)
 
 
 @app.get("/admin/supplier-orders", response_class=HTMLResponse)
