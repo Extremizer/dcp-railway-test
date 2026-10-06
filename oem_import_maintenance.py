@@ -55,6 +55,17 @@ for _p in (SOURCE_DIR, REPORT_DIR, BACKUP_DIR, JOB_DIR):
 
 # Reusable profiles. More can be added without changing the runner.
 PROFILES: dict[str, dict[str, Any]] = {
+    "SKI_DOO_DEALER_2021": {
+        "label": "SKI DOO DEALER 2021",
+        "manufacturer": "BRP",
+        "source_year": 2021,
+        "source_kind": "legacy_price_list",
+        "trust_level": "legacy",
+        "data_start_row": 1,
+        "fixed_columns": {"oem": 0},
+        "oem_regex": r"^[A-Z0-9]+$",
+        "create_target_only": False,
+    },
     "POLARIS_DEALER_2021": {
         "label": "POLARIS DEALER 2021",
         "manufacturer": "POLARIS",
@@ -244,6 +255,9 @@ def _require_admin(token: str | None) -> None:
 
 
 def _resolve_headers(ws, profile: dict[str, Any]) -> dict[str, int]:
+    fixed_columns = profile.get("fixed_columns")
+    if fixed_columns:
+        return {str(k): int(v) for k, v in dict(fixed_columns).items()}
     row = next(ws.iter_rows(min_row=int(profile["header_row"]), max_row=int(profile["header_row"]), values_only=True))
     lookup = {_norm_header(v): i for i, v in enumerate(row) if _clean_text(v)}
     result: dict[str, int] = {}
@@ -272,11 +286,22 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
         pairs: set[tuple[str, str]] = set()
         uoms: dict[str, set[str]] = {}
         source_rows = 0
+        skipped_blank_oem_rows = 0
+        rejected_oem_rows = 0
+        rejected_oem_examples: list[dict[str, Any]] = []
         invalid_self: set[tuple[str, str]] = set()
-        start_row = int(profile["header_row"]) + 1
-        for row in ws.iter_rows(min_row=start_row, values_only=True):
-            oem = _normalize_oem(row[idx["oem"]] if idx["oem"] < len(row) else None)
+        start_row = int(profile.get("data_start_row") or (int(profile["header_row"]) + 1))
+        for sheet_row_num, row in enumerate(ws.iter_rows(min_row=start_row, values_only=True), start=start_row):
+            raw_oem = row[idx["oem"]] if idx["oem"] < len(row) else None
+            oem = _normalize_oem(raw_oem)
             if not oem:
+                skipped_blank_oem_rows += 1
+                continue
+            oem_regex = profile.get("oem_regex")
+            if oem_regex and re.fullmatch(str(oem_regex), oem) is None:
+                rejected_oem_rows += 1
+                if len(rejected_oem_examples) < 25:
+                    rejected_oem_examples.append({"row": sheet_row_num, "value": oem})
                 continue
             source_rows += 1
             source_oems.add(oem)
@@ -295,6 +320,9 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
                     pairs.add((oem, repl))
         return {
             "source_rows": source_rows,
+            "skipped_blank_oem_rows": skipped_blank_oem_rows,
+            "rejected_oem_rows": rejected_oem_rows,
+            "rejected_oem_examples": rejected_oem_examples,
             "source_oems": source_oems,
             "names": names,
             "pairs": pairs,
@@ -401,6 +429,10 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "source_size_bytes": source_path.stat().st_size,
         "source_rows": parsed["source_rows"],
         "source_unique_oems": len(source_oems),
+        "source_duplicate_oem_rows": parsed["source_rows"] - len(source_oems),
+        "skipped_blank_oem_rows": parsed.get("skipped_blank_oem_rows", 0),
+        "rejected_oem_rows": parsed.get("rejected_oem_rows", 0),
+        "rejected_oem_examples": parsed.get("rejected_oem_examples", []),
         "source_distinct_name_observations": observations,
         "source_oems_with_name": len(names),
         "source_oems_without_name": len(source_oems - set(names)),
@@ -682,7 +714,7 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
         manufacturer_obs = 0
         for o in sorted(source_oems):
             status = "review" if o in conflicts else "active"
-            for nm in sorted(names[o]):
+            for nm in sorted(names.get(o, set())):
                 name_obs += conn.execute(
                     """INSERT OR IGNORE INTO oem_fact_observations(
                          oem,fact_type,value_text,source_key,trust_level,status)
