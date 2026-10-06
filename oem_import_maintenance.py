@@ -55,6 +55,19 @@ for _p in (SOURCE_DIR, REPORT_DIR, BACKUP_DIR, JOB_DIR):
 
 # Reusable profiles. More can be added without changing the runner.
 PROFILES: dict[str, dict[str, Any]] = {
+    "WPS_DEALER_2021_CORRECTED": {
+        "label": "WPS DEALER 2021 исправленный",
+        "manufacturer": None,
+        "manufacturer_header": "BRAND",
+        "source_year": 2021,
+        "source_kind": "legacy_price_list",
+        "trust_level": "legacy",
+        "header_row": 1,
+        "oem_header": "PART #",
+        "name_header": "NAME",
+        "oem_regex": r"^[A-Z0-9][A-Z0-9./ -]*$",
+        "create_target_only": False,
+    },
     "SUZUKI_DEALER_2021": {
         "label": "SUZUKI DEALER 2021",
         "manufacturer": "SUZUKI",
@@ -295,6 +308,7 @@ def _resolve_headers(ws, profile: dict[str, Any]) -> dict[str, int]:
         ("name", "name_header"),
         ("replacement", "replacement_header"),
         ("uom", "uom_header"),
+        ("manufacturer", "manufacturer_header"),
     ):
         wanted = _norm_header(profile.get(config_key))
         if not wanted:
@@ -314,6 +328,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
         source_oems: set[str] = set()
         pairs: set[tuple[str, str]] = set()
         uoms: dict[str, set[str]] = {}
+        manufacturers: dict[str, set[str]] = {}
         source_rows = 0
         skipped_blank_oem_rows = 0
         rejected_oem_rows = 0
@@ -343,6 +358,12 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
                 raw_uom = _clean_text(row[idx["uom"]] if idx["uom"] < len(row) else None)
                 if raw_uom:
                     uoms.setdefault(oem, set()).add(raw_uom)
+            if "manufacturer" in idx:
+                raw_manufacturer = _clean_text(
+                    row[idx["manufacturer"]] if idx["manufacturer"] < len(row) else None
+                )
+                if raw_manufacturer:
+                    manufacturers.setdefault(oem, set()).add(raw_manufacturer)
             repl = _normalize_oem(row[idx["replacement"]] if idx.get("replacement", -1) < len(row) and "replacement" in idx else None)
             if repl and repl not in {"0", "N/A", "NA", "NONE", "-"}:
                 repl_regex = profile.get("replacement_regex") or profile.get("oem_regex")
@@ -402,6 +423,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
             "names": names,
             "pairs": pairs,
             "uoms": uoms,
+            "manufacturers": manufacturers,
             "invalid_self": invalid_self,
         }
     finally:
