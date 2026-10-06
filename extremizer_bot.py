@@ -60,6 +60,7 @@ import supplier_runtime
 import supplier_telegram_admin
 import supplier_telegram_handlers
 import warehouse_recipient
+from common_weight_service import delivery_billable_weight_kg
 
 
 # ---------------------------------------------------------------------------
@@ -7516,18 +7517,23 @@ def calculate_admin_order_delivery(
     if actual < 0 or volume < 0:
         return None
 
+    try:
+        billable_actual = float(delivery_billable_weight_kg(actual, code))
+    except (TypeError, ValueError):
+        return None
+
     base = float(base_rub_per_kg)
     volume_rate = float(volume_rub_per_kg)
 
     if calculation_type == "actual_only":
-        total = actual * base
+        total = billable_actual * base
 
     elif calculation_type == "excess_volume":
-        excess_volume = max(volume - actual, 0.0)
-        total = actual * base + excess_volume * volume_rate
+        excess_volume = max(volume - billable_actual, 0.0)
+        total = billable_actual * base + excess_volume * volume_rate
 
     elif calculation_type == "all_volume":
-        total = actual * base + volume * volume_rate
+        total = billable_actual * base + volume * volume_rate
 
     else:
         return None
