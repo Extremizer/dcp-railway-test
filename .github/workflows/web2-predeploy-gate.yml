@@ -14,6 +14,7 @@ jobs:
 
     env:
       PYTHONUNBUFFERED: "1"
+      PYTHONPATH: ${{ github.workspace }}
       EXTREMIZER_ORDERS_DB_FILE: /tmp/extremizer_web2_gate.db
       EXTREMIZER_PRICE_COEFFICIENT: "1.34"
       EXTREMIZER_USD_RUB_RATE: "105"
@@ -114,11 +115,12 @@ jobs:
       - name: Gate summary
         if: always()
         run: |
+          commit_sha="$(git rev-parse HEAD 2>/dev/null || echo unavailable)"
           {
-            echo "## WEB2 Pre-Deploy Gate"
+            echo '## WEB2 Pre-Deploy Gate'
             echo
-            echo "Branch: `web2-development`"
-            echo "Commit: `$(git rev-parse HEAD 2>/dev/null || echo unavailable)`"
+            echo 'Branch: web2-development'
+            echo "Commit: $commit_sha"
             echo
-            echo "No Railway deployment is performed by this workflow."
+            echo 'No Railway deployment is performed by this workflow.'
           } >> "$GITHUB_STEP_SUMMARY"
