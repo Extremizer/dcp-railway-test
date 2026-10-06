@@ -191,6 +191,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
         ws = wb[wb.sheetnames[0]]
         idx = _resolve_headers(ws, profile)
         names: dict[str, set[str]] = {}
+        source_oems: set[str] = set()
         pairs: set[tuple[str, str]] = set()
         source_rows = 0
         invalid_self: set[tuple[str, str]] = set()
@@ -200,6 +201,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
             if not oem:
                 continue
             source_rows += 1
+            source_oems.add(oem)
             name = _clean_text(row[idx["name"]] if idx.get("name", -1) < len(row) and "name" in idx else None)
             if name:
                 names.setdefault(oem, set()).add(name)
@@ -211,6 +213,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
                     pairs.add((oem, repl))
         return {
             "source_rows": source_rows,
+            "source_oems": source_oems,
             "names": names,
             "pairs": pairs,
             "invalid_self": invalid_self,
@@ -236,7 +239,7 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
     parsed = _parse_source(source_path, profile)
     names: dict[str, set[str]] = parsed["names"]
     pairs: set[tuple[str, str]] = parsed["pairs"]
-    source_oems = set(names)
+    source_oems: set[str] = parsed["source_oems"]
     conflicts = {o: sorted(v) for o, v in names.items() if len(v) > 1}
     safe_names = {o: next(iter(v)) for o, v in names.items() if len(v) == 1}
     target_oems = {b for _, b in pairs}
@@ -263,7 +266,14 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
             "SELECT value FROM oem_reference_meta WHERE key='schema_version'"
         ).fetchone()
         schema_version = schema_version_row[0] if schema_version_row else None
+        existing_source_row = conn.execute(
+            "SELECT source_sha256 FROM reference_sources WHERE source_key=?",
+            (profile_key,),
+        ).fetchone()
+        existing_source_sha = existing_source_row[0] if existing_source_row else None
 
+    source_sha = _sha256(source_path)
+    source_key_conflict = bool(existing_source_sha and existing_source_sha != source_sha)
     observations = sum(len(v) for v in names.values())
     manufacturer = str(profile.get("manufacturer") or "").strip() or None
     report = {
@@ -275,11 +285,15 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "source_kind": profile.get("source_kind"),
         "trust_level": profile.get("trust_level"),
         "manufacturer": manufacturer,
-        "source_sha256": _sha256(source_path),
+        "source_sha256": source_sha,
+        "existing_source_sha256": existing_source_sha,
+        "source_key_conflict": source_key_conflict,
         "source_size_bytes": source_path.stat().st_size,
         "source_rows": parsed["source_rows"],
         "source_unique_oems": len(source_oems),
         "source_distinct_name_observations": observations,
+        "source_oems_with_name": len(names),
+        "source_oems_without_name": len(source_oems - set(names)),
         "source_oems_with_single_name": len(safe_names),
         "source_name_conflict_oems": len(conflicts),
         "source_name_conflicts": conflicts,
@@ -300,6 +314,12 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "would_leave_canonical_name_unset_due_conflict": len(conflicts),
         "manufacturer_observations_named_oems": len(source_oems) if manufacturer else 0,
         "manufacturer_observations_target_only": len(target_only_new) if manufacturer and profile.get("create_target_only") else 0,
+        "existing_manufacturer_conflicts": sum(
+            1 for o in existing
+            if manufacturer
+            and (prod[o]["manufacturer"] or "").strip()
+            and (prod[o]["manufacturer"] or "").strip().upper() != manufacturer.upper()
+        ),
         "existing_item_type_preserved": sum(1 for o in existing if (prod[o]["item_type"] or "").strip()),
         "existing_actual_weight_preserved": sum(1 for o in existing if prod[o]["actual_weight_kg"] is not None and prod[o]["actual_weight_kg"] > 0),
         "existing_volume_weight_preserved": sum(1 for o in existing if prod[o]["volume_weight_kg"] is not None and prod[o]["volume_weight_kg"] > 0),
@@ -310,6 +330,13 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "database_integrity_before": integrity,
         "schema_version": schema_version,
         "database_size_bytes_before": DB_PATH.stat().st_size,
+        "apply_allowed": (not source_key_conflict and schema_version == "OEM_REFERENCE_V2" and integrity == "ok"),
+        "apply_blocked_reason": (
+            "source_key_sha_mismatch" if source_key_conflict
+            else "schema_version_mismatch" if schema_version != "OEM_REFERENCE_V2"
+            else "database_integrity_failed" if integrity != "ok"
+            else None
+        ),
         "generated_at": _utc_now(),
     }
     if integrity != "ok":
@@ -341,6 +368,8 @@ def _backup_database(job_id: str) -> tuple[Path, str]:
 def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
     profile_key = job["profile_key"]
     profile = PROFILES[profile_key]
+    if not dry.get("apply_allowed", False):
+        raise RuntimeError("dry-run blocks apply: " + str(dry.get("apply_blocked_reason") or "unknown"))
     source_path = Path(job["source_path"])
     if _sha256(source_path) != dry["source_sha256"]:
         raise RuntimeError("source file changed after dry-run")
@@ -369,7 +398,7 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
     parsed = _parse_source(source_path, profile)
     names: dict[str, set[str]] = parsed["names"]
     pairs: set[tuple[str, str]] = parsed["pairs"]
-    source_oems = set(names)
+    source_oems: set[str] = parsed["source_oems"]
     conflicts = {o for o, v in names.items() if len(v) > 1}
     safe_names = {o: next(iter(v)) for o, v in names.items() if len(v) == 1}
     target_only = {b for _, b in pairs} - source_oems
@@ -473,6 +502,11 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
                           SET manufacturer=?,manufacturer_state='LEGACY_SINGLE_SOURCE'
                         WHERE oem=? AND (manufacturer IS NULL OR trim(manufacturer)='')""",
                     (manufacturer, o),
+                )
+            elif manufacturer and (row["manufacturer"] or "").strip().upper() != manufacturer.upper():
+                conn.execute(
+                    "UPDATE oem_reference SET needs_review=1,manufacturer_state='CONFLICT' WHERE oem=?",
+                    (o,),
                 )
 
         if manufacturer:
@@ -579,11 +613,13 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
                          AND x.status='active')
                 WHERE relation_type='replacement'"""
         )
-        conn.commit()
-
         integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
         if integrity != "ok":
-            raise RuntimeError(f"post-import integrity failed: {integrity}")
+            raise RuntimeError(f"pre-commit integrity failed: {integrity}")
+        conn.commit()
+        quick = conn.execute("PRAGMA quick_check").fetchone()[0]
+        if quick != "ok":
+            raise RuntimeError(f"post-commit quick_check failed: {quick}")
 
         final = {
             "mode": "apply",
@@ -601,6 +637,7 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
             "inserted_relation_rows": rel_rows,
             "production_oems_after": conn.execute("SELECT COUNT(*) FROM oem_reference").fetchone()[0],
             "database_integrity_after": integrity,
+            "database_quick_check_after": quick,
             "database_sha256_after": _sha256(DB_PATH),
             "database_size_bytes_after": DB_PATH.stat().st_size,
             "prices_read_or_saved": False,
