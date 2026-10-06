@@ -41,12 +41,12 @@ def compile_shadow():
     live_end = source.index('\n    if data == "change_mfg":', live_start)
     live_block = source[live_start:live_end]
     require(
-        "_shadow_checkout_confirm(" not in live_block,
-        "live checkout path calls shadow function",
+        "return await _shadow_checkout_confirm(" in live_block,
+        "live checkout path does not call shadow function",
     )
     require(
-        source.count("_shadow_checkout_confirm(") == 1,
-        "shadow function must remain definition-only",
+        source.count("_shadow_checkout_confirm(") == 2,
+        "shadow reference count must be definition + one live switch",
     )
     module = ast.Module(body=[target], type_ignores=[])
     ast.fix_missing_locations(module)
@@ -355,7 +355,7 @@ async def run_async():
         "reserve failure / web warning / quote failure"
     )
     print("replay guard blocks duplicate adapter invocation after committed failure")
-    print("live checkout_confirm remains unconnected to shadow path")
+    print("live checkout_confirm uses exactly one shadow-path switch")
 
 
 def run():
