@@ -153,23 +153,29 @@ def init_schema() -> None:
     """Add pack/UOM support without changing existing canonical facts."""
     if not DB_PATH.exists():
         return
+
+    with sqlite3.connect(DB_PATH, timeout=60) as probe:
+        cols = {str(r[1]) for r in probe.execute("PRAGMA table_info(oem_reference)")}
+        table_exists = probe.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='oem_pack_observations'"
+        ).fetchone() is not None
+
+    additions = (
+        ("uom_raw", "TEXT"),
+        ("pack_qty", "INTEGER"),
+        ("order_multiple", "INTEGER"),
+        ("pack_state", "TEXT"),
+        ("pack_source_count", "INTEGER NOT NULL DEFAULT 0"),
+    )
+    missing = [(name, ddl) for name, ddl in additions if name not in cols]
+
+    # Any first-time schema mutation gets its own full, integrity-checked backup.
+    if missing or not table_exists:
+        _backup_database("pre_pack_uom_schema_v1")
+
     with sqlite3.connect(DB_PATH, timeout=60) as conn:
-        cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(oem_reference)")}
-        additions = (
-            ("uom_raw", "TEXT"),
-            ("pack_qty", "INTEGER"),
-            ("order_multiple", "INTEGER"),
-            ("pack_state", "TEXT"),
-            ("pack_source_count", "INTEGER NOT NULL DEFAULT 0"),
-        )
-        missing = [(name, ddl) for name, ddl in additions if name not in cols]
-        if missing:
-            # Schema change is a production mutation: protect it with a full SQLite backup.
-            conn.close()
-            _backup_database("pre_pack_uom_schema_v1")
-            conn = sqlite3.connect(DB_PATH, timeout=60)
-            for name, ddl in missing:
-                conn.execute(f"ALTER TABLE oem_reference ADD COLUMN {name} {ddl}")
+        for name, ddl in missing:
+            conn.execute(f"ALTER TABLE oem_reference ADD COLUMN {name} {ddl}")
         conn.execute("""CREATE TABLE IF NOT EXISTS oem_pack_observations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             oem TEXT NOT NULL,
@@ -182,8 +188,12 @@ def init_schema() -> None:
             observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(oem,uom_raw,source_key)
         )""")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_oem_pack_obs_oem ON oem_pack_observations(oem)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_oem_pack_obs_source ON oem_pack_observations(source_key)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_oem_pack_obs_oem ON oem_pack_observations(oem)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_oem_pack_obs_source ON oem_pack_observations(source_key)"
+        )
         conn.execute("""INSERT INTO oem_reference_meta(key,value)
                         VALUES('pack_uom_schema','1')
                         ON CONFLICT(key) DO UPDATE SET value=excluded.value""")
