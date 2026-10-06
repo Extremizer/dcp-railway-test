@@ -2,6 +2,12 @@ name: WEB2 Pre-Deploy Gate
 
 on:
   workflow_dispatch:
+    inputs:
+      target_ref:
+        description: Exact branch/ref to validate
+        required: true
+        default: web2-deployment-candidate
+        type: string
 
 permissions:
   contents: read
@@ -24,15 +30,18 @@ jobs:
       - name: Checkout exact WEB2 branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref_name }}
+          ref: ${{ inputs.target_ref }}
 
       - name: Verify branch and commit
         run: |
           set -euxo pipefail
-          test "$(git branch --show-current)" = "$GITHUB_REF_NAME"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git branch --show-current)" = "${{ inputs.target_ref }}"
+          expected_sha="$(git rev-parse "origin/${{ inputs.target_ref }}")"
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$expected_sha"
           git status --short
-          git rev-parse HEAD
+          echo "TARGET_REF=${{ inputs.target_ref }}"
+          echo "TARGET_SHA=$actual_sha"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -120,7 +129,7 @@ jobs:
           {
             echo '## WEB2 Pre-Deploy Gate'
             echo
-            echo "Branch: $GITHUB_REF_NAME"
+            echo "Branch: ${{ inputs.target_ref }}"
             echo "Commit: $commit_sha"
             echo
             echo 'No Railway deployment is performed by this workflow.'
