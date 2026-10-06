@@ -34,7 +34,13 @@ def choose_initial_action(mode: str, cache: dict | None) -> dict:
     return {"action": "LIVE", "reason": "live_first" if mode == LIVE_FIRST else "cache_miss"}
 
 
-def resolve_after_live(mode: str, live_status: str | None, live_dp_usd, cache: dict | None) -> dict:
+def resolve_after_live(
+    mode: str,
+    live_status: str | None,
+    live_dp_usd,
+    cache: dict | None,
+    technical_fallback_statuses=None,
+) -> dict:
     """Resolve live result without ever substituting MSRP for DP.
 
     LIVE_FIRST preserves Extremizer Telegram baseline: fresh cache is fallback
@@ -53,7 +59,12 @@ def resolve_after_live(mode: str, live_status: str | None, live_dp_usd, cache: d
     ):
         return {"source": "LIVE", "dealer_price_usd": float(live_dp_usd), "status": "FOUND"}
 
-    if mode == LIVE_FIRST and status in TECHNICAL_LIVE_FAILURES and _fresh_positive(cache):
+    fallback_statuses = (
+        TECHNICAL_LIVE_FAILURES
+        if technical_fallback_statuses is None
+        else frozenset(str(item).upper() for item in technical_fallback_statuses)
+    )
+    if mode == LIVE_FIRST and status in fallback_statuses and _fresh_positive(cache):
         return {
             "source": "CACHE",
             "dealer_price_usd": float(cache["dealer_price_usd"]),
