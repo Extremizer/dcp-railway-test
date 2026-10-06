@@ -142,7 +142,7 @@ def _parse_pack_uom(value: Any) -> tuple[str | None, int | None]:
     raw = _clean_text(value)
     if not raw:
         return None, None
-    m = re.fullmatch(r"(\\d+)\\s*-\\s*Pack", raw, flags=re.IGNORECASE)
+    m = re.fullmatch(r"(\d+)\s*-\s*Pack", raw, flags=re.IGNORECASE)
     if not m:
         return raw, None
     qty = int(m.group(1))
@@ -155,14 +155,20 @@ def init_schema() -> None:
         return
     with sqlite3.connect(DB_PATH, timeout=60) as conn:
         cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(oem_reference)")}
-        for name, ddl in (
+        additions = (
             ("uom_raw", "TEXT"),
             ("pack_qty", "INTEGER"),
             ("order_multiple", "INTEGER"),
             ("pack_state", "TEXT"),
             ("pack_source_count", "INTEGER NOT NULL DEFAULT 0"),
-        ):
-            if name not in cols:
+        )
+        missing = [(name, ddl) for name, ddl in additions if name not in cols]
+        if missing:
+            # Schema change is a production mutation: protect it with a full SQLite backup.
+            conn.close()
+            _backup_database("pre_pack_uom_schema_v1")
+            conn = sqlite3.connect(DB_PATH, timeout=60)
+            for name, ddl in missing:
                 conn.execute(f"ALTER TABLE oem_reference ADD COLUMN {name} {ddl}")
         conn.execute("""CREATE TABLE IF NOT EXISTS oem_pack_observations (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -253,6 +259,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
         names: dict[str, set[str]] = {}
         source_oems: set[str] = set()
         pairs: set[tuple[str, str]] = set()
+        uoms: dict[str, set[str]] = {}
         source_rows = 0
         invalid_self: set[tuple[str, str]] = set()
         start_row = int(profile["header_row"]) + 1
@@ -265,6 +272,10 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
             name = _clean_text(row[idx["name"]] if idx.get("name", -1) < len(row) and "name" in idx else None)
             if name:
                 names.setdefault(oem, set()).add(name)
+            if "uom" in idx:
+                raw_uom = _clean_text(row[idx["uom"]] if idx["uom"] < len(row) else None)
+                if raw_uom:
+                    uoms.setdefault(oem, set()).add(raw_uom)
             repl = _normalize_oem(row[idx["replacement"]] if idx.get("replacement", -1) < len(row) and "replacement" in idx else None)
             if repl and repl not in {"0", "N/A", "NA", "NONE", "-"}:
                 if repl == oem:
@@ -276,6 +287,7 @@ def _parse_source(path: Path, profile: dict[str, Any]) -> dict[str, Any]:
             "source_oems": source_oems,
             "names": names,
             "pairs": pairs,
+            "uoms": uoms,
             "invalid_self": invalid_self,
         }
     finally:
@@ -293,17 +305,29 @@ def _existing_relations(conn: sqlite3.Connection, relation_type: str) -> set[tup
 
 
 def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
+    init_schema()
     if profile_key not in PROFILES:
         raise ValueError("unknown profile")
     profile = PROFILES[profile_key]
     parsed = _parse_source(source_path, profile)
     names: dict[str, set[str]] = parsed["names"]
     pairs: set[tuple[str, str]] = parsed["pairs"]
+    uoms: dict[str, set[str]] = parsed["uoms"]
     source_oems: set[str] = parsed["source_oems"]
     conflicts = {o: sorted(v) for o, v in names.items() if len(v) > 1}
     safe_names = {o: next(iter(v)) for o, v in names.items() if len(v) == 1}
     target_oems = {b for _, b in pairs}
     target_only = target_oems - source_oems
+    uom_conflicts = {o: sorted(v) for o, v in uoms.items() if len(v) > 1}
+    safe_uoms = {o: next(iter(v)) for o, v in uoms.items() if len(v) == 1}
+    parsed_packs: dict[str, tuple[str, int]] = {}
+    unrecognized_uom_values: dict[str, int] = {}
+    for o, raw in safe_uoms.items():
+        raw_norm, qty = _parse_pack_uom(raw)
+        if qty is not None:
+            parsed_packs[o] = (raw_norm or raw, qty)
+        else:
+            unrecognized_uom_values[raw] = unrecognized_uom_values.get(raw, 0) + 1
 
     with sqlite3.connect(DB_PATH) as conn:
         conn.row_factory = sqlite3.Row
@@ -311,7 +335,8 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
             r["oem"]: r
             for r in conn.execute(
                 """SELECT oem,canonical_name,manufacturer,item_type,
-                          actual_weight_kg,volume_weight_kg
+                          actual_weight_kg,volume_weight_kg,
+                          uom_raw,pack_qty,order_multiple,pack_state,pack_source_count
                      FROM oem_reference"""
             )
         }
@@ -331,6 +356,20 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
             (profile_key,),
         ).fetchone()
         existing_source_sha = existing_source_row[0] if existing_source_row else None
+        pack_existing_same = 0
+        pack_existing_conflicts = 0
+        pack_would_set_existing = 0
+        for o, (_raw, qty) in parsed_packs.items():
+            row = prod.get(o)
+            if not row:
+                continue
+            existing_multiple = row["order_multiple"]
+            if existing_multiple is None:
+                pack_would_set_existing += 1
+            elif int(existing_multiple) == int(qty):
+                pack_existing_same += 1
+            else:
+                pack_existing_conflicts += 1
 
     source_sha = _sha256(source_path)
     source_key_conflict = bool(existing_source_sha and existing_source_sha != source_sha)
@@ -372,6 +411,17 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "would_add_source_name_observations": observations,
         "would_set_canonical_name_safe_total": len(safe_names),
         "would_leave_canonical_name_unset_due_conflict": len(conflicts),
+        "uom_observation_oems": len(uoms),
+        "uom_conflict_oems": len(uom_conflicts),
+        "uom_conflicts": uom_conflicts,
+        "pack_parseable_oems": len(parsed_packs),
+        "pack_unrecognized_oems": sum(unrecognized_uom_values.values()),
+        "pack_unrecognized_values": unrecognized_uom_values,
+        "pack_would_set_existing_oems": pack_would_set_existing,
+        "pack_existing_same_oems": pack_existing_same,
+        "pack_existing_conflicts": pack_existing_conflicts,
+        "pack_would_set_new_source_oems": sum(1 for o in parsed_packs if o in new_source),
+        "pack_observations_to_add": len(parsed_packs),
         "manufacturer_observations_named_oems": len(source_oems) if manufacturer else 0,
         "manufacturer_observations_target_only": len(target_only_new) if manufacturer and profile.get("create_target_only") else 0,
         "existing_manufacturer_conflicts": sum(
@@ -390,9 +440,17 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
         "database_integrity_before": integrity,
         "schema_version": schema_version,
         "database_size_bytes_before": DB_PATH.stat().st_size,
-        "apply_allowed": (not source_key_conflict and schema_version == "OEM_REFERENCE_V2" and integrity == "ok"),
+        "apply_allowed": (
+            not source_key_conflict
+            and schema_version == "OEM_REFERENCE_V2"
+            and integrity == "ok"
+            and not uom_conflicts
+            and pack_existing_conflicts == 0
+        ),
         "apply_blocked_reason": (
             "source_key_sha_mismatch" if source_key_conflict
+            else "uom_conflict_in_source" if uom_conflicts
+            else "pack_conflict_with_production" if pack_existing_conflicts
             else "schema_version_mismatch" if schema_version != "OEM_REFERENCE_V2"
             else "database_integrity_failed" if integrity != "ok"
             else None
@@ -446,6 +504,8 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
         "would_add_new_replacement_edges",
         "would_insert_total_new_oem_rows",
         "production_oems_before",
+        "pack_parseable_oems",
+        "pack_existing_conflicts",
     )
     drift = {
         k: {"dry_run": dry.get(k), "pre_apply": fresh.get(k)}
@@ -458,10 +518,17 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
     parsed = _parse_source(source_path, profile)
     names: dict[str, set[str]] = parsed["names"]
     pairs: set[tuple[str, str]] = parsed["pairs"]
+    uoms: dict[str, set[str]] = parsed["uoms"]
     source_oems: set[str] = parsed["source_oems"]
     conflicts = {o for o, v in names.items() if len(v) > 1}
     safe_names = {o: next(iter(v)) for o, v in names.items() if len(v) == 1}
     target_only = {b for _, b in pairs} - source_oems
+    safe_uoms = {o: next(iter(v)) for o, v in uoms.items() if len(v) == 1}
+    parsed_packs: dict[str, tuple[str, int]] = {}
+    for o, raw in safe_uoms.items():
+        raw_norm, qty = _parse_pack_uom(raw)
+        if qty is not None:
+            parsed_packs[o] = (raw_norm or raw, qty)
     manufacturer = str(profile.get("manufacturer") or "").strip() or None
 
     backup_path, backup_sha = _backup_database(job["job_id"])
@@ -546,6 +613,26 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
                 )
                 inserted_targets += cur.rowcount
 
+        pack_canonical_set = 0
+        for o, (raw_uom, qty) in sorted(parsed_packs.items()):
+            row = conn.execute(
+                "SELECT order_multiple FROM oem_reference WHERE oem=?",
+                (o,),
+            ).fetchone()
+            if row is None:
+                continue
+            if row[0] is None:
+                pack_canonical_set += conn.execute(
+                    """UPDATE oem_reference
+                          SET uom_raw=?,pack_qty=?,order_multiple=?,
+                              pack_state='LEGACY_SINGLE_SOURCE',
+                              pack_source_count=1
+                        WHERE oem=? AND order_multiple IS NULL""",
+                    (raw_uom, qty, qty, o),
+                ).rowcount
+            elif int(row[0]) != int(qty):
+                raise RuntimeError(f"pack conflict reached apply unexpectedly for {o}")
+
         set_existing_names = 0
         for o in sorted(existing):
             row = prod[o]
@@ -607,6 +694,41 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
                        VALUES(?,'manufacturer',?,?,?,'active')""",
                     (o, manufacturer, profile_key, profile.get("trust_level")),
                 ).rowcount
+
+        pack_obs = 0
+        for o, (raw_uom, qty) in sorted(parsed_packs.items()):
+            pack_obs += conn.execute(
+                """INSERT OR IGNORE INTO oem_pack_observations(
+                     oem,uom_raw,pack_qty,order_multiple,source_key,trust_level,status)
+                   VALUES(?,?,?,?,?,?,'active')""",
+                (o, raw_uom, qty, qty, profile_key, profile.get("trust_level")),
+            ).rowcount
+
+        conn.execute(
+            """UPDATE oem_reference
+                  SET pack_source_count=(
+                      SELECT COUNT(DISTINCT source_key)
+                        FROM oem_pack_observations p
+                       WHERE p.oem=oem_reference.oem
+                         AND p.status='active')
+                WHERE oem IN (
+                    SELECT DISTINCT oem
+                      FROM oem_pack_observations
+                     WHERE source_key=?)""",
+            (profile_key,),
+        )
+        conn.execute(
+            """UPDATE oem_reference
+                  SET pack_state=CASE
+                      WHEN pack_source_count>1 THEN 'LEGACY_MULTI_SOURCE'
+                      WHEN pack_source_count=1 THEN 'LEGACY_SINGLE_SOURCE'
+                      ELSE pack_state END
+                WHERE oem IN (
+                    SELECT DISTINCT oem
+                      FROM oem_pack_observations
+                     WHERE source_key=?)""",
+            (profile_key,),
+        )
 
         rel_obs = 0
         rel_rows = 0
@@ -695,6 +817,12 @@ def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
             "inserted_manufacturer_observations": manufacturer_obs,
             "inserted_relation_observations": rel_obs,
             "inserted_relation_rows": rel_rows,
+            "inserted_pack_observations": pack_obs,
+            "pack_canonical_set": pack_canonical_set,
+            "pack_parseable_oems": len(parsed_packs),
+            "pack_conflicts_after_apply": conn.execute(
+                "SELECT COUNT(*) FROM oem_reference WHERE pack_state='CONFLICT'"
+            ).fetchone()[0],
             "production_oems_after": conn.execute("SELECT COUNT(*) FROM oem_reference").fetchone()[0],
             "database_integrity_after": integrity,
             "database_quick_check_after": quick,
