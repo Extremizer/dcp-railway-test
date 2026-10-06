@@ -61,6 +61,12 @@ import supplier_telegram_admin
 import supplier_telegram_handlers
 import warehouse_recipient
 from common_weight_service import delivery_billable_weight_kg
+from common_price_source_service import (
+    CACHE_ONLY,
+    LIVE_FIRST,
+    choose_initial_action,
+    resolve_after_live,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1468,8 +1474,9 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
     # intentionally restricted to the OEM Parts endpoint below.
     if not catalog_is_parts:
         cached = get_dealer_price_cache(manufacturer, oem, mark_used=True)
+        decision = choose_initial_action(CACHE_ONLY, cached)
         result["_dealer_price_live_status"] = "NOT_APPLICABLE_NON_PARTS"
-        if cached and cached.get("fresh"):
+        if decision["action"] == "CACHE":
             result["_dealer_price_status"] = "CACHE_FALLBACK"
             result["_dealer_price_usd"] = float(cached["dealer_price_usd"])
             result["_dealer_price_source"] = (
@@ -1492,8 +1499,9 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
             oem,
             mark_used=True,
         )
+        decision = choose_initial_action(CACHE_ONLY, cached)
         result["_dealer_price_live_status"] = "CACHE_ONLY"
-        if cached and cached.get("fresh"):
+        if decision["action"] == "CACHE":
             result["_dealer_price_status"] = "CACHE_FALLBACK"
             result["_dealer_price_usd"] = float(cached["dealer_price_usd"])
             result["_dealer_price_source"] = (
@@ -1511,26 +1519,18 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
             result["_dealer_price_checked_at"] = checked_at
         return result
 
+    # Parts keep their existing LIVE_FIRST policy.
+    choose_initial_action(LIVE_FIRST, None)
     live_status = None
+    live_dp_usd = None
+    live_source = ""
     try:
         private = await asyncio.to_thread(get_dealer_price, manufacturer, oem)
         live_status = str(private.status or "").upper()
+        live_dp_usd = private.dealer_price_usd
+        live_source = str(private.source or "")
         result["_dealer_price_status"] = live_status
         result["_dealer_price_checked_at"] = checked_at
-
-        if live_status == "FOUND" and private.dealer_price_usd is not None:
-            dealer_price_usd = float(private.dealer_price_usd)
-            dealer_price_source = str(private.source or "")
-            result["_dealer_price_usd"] = dealer_price_usd
-            result["_dealer_price_source"] = dealer_price_source
-            upsert_dealer_price_cache(
-                manufacturer,
-                oem,
-                dealer_price_usd,
-                dealer_price_source,
-                checked_at,
-            )
-            return result
     except Exception:
         live_status = "TECHNICAL_ERROR"
         result["_dealer_price_status"] = live_status
@@ -1541,6 +1541,27 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
             oem,
         )
 
+    if live_status == "FOUND":
+        resolved = resolve_after_live(
+            LIVE_FIRST,
+            live_status,
+            live_dp_usd,
+            None,
+            {"CLOUDFLARE", "AUTH_REQUIRED", "TECHNICAL_ERROR"},
+        )
+        if resolved["source"] == "LIVE":
+            dealer_price_usd = float(resolved["dealer_price_usd"])
+            result["_dealer_price_usd"] = dealer_price_usd
+            result["_dealer_price_source"] = live_source
+            upsert_dealer_price_cache(
+                manufacturer,
+                oem,
+                dealer_price_usd,
+                live_source,
+                checked_at,
+            )
+            return result
+
     # Cache fallback is intentionally allowed only when live DP could not be
     # checked for technical/session reasons. Explicit NOT_FOUND / NO_PRICE
     # never reuse an older DP automatically.
@@ -1550,10 +1571,17 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
             oem,
             mark_used=True,
         )
-        if cached and cached.get("fresh"):
+        resolved = resolve_after_live(
+            LIVE_FIRST,
+            live_status,
+            live_dp_usd,
+            cached,
+            {"CLOUDFLARE", "AUTH_REQUIRED", "TECHNICAL_ERROR"},
+        )
+        if resolved["source"] == "CACHE":
             result["_dealer_price_status"] = "CACHE_FALLBACK"
             result["_dealer_price_live_status"] = live_status
-            result["_dealer_price_usd"] = float(cached["dealer_price_usd"])
+            result["_dealer_price_usd"] = float(resolved["dealer_price_usd"])
             result["_dealer_price_source"] = (
                 "dp_cache:"
                 + str(cached.get("source") or "verified_live_dp")
