@@ -61,6 +61,9 @@ from client_checkout_callback_adapter import (
     CheckoutPostCommitError,
     execute_prepared_checkout,
 )
+from client_finance_adapter import ClientFinanceAdapter
+from client_finance_schema import ensure_client_finance_schema
+from oemixibot_finance import FinanceEngine
 import supplier_runtime
 import supplier_telegram_admin
 import supplier_telegram_handlers
@@ -10653,6 +10656,14 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if data == "checkout_confirm":
+        return await _shadow_checkout_confirm(
+            update,
+            context,
+            finance_adapter=ClientFinanceAdapter(
+                FinanceEngine(str(ORDERS_DB_FILE))
+            ),
+        )
+
         cart = context.user_data.setdefault("cart", {})
         if not cart:
             await query.edit_message_text("Корзина пуста.", reply_markup=cart_keyboard({}))
@@ -12090,6 +12101,7 @@ def main():
     USD_RUB_RATE = load_usd_rub_rate()
     PRICE_COEFFICIENT = load_price_coefficient()
     init_orders_db()
+    ensure_client_finance_schema(ORDERS_DB_FILE)
     warehouse_admin.configure(
         ORDERS_DB_FILE,
         RATE_ADMIN_USER_ID,
