@@ -55,6 +55,17 @@ for _p in (SOURCE_DIR, REPORT_DIR, BACKUP_DIR, JOB_DIR):
 
 # Reusable profiles. More can be added without changing the runner.
 PROFILES: dict[str, dict[str, Any]] = {
+    "YAMAHA_DEALER_2021": {
+        "label": "YAMAHA DEALER 2021",
+        "manufacturer": "YAMAHA",
+        "source_year": 2021,
+        "source_kind": "legacy_price_list",
+        "trust_level": "legacy",
+        "header_row": 1,
+        "oem_header": "PART NUMBER",
+        "oem_regex": r"^[A-Z0-9][A-Z0-9./-]*$",
+        "create_target_only": False,
+    },
     "WPS_DEALER_2021_CORRECTED": {
         "label": "WPS DEALER 2021 исправленный",
         "manufacturer": None,
