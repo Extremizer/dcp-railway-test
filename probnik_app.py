@@ -711,7 +711,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             or not await _is_chat_member(context, source_chat_id, int(user.id))
         ):
             await update.effective_message.reply_text(
-                "🔒 Кнопка ПРОЦЕНИТЬ доступна участникам рабочего чата."
+                "кнопка <b>ПРОЦЕНИТЬ</b> доступна только членам <b>Extremizer Pro</b>",
+                parse_mode=ParseMode.HTML,
             )
             return
         await update.effective_message.reply_text(
