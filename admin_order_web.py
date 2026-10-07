@@ -88,7 +88,7 @@ def _supplier_label(item: dict[str, Any], supplier_orders: list[dict[str, Any]])
     return "<br>".join(parts)
 
 
-def render_order_card(snapshot: dict[str, Any]) -> str:
+def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None = None) -> str:
     order = snapshot["order"]
     items = snapshot["items"]
     supplier_orders = snapshot["supplier_orders"]
@@ -162,6 +162,84 @@ def render_order_card(snapshot: dict[str, Any]) -> str:
             </div>"""
         )
 
+    dry_run_html = ""
+    if dry_run is not None:
+        dry_rows = []
+        problem_labels = {
+            "stock_unknown": "остаток неизвестен",
+            "stock_stale": "остаток устарел",
+            "insufficient_stock": "недостаточно остатка",
+            "price_unknown": "актуальная цена неизвестна",
+            "price_changed": "цена изменилась",
+        }
+        for row in dry_run.get("rows") or []:
+            state = str(row.get("state") or "")
+            if row.get("source") != "warehouse":
+                result = "OK · складской резерв не требуется"
+            elif state == "blocked":
+                labels = [
+                    problem_labels.get(str(x), str(x))
+                    for x in (row.get("problems") or [])
+                ]
+                result = "БЛОК · " + ", ".join(labels or [str(row.get("message") or "проверка не пройдена")])
+            elif row.get("planned_action") == "reserve_missing":
+                result = "БУДЕТ СОЗДАН РЕЗЕРВ × " + _qty(row.get("planned_quantity"))
+            else:
+                result = "OK · изменений не требуется"
+
+            stock_text = "—"
+            if row.get("source") == "warehouse":
+                stock_text = (
+                    f"сырой {_qty(row.get('raw_quantity'))} · "
+                    f"доступно {_qty(row.get('available_quantity'))} · "
+                    f"для заказа {_qty(row.get('available_for_order'))}"
+                )
+            price_text = "—"
+            if row.get("source") == "warehouse":
+                price_text = (
+                    f"{_money_rub(row.get('order_price_rub'))} → "
+                    f"{_money_rub(row.get('current_price_rub'))}"
+                )
+            dry_rows.append(
+                f"""<tr>
+                  <td>{_e(row.get('position'))}</td>
+                  <td><b>{_e(row.get('oem'))}</b></td>
+                  <td>{_source_label(row)}</td>
+                  <td>{stock_text}</td>
+                  <td>{_qty(row.get('existing_coverage'))}</td>
+                  <td>{price_text}</td>
+                  <td><b>{_e(result)}</b></td>
+                </tr>"""
+            )
+
+        dry_state = "ok" if dry_run.get("ready_to_apply") else "warn"
+        dry_title = (
+            "Dry-run PASS: заказ можно подготовить"
+            if dry_run.get("ready_to_apply")
+            else "Dry-run BLOCK: сначала нужны исправления"
+        )
+        change_text = (
+            "При будущем Apply БД будет изменена."
+            if dry_run.get("would_change_db")
+            else "При будущем Apply дополнительных резервов создавать не нужно."
+        )
+        dry_run_html = f"""
+        <section class="card ready {dry_state}">
+          <h2>WEB ADMIN 2 · Dry-run подготовки</h2>
+          <h3>{_e(dry_title)}</h3>
+          <div class="muted">Это только проверка. База данных не изменялась. {_e(change_text)}</div>
+          <div class="table-wrap" style="margin-top:12px">
+            <table>
+              <thead><tr>
+                <th>№</th><th>OEM</th><th>Источник</th><th>Текущий остаток</th>
+                <th>Резерв заказа</th><th>Цена snapshot → сейчас</th><th>Результат</th>
+              </tr></thead>
+              <tbody>{''.join(dry_rows)}</tbody>
+            </table>
+          </div>
+        </section>
+        """
+
     problems = readiness.get("problems") or []
     problem_html = ""
     if problems:
@@ -212,6 +290,7 @@ td small{{display:block;color:#667085;margin-top:3px}}
 <body>
 <main>
   <div class="nav">
+    <a href="/admin">🧾 Клиентские заказы</a>
     <a href="/admin/supplier-orders">📦 Supplier Orders</a>
     <a href="/admin/supplier-channels">⚙️ Каналы складов</a>
   </div>
@@ -240,7 +319,12 @@ td small{{display:block;color:#667085;margin-top:3px}}
     <h3>{_e(readiness_text)}</h3>
     <div class="muted">Покрыто резервами: {_e(readiness.get('warehouse_ready_count'))} из {_e(readiness.get('warehouse_item_count'))} складских позиций.</div>
     {problem_html}
+    <div style="margin-top:14px">
+      <a class="dry-run-button" href="/admin/orders/{escape(str(order.get('order_id') or ''), quote=True)}/prepare-dry-run">⚙️ Подготовить к исполнению · dry-run</a>
+    </div>
   </section>
+
+  {dry_run_html}
 
   <section class="card">
     <h2>Позиции заказа</h2>
