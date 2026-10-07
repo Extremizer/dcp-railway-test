@@ -287,6 +287,33 @@ def mark_order(
         return False
 
 
+def mark_latest_matching_cart(
+    db_file: str | Path,
+    *,
+    source_bot: str,
+    telegram_user_id: int,
+    oem: str,
+) -> bool:
+    """Mark the latest matching OEM request as added to cart."""
+    try:
+        with sqlite3.connect(_db_path(db_file), timeout=10) as conn:
+            row = conn.execute(
+                f"""SELECT id
+                      FROM {REQUESTS_TABLE}
+                     WHERE source_bot=?
+                       AND telegram_user_id=?
+                       AND oem=?
+                     ORDER BY id DESC
+                     LIMIT 1""",
+                (str(source_bot), int(telegram_user_id), str(oem)),
+            ).fetchone()
+        if not row:
+            return False
+        return mark_cart(db_file, int(row[0]))
+    except sqlite3.Error:
+        return False
+
+
 def mark_latest_matching_order(
     db_file: str | Path,
     *,
