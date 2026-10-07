@@ -27,6 +27,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 import dealercostparts_manufacturer_finder_v6_6 as finder
 import warehouse_stock_service
 import dp_live_bridge
+import pricing_analytics
 
 TOKEN = os.getenv("PROBNIK_BOT_TOKEN", "").strip()
 ORDERS_DB = Path(
@@ -703,18 +704,36 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         source_chat_id = _parse_price_link_payload(payload)
         user = update.effective_user
         chat = update.effective_chat
-        if (
-            source_chat_id is None
-            or user is None
-            or chat is None
-            or str(chat.type) != "private"
-            or not await _is_chat_member(context, source_chat_id, int(user.id))
-        ):
+        allowed = bool(
+            source_chat_id is not None
+            and user is not None
+            and chat is not None
+            and str(chat.type) == "private"
+            and await _is_chat_member(context, source_chat_id, int(user.id))
+        )
+        if not allowed:
+            pricing_analytics.record_update_event(
+                ORDERS_DB,
+                source_bot="probnik",
+                event_type="price_button_denied",
+                update=update,
+                source_chat_id=source_chat_id,
+                metadata={"entry":"workchat"},
+            )
             await update.effective_message.reply_text(
                 "кнопка <b>ПРОЦЕНИТЬ</b> доступна только членам <b>Extremizer Pro</b>",
                 parse_mode=ParseMode.HTML,
             )
             return
+        context.user_data["pricing_source_chat_id"] = int(source_chat_id)
+        pricing_analytics.record_update_event(
+            ORDERS_DB,
+            source_bot="probnik",
+            event_type="price_button_open",
+            update=update,
+            source_chat_id=int(source_chat_id),
+            metadata={"entry":"workchat"},
+        )
         await update.effective_message.reply_text(
             "Отправь OEM-каталожный номер одним сообщением."
         )
@@ -790,11 +809,53 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
+    source_chat_id = context.user_data.get("pricing_source_chat_id")
+    pricing_analytics.record_update_event(
+        ORDERS_DB,
+        source_bot="probnik",
+        event_type="oem_request",
+        update=update,
+        source_chat_id=source_chat_id,
+        oem=oem,
+    )
+
     status = await update.effective_message.reply_text("🔎 Проверяю цену и наличие…")
     try:
         info_task = asyncio.to_thread(_identity_and_price, oem)
         stock_task = _stock_with_refresh(oem)
         info, rows = await asyncio.gather(info_task, stock_task)
+        result_status = "FOUND" if info.get("customer_rub") is not None else "UNAVAILABLE"
+        pricing_analytics.record_update_event(
+            ORDERS_DB,
+            source_bot="probnik",
+            event_type=(
+                "oem_price_found"
+                if info.get("customer_rub") is not None
+                else "oem_price_unavailable"
+            ),
+            update=update,
+            source_chat_id=source_chat_id,
+            oem=oem,
+            manufacturer=info.get("manufacturer"),
+            result_status=result_status,
+        )
+        stock_found = any(
+            row.get("is_fresh")
+            and row.get("available_quantity") is not None
+            and float(row["available_quantity"]) > 0
+            for row in rows
+        )
+        if stock_found:
+            pricing_analytics.record_update_event(
+                ORDERS_DB,
+                source_bot="probnik",
+                event_type="oem_stock_found",
+                update=update,
+                source_chat_id=source_chat_id,
+                oem=oem,
+                manufacturer=info.get("manufacturer"),
+                result_status="FOUND",
+            )
         await status.edit_text(
             _compose(oem, info, rows),
             parse_mode=ParseMode.HTML,
@@ -826,6 +887,7 @@ def main() -> None:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     init_probnik_identity()
+    pricing_analytics.init_analytics(ORDERS_DB)
     logging.info("PROBNIK polling runtime starting")
     build_application().run_polling(drop_pending_updates=False)
 
