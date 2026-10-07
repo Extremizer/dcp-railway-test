@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sqlite3
 from contextlib import closing
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +98,349 @@ def _execution_readiness(
         "problems": problems,
     }
 
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _reservation_blocks_readonly(
+    reservation: dict[str, Any],
+    *,
+    now: datetime,
+    snapshot_observed_at: datetime | None,
+    sync_mode: str,
+) -> bool:
+    status = str(reservation.get("status") or "")
+    if status == "hold":
+        expires = _parse_dt(reservation.get("expires_at"))
+        return expires is None or expires > now
+    if status == "reserved":
+        return True
+    if status != "committed":
+        return False
+    if sync_mode != "snapshot_absorbs_committed":
+        return True
+    committed_at = _parse_dt(reservation.get("committed_at"))
+    if committed_at is None or snapshot_observed_at is None:
+        return True
+    return committed_at > snapshot_observed_at
+
+
+def _best_stock_snapshot_readonly(
+    conn: sqlite3.Connection,
+    warehouse_id: int,
+    oem: str,
+    now: datetime,
+) -> dict[str, Any] | None:
+    rows = _rows(
+        conn,
+        """
+        SELECT
+            c.*,
+            s.priority AS source_priority
+        FROM warehouse_stock_current c
+        JOIN warehouse_sources s
+          ON s.warehouse_id = c.warehouse_id
+         AND s.source_type = c.source_type
+        WHERE c.warehouse_id = ?
+          AND c.oem = ?
+          AND s.enabled = 1
+        ORDER BY s.priority ASC, c.observed_at DESC
+        """,
+        (warehouse_id, oem.strip()),
+    )
+    if not rows:
+        return None
+
+    fresh: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    for row in rows:
+        expires = _parse_dt(row.get("expires_at"))
+        (fresh if expires is None or expires > now else stale).append(row)
+
+    def rank(row: dict[str, Any]):
+        status = str(row.get("status") or "")
+        quantity = row.get("quantity")
+        if quantity is not None and status in {"in_stock", "out_of_stock"}:
+            info_rank = 0
+        elif status == "quantity_unknown":
+            info_rank = 1
+        elif status == "not_found":
+            info_rank = 2
+        else:
+            info_rank = 3
+        observed = _parse_dt(row.get("observed_at"))
+        return (
+            info_rank,
+            int(row.get("source_priority") or 999),
+            -(observed.timestamp() if observed else 0.0),
+        )
+
+    chosen = dict(min(fresh if fresh else stale, key=rank))
+    chosen["is_fresh"] = bool(fresh)
+    return chosen
+
+
+def _best_price_snapshot_readonly(
+    conn: sqlite3.Connection,
+    warehouse_id: int,
+    oem: str,
+    now: datetime,
+) -> dict[str, Any] | None:
+    rows = _rows(
+        conn,
+        """
+        SELECT
+            c.*,
+            s.priority AS source_priority
+        FROM warehouse_stock_current c
+        JOIN warehouse_sources s
+          ON s.warehouse_id = c.warehouse_id
+         AND s.source_type = c.source_type
+        WHERE c.warehouse_id = ?
+          AND c.oem = ?
+          AND s.enabled = 1
+          AND c.price_rub IS NOT NULL
+        ORDER BY s.priority ASC, c.observed_at DESC
+        """,
+        (warehouse_id, oem.strip()),
+    )
+    fresh = []
+    for row in rows:
+        expires = _parse_dt(row.get("expires_at"))
+        if expires is None or expires > now:
+            fresh.append(row)
+    if not fresh:
+        return None
+
+    def rank(row: dict[str, Any]):
+        observed = _parse_dt(row.get("observed_at"))
+        return (
+            int(row.get("source_priority") or 999),
+            -(observed.timestamp() if observed else 0.0),
+        )
+
+    return dict(min(fresh, key=rank))
+
+
+def prepare_order_dry_run(
+    order_id: str,
+    db_file: Path | str,
+) -> dict[str, Any]:
+    """Describe preparation actions without changing the database.
+
+    This is intentionally implemented only with mode=ro SQLite connections.
+    It mirrors current warehouse snapshot/reservation semantics closely enough
+    to tell the admin what would be changed by a later apply step.
+    """
+
+    snapshot = get_order(order_id, db_file)
+    order = snapshot["order"]
+    items = snapshot["items"]
+    now = datetime.now().astimezone()
+
+    rows: list[dict[str, Any]] = []
+    blockers: list[dict[str, Any]] = []
+    actions: list[dict[str, Any]] = []
+
+    if str(order.get("status") or "") != "confirmed":
+        blockers.append(
+            {
+                "kind": "order_status",
+                "message": "Подготовка к исполнению разрешена только для подтверждённого заказа.",
+            }
+        )
+
+    with closing(_connect(db_file)) as conn:
+        for item in items:
+            source = str(item.get("offer_source") or "usa").strip().lower()
+            base = {
+                "order_item_id": int(item["id"]),
+                "position": item.get("position"),
+                "oem": str(item.get("oem") or ""),
+                "source": source,
+                "required_quantity": float(item.get("quantity") or 0),
+            }
+
+            if source != "warehouse":
+                rows.append(
+                    {
+                        **base,
+                        "state": "ok",
+                        "message": "Позиция США: складской резерв не требуется.",
+                        "planned_action": "none",
+                    }
+                )
+                continue
+
+            warehouse_id = item.get("warehouse_id")
+            if warehouse_id is None:
+                problem = {
+                    **base,
+                    "kind": "warehouse_missing",
+                    "message": "Для складской позиции не выбран склад.",
+                }
+                blockers.append(problem)
+                rows.append({**problem, "state": "blocked", "planned_action": "none"})
+                continue
+
+            warehouse_id = int(warehouse_id)
+            warehouse = conn.execute(
+                """
+                SELECT id, public_name, active, deleted_at, stock_sync_mode
+                FROM warehouses WHERE id = ?
+                """,
+                (warehouse_id,),
+            ).fetchone()
+            if warehouse is None or not int(warehouse["active"] or 0) or warehouse["deleted_at"] is not None:
+                problem = {
+                    **base,
+                    "warehouse_id": warehouse_id,
+                    "kind": "warehouse_inactive",
+                    "message": "Выбранный склад отсутствует или неактивен.",
+                }
+                blockers.append(problem)
+                rows.append({**problem, "state": "blocked", "planned_action": "none"})
+                continue
+
+            oem = str(item.get("oem") or "").strip()
+            stock = _best_stock_snapshot_readonly(conn, warehouse_id, oem, now)
+            price = _best_price_snapshot_readonly(conn, warehouse_id, oem, now)
+            sync_mode = str(warehouse["stock_sync_mode"] or "manual")
+
+            own_coverage = 0.0
+            blocked_total = 0.0
+            stock_observed_at = _parse_dt(stock.get("observed_at")) if stock else None
+            for reservation in item.get("reservations") or []:
+                if _reservation_blocks_readonly(
+                    reservation,
+                    now=now,
+                    snapshot_observed_at=stock_observed_at,
+                    sync_mode=sync_mode,
+                ):
+                    own_coverage += float(reservation.get("quantity") or 0)
+
+            all_active = _rows(
+                conn,
+                """
+                SELECT *
+                FROM warehouse_stock_reservations
+                WHERE warehouse_id = ?
+                  AND oem = ?
+                  AND status IN ('hold', 'reserved', 'committed')
+                ORDER BY created_at, id
+                """,
+                (warehouse_id, oem),
+            )
+            for reservation in all_active:
+                if _reservation_blocks_readonly(
+                    reservation,
+                    now=now,
+                    snapshot_observed_at=stock_observed_at,
+                    sync_mode=sync_mode,
+                ):
+                    blocked_total += float(reservation.get("quantity") or 0)
+
+            required = float(item.get("quantity") or 0)
+            missing_reserve = max(required - own_coverage, 0.0)
+            raw_qty = (
+                float(stock["quantity"])
+                if stock is not None and stock.get("quantity") is not None
+                else None
+            )
+            available_now = (
+                max(raw_qty - blocked_total, 0.0)
+                if raw_qty is not None
+                else None
+            )
+            available_for_order = (
+                max(raw_qty - max(blocked_total - own_coverage, 0.0), 0.0)
+                if raw_qty is not None
+                else None
+            )
+
+            row = {
+                **base,
+                "warehouse_id": warehouse_id,
+                "warehouse_public_name": warehouse["public_name"],
+                "stock_status": stock.get("status") if stock else "unknown",
+                "stock_is_fresh": bool(stock and stock.get("is_fresh")),
+                "stock_observed_at": stock.get("observed_at") if stock else None,
+                "stock_expires_at": stock.get("expires_at") if stock else None,
+                "raw_quantity": raw_qty,
+                "blocked_quantity": blocked_total,
+                "available_quantity": available_now,
+                "available_for_order": available_for_order,
+                "existing_coverage": own_coverage,
+                "missing_reserve": missing_reserve,
+                "order_price_rub": item.get("price_snapshot_rub"),
+                "current_price_rub": price.get("price_rub") if price else None,
+                "price_source_type": price.get("source_type") if price else None,
+            }
+
+            problems = []
+            if stock is None:
+                problems.append("stock_unknown")
+            elif not stock.get("is_fresh"):
+                problems.append("stock_stale")
+            elif raw_qty is None:
+                problems.append("stock_unknown")
+            elif available_for_order is None or available_for_order < required:
+                problems.append("insufficient_stock")
+
+            order_price = item.get("price_snapshot_rub")
+            current_price = price.get("price_rub") if price else None
+            if current_price is None:
+                problems.append("price_unknown")
+            elif order_price is not None and float(current_price) != float(order_price):
+                problems.append("price_changed")
+
+            if problems:
+                row["state"] = "blocked"
+                row["problems"] = problems
+                row["planned_action"] = "none"
+                blockers.append(
+                    {
+                        **base,
+                        "warehouse_id": warehouse_id,
+                        "kind": problems[0],
+                        "problems": problems,
+                        "message": ", ".join(problems),
+                    }
+                )
+            elif missing_reserve > 0:
+                row["state"] = "action"
+                row["planned_action"] = "reserve_missing"
+                row["planned_quantity"] = missing_reserve
+                actions.append(
+                    {
+                        **base,
+                        "warehouse_id": warehouse_id,
+                        "action": "reserve_missing",
+                        "quantity": missing_reserve,
+                    }
+                )
+            else:
+                row["state"] = "ok"
+                row["planned_action"] = "none"
+
+            rows.append(row)
+
+    return {
+        "order_id": str(order_id),
+        "order_status": str(order.get("status") or ""),
+        "ready_to_apply": not blockers,
+        "would_change_db": bool(actions),
+        "rows": rows,
+        "actions": actions,
+        "blockers": blockers,
+    }
 
 def get_order(order_id: str, db_file: Path | str) -> dict[str, Any]:
     """Return one complete client-order snapshot without changing the database."""
