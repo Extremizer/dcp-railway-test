@@ -712,28 +712,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             and await _is_chat_member(context, source_chat_id, int(user.id))
         )
         if not allowed:
-            pricing_analytics.record_update_event(
-                ORDERS_DB,
-                source_bot="probnik",
-                event_type="price_button_denied",
-                update=update,
-                source_chat_id=source_chat_id,
-                metadata={"entry":"workchat"},
-            )
             await update.effective_message.reply_text(
                 "кнопка <b>ПРОЦЕНИТЬ</b> доступна только членам <b>Extremizer Pro</b>",
                 parse_mode=ParseMode.HTML,
             )
             return
         context.user_data["pricing_source_chat_id"] = int(source_chat_id)
-        pricing_analytics.record_update_event(
-            ORDERS_DB,
-            source_bot="probnik",
-            event_type="price_button_open",
-            update=update,
-            source_chat_id=int(source_chat_id),
-            metadata={"entry":"workchat"},
-        )
         await update.effective_message.reply_text(
             "Отправь OEM-каталожный номер одним сообщением."
         )
@@ -810,10 +794,11 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     source_chat_id = context.user_data.get("pricing_source_chat_id")
-    pricing_analytics.record_update_event(
+    source_kind = "workchat" if source_chat_id is not None else "private"
+    analytics_request_id = pricing_analytics.begin_request_from_update(
         ORDERS_DB,
         source_bot="probnik",
-        event_type="oem_request",
+        source_kind=source_kind,
         update=update,
         source_chat_id=source_chat_id,
         oem=oem,
@@ -824,38 +809,29 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         info_task = asyncio.to_thread(_identity_and_price, oem)
         stock_task = _stock_with_refresh(oem)
         info, rows = await asyncio.gather(info_task, stock_task)
-        result_status = "FOUND" if info.get("customer_rub") is not None else "UNAVAILABLE"
-        pricing_analytics.record_update_event(
-            ORDERS_DB,
-            source_bot="probnik",
-            event_type=(
-                "oem_price_found"
-                if info.get("customer_rub") is not None
-                else "oem_price_unavailable"
-            ),
-            update=update,
-            source_chat_id=source_chat_id,
-            oem=oem,
-            manufacturer=info.get("manufacturer"),
-            result_status=result_status,
-        )
-        stock_found = any(
-            row.get("is_fresh")
+        stock_rows = [
+            {
+                "warehouse": row.get("public_name"),
+                "qty": row.get("available_quantity"),
+                "price_rub": row.get("price_rub"),
+            }
+            for row in rows
+            if row.get("is_fresh")
             and row.get("available_quantity") is not None
             and float(row["available_quantity"]) > 0
-            for row in rows
+        ]
+        price_found = info.get("customer_rub") is not None
+        pricing_analytics.complete_request(
+            ORDERS_DB,
+            analytics_request_id,
+            manufacturer=info.get("manufacturer"),
+            result_status="FOUND" if price_found or stock_rows else "UNAVAILABLE",
+            price_status="FOUND" if price_found else "UNAVAILABLE",
+            display_price_amount=info.get("customer_rub"),
+            display_price_currency="RUB" if price_found else None,
+            stock_rf_status="FOUND" if stock_rows else "NONE",
+            stock_rf=stock_rows,
         )
-        if stock_found:
-            pricing_analytics.record_update_event(
-                ORDERS_DB,
-                source_bot="probnik",
-                event_type="oem_stock_found",
-                update=update,
-                source_chat_id=source_chat_id,
-                oem=oem,
-                manufacturer=info.get("manufacturer"),
-                result_status="FOUND",
-            )
         await status.edit_text(
             _compose(oem, info, rows),
             parse_mode=ParseMode.HTML,
