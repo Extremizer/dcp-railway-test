@@ -9,6 +9,7 @@ Every database connection is opened with SQLite mode=ro.
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 
@@ -104,7 +105,7 @@ def get_order(order_id: str, db_file: Path | str) -> dict[str, Any]:
     if not order_id:
         raise OrderNotFound(order_id)
 
-    with _connect(db_file) as conn:
+    with closing(_connect(db_file)) as conn:
         order_row = conn.execute(
             "SELECT * FROM orders WHERE order_id = ?",
             (order_id,),
@@ -259,5 +260,5 @@ def list_orders(
     """
     params.extend([limit, offset])
 
-    with _connect(db_file) as conn:
+    with closing(_connect(db_file)) as conn:
         return _rows(conn, sql, tuple(params))
