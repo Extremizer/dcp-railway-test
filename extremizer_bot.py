@@ -11380,15 +11380,18 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_oems"] = [oem for _, oem in jobs]
     context.user_data["last_jobs"] = list(jobs)
 
-    for analytics_manufacturer, analytics_oem in jobs:
-        pricing_analytics.record_update_event(
+    analytics_source_kind = "workchat" if _is_group_chat(update) else "private"
+    analytics_request_ids = [
+        pricing_analytics.begin_request_from_update(
             ORDERS_DB_FILE,
             source_bot="pricing",
-            event_type="oem_request",
+            source_kind=analytics_source_kind,
             update=update,
             oem=analytics_oem,
             manufacturer=analytics_manufacturer,
         )
+        for analytics_manufacturer, analytics_oem in jobs
+    ]
 
     # Preserve the exact V2.3 single-item UX when this is the normal selected-
     # manufacturer mode. Explicit manufacturer input uses the common batch path.
@@ -11414,25 +11417,38 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result["_resolved_item_type"] = identity.get("item_type")
             result = await enrich_found_result_with_dealer_price(result)
             status = str(result.get("status") or "").upper()
-            analytics_price_found = (
-                customer_rub_price_from_dp(
-                    result.get("_dealer_price_usd"),
-                    rate=load_usd_rub_rate(),
-                )
-                is not None
+            analytics_display_price = customer_rub_price_from_dp(
+                result.get("_dealer_price_usd"),
+                rate=load_usd_rub_rate(),
             )
-            pricing_analytics.record_update_event(
+            analytics_stock = [
+                {
+                    "warehouse": row.get("public_name"),
+                    "qty": row.get("available_quantity"),
+                    "price_rub": row.get("price_rub"),
+                }
+                for row in warehouse_stock_service.client_stock_summary(
+                    _client_stock_oem(result),
+                    db_file=ORDERS_DB_FILE,
+                )
+                if row.get("is_fresh")
+                and row.get("available_quantity") is not None
+                and float(row["available_quantity"]) > 0
+            ]
+            pricing_analytics.complete_request(
                 ORDERS_DB_FILE,
-                source_bot="pricing",
-                event_type=(
-                    "oem_price_found"
-                    if analytics_price_found
-                    else "oem_price_unavailable"
-                ),
-                update=update,
-                oem=oem,
+                analytics_request_ids[0] if analytics_request_ids else None,
                 manufacturer=manufacturer,
                 result_status=status or "UNKNOWN",
+                price_status=(
+                    "FOUND" if analytics_display_price is not None else "UNAVAILABLE"
+                ),
+                display_price_amount=analytics_display_price,
+                display_price_currency=(
+                    "RUB" if analytics_display_price is not None else None
+                ),
+                stock_rf_status="FOUND" if analytics_stock else "NONE",
+                stock_rf=analytics_stock,
             )
             if status in {"FOUND", "PARTIAL"}:
                 cache_client_offer_result(context, result)
@@ -11449,15 +11465,13 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     result,
                 )
         except Exception as exc:
-            pricing_analytics.record_update_event(
+            pricing_analytics.complete_request(
                 ORDERS_DB_FILE,
-                source_bot="pricing",
-                event_type="oem_price_unavailable",
-                update=update,
-                oem=oem,
+                analytics_request_ids[0] if analytics_request_ids else None,
                 manufacturer=manufacturer,
                 result_status="ERROR",
-                metadata={"error_type": type(exc).__name__},
+                price_status="UNAVAILABLE",
+                stock_rf_status="UNKNOWN",
             )
             log.exception("Search failed for %s / %s", manufacturer, oem)
             await wait_message.edit_text(
@@ -11509,25 +11523,42 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result = await finder_service.search(manufacturer, oem)
             result = await enrich_found_result_with_dealer_price(result)
             analytics_status = str(result.get("status") or "").upper()
-            analytics_price_found = (
-                customer_rub_price_from_dp(
-                    result.get("_dealer_price_usd"),
-                    rate=load_usd_rub_rate(),
-                )
-                is not None
+            analytics_display_price = customer_rub_price_from_dp(
+                result.get("_dealer_price_usd"),
+                rate=load_usd_rub_rate(),
             )
-            pricing_analytics.record_update_event(
+            analytics_stock = [
+                {
+                    "warehouse": row.get("public_name"),
+                    "qty": row.get("available_quantity"),
+                    "price_rub": row.get("price_rub"),
+                }
+                for row in warehouse_stock_service.client_stock_summary(
+                    _client_stock_oem(result),
+                    db_file=ORDERS_DB_FILE,
+                )
+                if row.get("is_fresh")
+                and row.get("available_quantity") is not None
+                and float(row["available_quantity"]) > 0
+            ]
+            pricing_analytics.complete_request(
                 ORDERS_DB_FILE,
-                source_bot="pricing",
-                event_type=(
-                    "oem_price_found"
-                    if analytics_price_found
-                    else "oem_price_unavailable"
+                (
+                    analytics_request_ids[index - 1]
+                    if index - 1 < len(analytics_request_ids)
+                    else None
                 ),
-                update=update,
-                oem=oem,
                 manufacturer=manufacturer,
                 result_status=analytics_status or "UNKNOWN",
+                price_status=(
+                    "FOUND" if analytics_display_price is not None else "UNAVAILABLE"
+                ),
+                display_price_amount=analytics_display_price,
+                display_price_currency=(
+                    "RUB" if analytics_display_price is not None else None
+                ),
+                stock_rf_status="FOUND" if analytics_stock else "NONE",
+                stock_rf=analytics_stock,
             )
             batch_results.append({
                 "manufacturer": manufacturer,
@@ -11536,15 +11567,17 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "exception": None,
             })
         except Exception as exc:
-            pricing_analytics.record_update_event(
+            pricing_analytics.complete_request(
                 ORDERS_DB_FILE,
-                source_bot="pricing",
-                event_type="oem_price_unavailable",
-                update=update,
-                oem=oem,
+                (
+                    analytics_request_ids[index - 1]
+                    if index - 1 < len(analytics_request_ids)
+                    else None
+                ),
                 manufacturer=manufacturer,
                 result_status="ERROR",
-                metadata={"error_type": type(exc).__name__},
+                price_status="UNAVAILABLE",
+                stock_rf_status="UNKNOWN",
             )
             log.exception("Batch search failed for %s / %s", manufacturer, oem)
             batch_results.append({
