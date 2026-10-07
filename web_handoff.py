@@ -83,9 +83,11 @@ def create_handoff(
         oem = str(item.get("oem") or "").strip()
         requested_oem = str(item.get("requested_oem") or oem).strip()
         qty = int(item.get("qty") or 1)
-        if not manufacturer or not oem or qty < 1 or qty > 99:
-            raise ValueError("Invalid WEB cart item.")
         offer_source = str(item.get("offer_source") or "usa").strip().lower()
+        if not oem or qty < 1 or qty > 99:
+            raise ValueError("Invalid WEB cart item.")
+        if offer_source == "usa" and not manufacturer:
+            raise ValueError("USA WEB cart item requires manufacturer.")
         if offer_source not in {"usa", "warehouse"}:
             raise ValueError("Invalid WEB offer source.")
         warehouse_id = item.get("warehouse_id")
