@@ -78,11 +78,18 @@ def _safe_admin_next(value: str | None) -> str:
     return value
 
 
-def _require_admin_page(request: Request) -> None:
-    if not supplier_admin_auth.is_web_admin_authorized(
+def _admin_page_login_redirect(request: Request):
+    if supplier_admin_auth.is_web_admin_authorized(
         session_cookie=request.cookies.get(supplier_admin_auth.WEB_ADMIN_COOKIE),
     ):
-        raise HTTPException(status_code=401, detail="WEB admin login required")
+        return None
+    next_value = request.url.path
+    if request.url.query:
+        next_value += "?" + request.url.query
+    return RedirectResponse(
+        "/admin/login?next=" + urllib.parse.quote(next_value, safe=""),
+        status_code=303,
+    )
 
 
 @app.get("/admin/login", response_class=HTMLResponse)
@@ -146,13 +153,17 @@ def admin_logout():
 
 @app.get("/admin/supplier-orders", response_class=HTMLResponse)
 def supplier_admin_queue(request: Request, filter: str = "all"):
-    _require_admin_page(request)
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
     if filter not in {"all","need_send","working","shipped","delivered"}: filter="all"
     return supplier_web_admin.render_queue(supplier_order_service, filter)
 
 @app.get("/admin/supplier-channels", response_class=HTMLResponse)
 def supplier_channels_page(request: Request):
-    _require_admin_page(request)
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
     return supplier_channel_web.render(supplier_order_service, supplier_channels)
 
 @app.post("/api/admin/supplier-channels/{warehouse_id}")
@@ -178,7 +189,9 @@ def supplier_channel_save(
 
 @app.get("/admin/supplier-orders/{supplier_order_id}", response_class=HTMLResponse)
 def supplier_admin_card(request: Request, supplier_order_id: int):
-    _require_admin_page(request)
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
     try: order=supplier_order_service.get(supplier_order_id)
     except KeyError: raise HTTPException(404,"supplier order not found")
     return supplier_web_admin.render_card(order)
