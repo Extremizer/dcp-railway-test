@@ -39,6 +39,8 @@ import supplier_web_admin
 import supplier_channels
 import supplier_channel_web
 import supplier_admin_auth
+import admin_order_service
+import admin_order_web
 import oem_import_maintenance
 try:
     import oem_reference_service
@@ -149,6 +151,18 @@ def admin_logout():
         samesite="strict",
     )
     return response
+
+
+@app.get("/admin/orders/{order_id}", response_class=HTMLResponse)
+def admin_order_card(request: Request, order_id: str):
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
+    try:
+        snapshot = admin_order_service.get_order(order_id, core.ORDERS_DB_FILE)
+    except admin_order_service.OrderNotFound:
+        raise HTTPException(status_code=404, detail="client order not found")
+    return admin_order_web.render_order_card(snapshot)
 
 
 @app.get("/admin/supplier-orders", response_class=HTMLResponse)
