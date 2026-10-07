@@ -181,14 +181,16 @@ def lookup_oem(oem: str | None) -> dict | None:
     )
     safe_actual_weight = (
         float(actual_weight_kg)
-        if actual_weight_kg is not None
+        if str(weight_state or "") in {"ACTUAL_ONLY", "BOTH"}
+        and actual_weight_kg is not None
         and float(actual_weight_kg) > 0
         and not bool(actual_weight_conflict)
         else None
     )
     safe_volume_weight = (
         float(volume_weight_kg)
-        if volume_weight_kg is not None
+        if str(weight_state or "") == "BOTH"
+        and volume_weight_kg is not None
         and float(volume_weight_kg) > 0
         and not bool(volume_weight_conflict)
         else None
