@@ -14,14 +14,15 @@ import urllib.parse
 import urllib.request
 import hashlib
 import hmac
+import html
 import secrets
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Header
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request, Form
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -70,24 +71,114 @@ app.include_router(supplier_api.build_supplier_router(supplier_order_service))
 app.include_router(oem_import_maintenance.router)
 
 
+def _safe_admin_next(value: str | None) -> str:
+    value = str(value or "").strip()
+    if not value.startswith("/admin") or value.startswith("//"):
+        return "/admin/supplier-orders"
+    return value
+
+
+def _require_admin_page(request: Request) -> None:
+    if not supplier_admin_auth.is_web_admin_authorized(
+        session_cookie=request.cookies.get(supplier_admin_auth.WEB_ADMIN_COOKIE),
+    ):
+        raise HTTPException(status_code=401, detail="WEB admin login required")
+
+
+@app.get("/admin/login", response_class=HTMLResponse)
+def admin_login_page(next: str = "/admin/supplier-orders"):
+    target = _safe_admin_next(next)
+    return HTMLResponse(
+        """<!doctype html><html lang="ru"><head><meta charset="utf-8">"""
+        """<meta name="viewport" content="width=device-width,initial-scale=1">"""
+        """<title>Extremizer Pro — WEB ADMIN</title>"""
+        """<style>body{font-family:Arial,sans-serif;background:#f4f6f8;margin:0}"""
+        """.box{max-width:420px;margin:12vh auto;background:#fff;padding:28px;"""
+        """border-radius:14px;box-shadow:0 8px 30px #0001}h1{font-size:22px}"""
+        """input,button{box-sizing:border-box;width:100%;padding:12px;margin-top:10px;"""
+        """border-radius:9px;border:1px solid #ccd2d8}button{cursor:pointer;font-weight:700}"""
+        """.note{font-size:13px;color:#667085;margin-top:12px}</style></head><body>"""
+        """<div class="box"><h1>🔐 WEB ADMIN</h1>"""
+        """<form method="post" action="/admin/login">"""
+        f"""<input type="hidden" name="next" value="{html.escape(target, quote=True)}">"""
+        """<input type="password" name="token" autocomplete="current-password" """
+        """placeholder="ADMIN token" required autofocus>"""
+        """<button type="submit">Войти</button></form>"""
+        """<div class="note">Токен проверяется на сервере и не сохраняется в cookie.</div>"""
+        """</div></body></html>"""
+    )
+
+
+@app.post("/admin/login")
+def admin_login_submit(
+    token: str = Form(...),
+    next: str = Form(default="/admin/supplier-orders"),
+):
+    try:
+        supplier_admin_auth.require_web_admin_token(token)
+    except PermissionError:
+        raise HTTPException(status_code=401, detail="Неверный ADMIN token")
+    response = RedirectResponse(_safe_admin_next(next), status_code=303)
+    response.set_cookie(
+        supplier_admin_auth.WEB_ADMIN_COOKIE,
+        supplier_admin_auth.issue_web_admin_session(),
+        max_age=supplier_admin_auth.WEB_ADMIN_SESSION_MAX_AGE,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/",
+    )
+    return response
+
+
+@app.post("/admin/logout")
+def admin_logout():
+    response = RedirectResponse("/admin/login", status_code=303)
+    response.delete_cookie(
+        supplier_admin_auth.WEB_ADMIN_COOKIE,
+        path="/",
+        secure=True,
+        httponly=True,
+        samesite="strict",
+    )
+    return response
+
+
 @app.get("/admin/supplier-orders", response_class=HTMLResponse)
-def supplier_admin_queue(filter: str = "all"):
+def supplier_admin_queue(request: Request, filter: str = "all"):
+    _require_admin_page(request)
     if filter not in {"all","need_send","working","shipped","delivered"}: filter="all"
     return supplier_web_admin.render_queue(supplier_order_service, filter)
 
 @app.get("/admin/supplier-channels", response_class=HTMLResponse)
-def supplier_channels_page():
+def supplier_channels_page(request: Request):
+    _require_admin_page(request)
     return supplier_channel_web.render(supplier_order_service, supplier_channels)
 
 @app.post("/api/admin/supplier-channels/{warehouse_id}")
-def supplier_channel_save(warehouse_id:int, body:supplier_api.SupplierChannelIn, x_extremizer_admin_token:str|None=Header(default=None)):
-    try: supplier_admin_auth.require_web_admin_token(x_extremizer_admin_token)
-    except PermissionError as exc: raise HTTPException(401,str(exc))
-    try: return supplier_channels.save(core.ORDERS_DB_FILE,warehouse_id,body.channel,body.recipient,body.custom_name)
-    except ValueError as exc: raise HTTPException(409,str(exc))
+def supplier_channel_save(
+    request: Request,
+    warehouse_id: int,
+    body: supplier_api.SupplierChannelIn,
+    x_extremizer_admin_token: str | None = Header(default=None),
+):
+    try:
+        supplier_admin_auth.require_web_admin_access(
+            header_token=x_extremizer_admin_token,
+            session_cookie=request.cookies.get(supplier_admin_auth.WEB_ADMIN_COOKIE),
+        )
+    except PermissionError as exc:
+        raise HTTPException(401, str(exc))
+    try:
+        return supplier_channels.save(
+            core.ORDERS_DB_FILE, warehouse_id, body.channel, body.recipient, body.custom_name
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
 
 @app.get("/admin/supplier-orders/{supplier_order_id}", response_class=HTMLResponse)
-def supplier_admin_card(supplier_order_id: int):
+def supplier_admin_card(request: Request, supplier_order_id: int):
+    _require_admin_page(request)
     try: order=supplier_order_service.get(supplier_order_id)
     except KeyError: raise HTTPException(404,"supplier order not found")
     return supplier_web_admin.render_card(order)
