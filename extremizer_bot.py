@@ -7912,12 +7912,17 @@ def _restore_web_handoff_cart(token: str) -> dict | None:
     for item in payload.get("items") or []:
         manufacturer = str(item.get("manufacturer") or "")
         oem = str(item.get("oem") or "")
-        result = public_msrp_cache_result(manufacturer, oem)
-        if not result or str(result.get("status") or "").upper() != "FOUND":
-            continue
-
-        current_oem = str(result.get("item_sku") or result.get("oem") or oem)
         source = str(item.get("offer_source") or "usa").strip().lower()
+        result = public_msrp_cache_result(manufacturer, oem) if manufacturer else None
+
+        if source == "usa":
+            if not result or str(result.get("status") or "").upper() != "FOUND":
+                continue
+            current_oem = str(result.get("item_sku") or result.get("oem") or oem)
+        else:
+            source = "warehouse"
+            current_oem = oem
+
         warehouse_id = item.get("warehouse_id")
         warehouse_public_name = None
         price_snapshot_rub = None
@@ -7964,9 +7969,9 @@ def _restore_web_handoff_cart(token: str) -> dict | None:
             "manufacturer": manufacturer,
             "oem": current_oem,
             "requested_oem": str(item.get("requested_oem") or oem),
-            "name": result.get("name"),
-            "price": result.get("price"),
-            "catalog": result.get("catalog"),
+            "name": result.get("name") if result else None,
+            "price": result.get("price") if result else None,
+            "catalog": result.get("catalog") if result else None,
             "offer_source": source,
             "warehouse_id": warehouse_id,
             "warehouse_public_name": warehouse_public_name,
