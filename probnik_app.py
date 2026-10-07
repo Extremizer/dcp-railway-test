@@ -718,6 +718,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             )
             return
         context.user_data["pricing_source_chat_id"] = int(source_chat_id)
+        try:
+            source_chat = await context.bot.get_chat(int(source_chat_id))
+            context.user_data["pricing_source_chat_title"] = str(
+                getattr(source_chat, "title", "") or ""
+            ).strip() or None
+        except Exception:
+            context.user_data["pricing_source_chat_title"] = None
         await update.effective_message.reply_text(
             "Отправь OEM-каталожный номер одним сообщением."
         )
@@ -801,6 +808,7 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         source_kind=source_kind,
         update=update,
         source_chat_id=source_chat_id,
+        source_chat_title=context.user_data.get("pricing_source_chat_title"),
         oem=oem,
     )
 
