@@ -60,6 +60,7 @@ import supplier_runtime
 import supplier_telegram_admin
 import supplier_telegram_handlers
 import warehouse_recipient
+import pricing_analytics
 
 
 # ---------------------------------------------------------------------------
@@ -11379,6 +11380,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["last_oems"] = [oem for _, oem in jobs]
     context.user_data["last_jobs"] = list(jobs)
 
+    for analytics_manufacturer, analytics_oem in jobs:
+        pricing_analytics.record_update_event(
+            ORDERS_DB_FILE,
+            source_bot="pricing",
+            event_type="oem_request",
+            update=update,
+            oem=analytics_oem,
+            manufacturer=analytics_manufacturer,
+        )
+
     # Preserve the exact V2.3 single-item UX when this is the normal selected-
     # manufacturer mode. Explicit manufacturer input uses the common batch path.
     if len(jobs) == 1 and not mixed_mode:
@@ -11403,6 +11414,26 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result["_resolved_item_type"] = identity.get("item_type")
             result = await enrich_found_result_with_dealer_price(result)
             status = str(result.get("status") or "").upper()
+            analytics_price_found = (
+                customer_rub_price_from_dp(
+                    result.get("_dealer_price_usd"),
+                    rate=load_usd_rub_rate(),
+                )
+                is not None
+            )
+            pricing_analytics.record_update_event(
+                ORDERS_DB_FILE,
+                source_bot="pricing",
+                event_type=(
+                    "oem_price_found"
+                    if analytics_price_found
+                    else "oem_price_unavailable"
+                ),
+                update=update,
+                oem=oem,
+                manufacturer=manufacturer,
+                result_status=status or "UNKNOWN",
+            )
             if status in {"FOUND", "PARTIAL"}:
                 cache_client_offer_result(context, result)
             await wait_message.edit_text(
@@ -11418,6 +11449,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     result,
                 )
         except Exception as exc:
+            pricing_analytics.record_update_event(
+                ORDERS_DB_FILE,
+                source_bot="pricing",
+                event_type="oem_price_unavailable",
+                update=update,
+                oem=oem,
+                manufacturer=manufacturer,
+                result_status="ERROR",
+                metadata={"error_type": type(exc).__name__},
+            )
             log.exception("Search failed for %s / %s", manufacturer, oem)
             await wait_message.edit_text(
                 "⚠️ <b>Ошибка поиска</b>\n\n"
@@ -11467,6 +11508,27 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             result = await finder_service.search(manufacturer, oem)
             result = await enrich_found_result_with_dealer_price(result)
+            analytics_status = str(result.get("status") or "").upper()
+            analytics_price_found = (
+                customer_rub_price_from_dp(
+                    result.get("_dealer_price_usd"),
+                    rate=load_usd_rub_rate(),
+                )
+                is not None
+            )
+            pricing_analytics.record_update_event(
+                ORDERS_DB_FILE,
+                source_bot="pricing",
+                event_type=(
+                    "oem_price_found"
+                    if analytics_price_found
+                    else "oem_price_unavailable"
+                ),
+                update=update,
+                oem=oem,
+                manufacturer=manufacturer,
+                result_status=analytics_status or "UNKNOWN",
+            )
             batch_results.append({
                 "manufacturer": manufacturer,
                 "oem": oem,
@@ -11474,6 +11536,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "exception": None,
             })
         except Exception as exc:
+            pricing_analytics.record_update_event(
+                ORDERS_DB_FILE,
+                source_bot="pricing",
+                event_type="oem_price_unavailable",
+                update=update,
+                oem=oem,
+                manufacturer=manufacturer,
+                result_status="ERROR",
+                metadata={"error_type": type(exc).__name__},
+            )
             log.exception("Batch search failed for %s / %s", manufacturer, oem)
             batch_results.append({
                 "manufacturer": manufacturer,
@@ -11742,6 +11814,7 @@ def main():
     USD_RUB_RATE = load_usd_rub_rate()
     PRICE_COEFFICIENT = load_price_coefficient()
     init_orders_db()
+    pricing_analytics.init_analytics(ORDERS_DB_FILE)
     warehouse_admin.configure(
         ORDERS_DB_FILE,
         RATE_ADMIN_USER_ID,
