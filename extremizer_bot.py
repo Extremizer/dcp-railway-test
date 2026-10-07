@@ -7953,6 +7953,7 @@ def _restore_web_handoff_cart(token: str) -> dict | None:
                 available_snapshot is None
                 or float(available_snapshot) < qty
                 or price_snapshot_rub is None
+                or float(price_snapshot_rub) <= 0
             ):
                 continue
             key = f"{manufacturer}|{current_oem}|warehouse:{warehouse_id}"
