@@ -173,6 +173,13 @@ def _pricing_analytics_key() -> bytes:
     ).digest()
 
 
+def _oemixibot_identity_key() -> bytes:
+    token = _oemixibot_token()
+    return hashlib.sha256(
+        b"extremizer-oemixibot-identity-v1\0" + token.encode("utf-8")
+    ).digest()
+
+
 def _require_dp_sync_signature(
     path: str,
     timestamp: str | None,
@@ -214,6 +221,28 @@ def _require_pricing_analytics_signature(
         raise HTTPException(status_code=401, detail={"code": "unauthorized"})
 
 
+def _require_oemixibot_identity_signature(
+    path: str,
+    timestamp: str | None,
+    signature: str | None,
+) -> None:
+    try:
+        ts = int(str(timestamp or "").strip())
+    except ValueError:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+    if abs(int(time.time()) - ts) > 60:
+        raise HTTPException(status_code=401, detail={"code": "stale_signature"})
+    message = f"v1\n{path}\n{ts}".encode("utf-8")
+    expected = hmac.new(
+        _oemixibot_identity_key(),
+        message,
+        hashlib.sha256,
+    ).hexdigest()
+    supplied = str(signature or "").strip().lower()
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+
+
 
 
 def _init_web1() -> None:
@@ -241,6 +270,52 @@ def health() -> dict[str, Any]:
         "project": "Extremizer Pro",
         "layer": "WEB",
         "stage": "WEB1",
+    }
+
+
+@app.get("/internal/oemixibot/identity")
+def oemixibot_identity_lookup(
+    oem: str,
+    x_oemixibot_identity_ts: str | None = Header(default=None),
+    x_oemixibot_identity_sig: str | None = Header(default=None),
+) -> dict[str, Any]:
+    path = "/internal/oemixibot/identity"
+    _require_oemixibot_identity_signature(
+        path,
+        x_oemixibot_identity_ts,
+        x_oemixibot_identity_sig,
+    )
+
+    normalized = core.finder.normalize_oem(str(oem or "").strip())
+    if not normalized:
+        raise HTTPException(status_code=400, detail={"code": "invalid_oem"})
+
+    identity = core.resolve_oem_identity(normalized)
+    manufacturer = core.finder.manufacturer_alias(
+        str(identity.get("manufacturer") or "").strip()
+    )
+    candidates = [
+        core.finder.manufacturer_alias(str(value or "").strip())
+        for value in (identity.get("manufacturer_candidates") or [])
+    ]
+    candidates = sorted({value for value in candidates if value})
+
+    if manufacturer and len(candidates) <= 1:
+        return {
+            "ok": True,
+            "status": "FOUND",
+            "oem": normalized,
+            "manufacturer": manufacturer,
+            "item_type": identity.get("item_type"),
+            "source": "shared_production_identity",
+        }
+
+    return {
+        "ok": True,
+        "status": "UNRESOLVED",
+        "oem": normalized,
+        "manufacturer": None,
+        "manufacturer_candidates": candidates,
     }
 
 
