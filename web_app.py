@@ -31,6 +31,7 @@ import warehouse_store
 import stock_engine
 import web_handoff
 import dp_live_bridge
+import pricing_analytics
 import supplier_runtime
 import supplier_api
 import supplier_web_admin
@@ -138,12 +139,37 @@ class DPSyncResultRequest(BaseModel):
     manufacturer: str | None = None
 
 
-def _dp_sync_key() -> bytes:
+class OEMixiAnalyticsRequest(BaseModel):
+    telegram_user_id: int
+    username: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    oem: str
+    manufacturer: str | None = None
+    result_status: str | None = None
+    price_status: str | None = None
+    display_price_amount: float | None = Field(default=None, ge=0)
+    display_price_currency: str | None = None
+
+
+def _oemixibot_token() -> str:
     token = os.getenv("OEMIXIBOT_TOKEN", "").strip()
     if not token:
-        raise HTTPException(status_code=503, detail={"code": "dp_sync_unconfigured"})
+        raise HTTPException(status_code=503, detail={"code": "oemixibot_unconfigured"})
+    return token
+
+
+def _dp_sync_key() -> bytes:
+    token = _oemixibot_token()
     return hashlib.sha256(
         b"extremizer-dp-sync-v1\0" + token.encode("utf-8")
+    ).digest()
+
+
+def _pricing_analytics_key() -> bytes:
+    token = _oemixibot_token()
+    return hashlib.sha256(
+        b"extremizer-pricing-analytics-v1\0" + token.encode("utf-8")
     ).digest()
 
 
@@ -166,12 +192,36 @@ def _require_dp_sync_signature(
 
 
 
+def _require_pricing_analytics_signature(
+    path: str,
+    timestamp: str | None,
+    signature: str | None,
+) -> None:
+    try:
+        ts = int(str(timestamp or "").strip())
+    except ValueError:
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+    if abs(int(time.time()) - ts) > 60:
+        raise HTTPException(status_code=401, detail={"code": "stale_signature"})
+    message = f"v1\n{path}\n{ts}".encode("utf-8")
+    expected = hmac.new(
+        _pricing_analytics_key(),
+        message,
+        hashlib.sha256,
+    ).hexdigest()
+    supplied = str(signature or "").strip().lower()
+    if not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+
+
+
 
 def _init_web1() -> None:
     core.init_orders_db()
     warehouse_store.init_warehouse_db(core.ORDERS_DB_FILE)
     web_handoff.init_web_handoff_db(core.ORDERS_DB_FILE)
     dp_live_bridge.init(core.ORDERS_DB_FILE)
+    pricing_analytics.init_analytics(core.ORDERS_DB_FILE)
 
 
 @app.on_event("startup")
@@ -192,6 +242,58 @@ def health() -> dict[str, Any]:
         "layer": "WEB",
         "stage": "WEB1",
     }
+
+
+@app.post("/internal/pricing-analytics/oemixibot/request")
+def oemixibot_pricing_analytics_request(
+    payload: OEMixiAnalyticsRequest,
+    x_pricing_analytics_ts: str | None = Header(default=None),
+    x_pricing_analytics_sig: str | None = Header(default=None),
+) -> dict[str, Any]:
+    path = "/internal/pricing-analytics/oemixibot/request"
+    _require_pricing_analytics_signature(
+        path,
+        x_pricing_analytics_ts,
+        x_pricing_analytics_sig,
+    )
+
+    oem = core.finder.normalize_oem(str(payload.oem or "").strip())
+    if not oem:
+        raise HTTPException(status_code=400, detail={"code": "invalid_oem"})
+
+    manufacturer = None
+    if payload.manufacturer:
+        manufacturer = core.finder.manufacturer_alias(
+            str(payload.manufacturer).strip()
+        ) or str(payload.manufacturer).strip()
+
+    request_id = pricing_analytics.begin_request(
+        core.ORDERS_DB_FILE,
+        source_bot="oemixibot",
+        source_kind="private",
+        oem=oem,
+        manufacturer=manufacturer,
+        telegram_user_id=int(payload.telegram_user_id),
+        username=payload.username,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        source_chat_id=int(payload.telegram_user_id),
+    )
+    if request_id is None:
+        raise HTTPException(status_code=500, detail={"code": "analytics_write_failed"})
+
+    pricing_analytics.complete_request(
+        core.ORDERS_DB_FILE,
+        request_id,
+        manufacturer=manufacturer,
+        result_status=payload.result_status,
+        price_status=payload.price_status,
+        display_price_amount=payload.display_price_amount,
+        display_price_currency=payload.display_price_currency,
+        stock_rf_status="NOT_APPLICABLE",
+        stock_rf=[],
+    )
+    return {"ok": True, "request_id": request_id}
 
 
 @app.get("/internal/dp-sync/next")
