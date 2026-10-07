@@ -435,21 +435,96 @@ def oemixibot_identity_lookup(
         raise HTTPException(status_code=400, detail={"code": "invalid_oem"})
 
     identity = core.resolve_oem_identity(normalized)
-    manufacturer = core.finder.manufacturer_alias(
-        str(identity.get("manufacturer") or "").strip()
-    )
-    candidates = [
-        core.finder.manufacturer_alias(str(value or "").strip())
-        for value in (identity.get("manufacturer_candidates") or [])
-    ]
-    candidates = sorted({value for value in candidates if value})
+    candidates = set()
+    for value in (identity.get("manufacturer_candidates") or []):
+        canonical = core.finder.manufacturer_alias(str(value or "").strip())
+        if canonical:
+            candidates.add(canonical)
+    if identity.get("manufacturer"):
+        canonical = core.finder.manufacturer_alias(
+            str(identity.get("manufacturer") or "").strip()
+        )
+        if canonical:
+            candidates.add(canonical)
 
-    if manufacturer and len(candidates) <= 1:
+    # Read additional trusted production sources directly.  The endpoint is
+    # deliberately conservative: exactly one unique canonical manufacturer
+    # across all confirmed sources is required.
+    core.init_orders_db()
+    with sqlite3.connect(core.ORDERS_DB_FILE) as conn:
+        tables = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+
+        if "probnik_oem_identity" in tables:
+            for row in conn.execute(
+                """SELECT DISTINCT manufacturer
+                     FROM probnik_oem_identity
+                    WHERE (oem=? OR current_oem=?)
+                      AND verified=1
+                      AND manufacturer IS NOT NULL
+                      AND TRIM(manufacturer)<>''""",
+                (normalized, normalized),
+            ):
+                canonical = core.finder.manufacturer_alias(str(row[0] or "").strip())
+                if canonical:
+                    candidates.add(canonical)
+
+        if "dealer_price_cache" in tables:
+            for row in conn.execute(
+                """SELECT DISTINCT manufacturer
+                     FROM dealer_price_cache
+                    WHERE oem=?
+                      AND dealer_price_usd>0
+                      AND manufacturer IS NOT NULL
+                      AND TRIM(manufacturer)<>''""",
+                (normalized,),
+            ):
+                canonical = core.finder.manufacturer_alias(str(row[0] or "").strip())
+                if canonical:
+                    candidates.add(canonical)
+
+        if "oem_catalog_cache" in tables:
+            for row in conn.execute(
+                """SELECT DISTINCT manufacturer
+                     FROM oem_catalog_cache
+                    WHERE current_oem=?
+                      AND msrp_verified=1
+                      AND manufacturer IS NOT NULL
+                      AND TRIM(manufacturer)<>''""",
+                (normalized,),
+            ):
+                canonical = core.finder.manufacturer_alias(str(row[0] or "").strip())
+                if canonical:
+                    candidates.add(canonical)
+
+        if "oem_catalog_aliases" in tables:
+            for row in conn.execute(
+                """SELECT DISTINCT a.manufacturer
+                     FROM oem_catalog_aliases AS a
+                     JOIN oem_catalog_cache AS c
+                       ON c.manufacturer=a.manufacturer
+                      AND c.current_oem=a.current_oem
+                    WHERE a.alias_oem=?
+                      AND c.msrp_verified=1
+                      AND a.manufacturer IS NOT NULL
+                      AND TRIM(a.manufacturer)<>''""",
+                (normalized,),
+            ):
+                canonical = core.finder.manufacturer_alias(str(row[0] or "").strip())
+                if canonical:
+                    candidates.add(canonical)
+
+    candidates = sorted(candidates)
+    if len(candidates) == 1:
         return {
             "ok": True,
             "status": "FOUND",
             "oem": normalized,
-            "manufacturer": manufacturer,
+            "manufacturer": candidates[0],
             "item_type": identity.get("item_type"),
             "source": "shared_production_identity",
         }
