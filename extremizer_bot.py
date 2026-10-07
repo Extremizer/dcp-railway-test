@@ -9999,9 +9999,9 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             }
         analytics_user = update.effective_user
         analytics_oem = str(
-            result.get("item_sku")
+            result.get("query_oem")
+            or result.get("item_sku")
             or result.get("oem")
-            or result.get("query_oem")
             or ""
         ).strip()
         if analytics_user is not None and analytics_oem:
@@ -10490,8 +10490,8 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
         if user is not None:
             for analytics_item in cart.values():
                 analytics_oem = str(
-                    analytics_item.get("oem")
-                    or analytics_item.get("requested_oem")
+                    analytics_item.get("requested_oem")
+                    or analytics_item.get("oem")
                     or ""
                 ).strip()
                 if not analytics_oem:
