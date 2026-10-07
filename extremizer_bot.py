@@ -10731,6 +10731,17 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not value:
             await safe_reply_text(message, "⚠️ Поле не может быть пустым.")
             return
+        if recipient_field == "phone":
+            try:
+                value = warehouse_recipient.normalize_phone(value)
+            except ValueError:
+                await safe_reply_text(
+                    message,
+                    "⚠️ <b>Некорректный номер телефона.</b>\n\n"
+                    "Введи номер получателя в формате: <code>+79991234567</code>.",
+                    parse_mode=ParseMode.HTML,
+                )
+                return
         recipient[recipient_field] = value
         context.user_data["warehouse_recipient"] = recipient
         field = warehouse_recipient.next_field(recipient)
