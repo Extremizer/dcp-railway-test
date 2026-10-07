@@ -262,3 +262,125 @@ td small{{display:block;color:#667085;margin-top:3px}}
 </main>
 </body>
 </html>"""
+
+
+ORDER_FILTERS = (
+    ("all", "Все"),
+    ("new", "Новые"),
+    ("confirmed", "Подтверждённые"),
+    ("executing", "В исполнении"),
+    ("completed", "Завершённые"),
+    ("cancelled", "Отменённые"),
+)
+
+
+def render_order_queue(
+    orders: list[dict[str, Any]],
+    *,
+    filter_name: str = "all",
+    search: str = "",
+) -> str:
+    tabs = []
+    for key, label in ORDER_FILTERS:
+        href = "/admin"
+        params = []
+        if key != "all":
+            params.append("status=" + escape(key, quote=True))
+        if search:
+            from urllib.parse import quote
+            params.append("search=" + quote(search))
+        if params:
+            href += "?" + "&".join(params)
+        active = " active" if key == filter_name else ""
+        tabs.append(
+            f'<a class="tab{active}" href="{href}">{_e(label)}</a>'
+        )
+
+    rows = []
+    for order in orders:
+        status = str(order.get("status") or "")
+        status_label = ORDER_STATUS_LABELS.get(status, status or "—")
+        username = str(order.get("username") or "").strip()
+        client_line = _e(order.get("customer_name"))
+        if username:
+            client_line += f" · @{_e(username)}"
+        rows.append(
+            f"""<a class="order-row" href="/admin/orders/{escape(str(order.get('order_id') or ''), quote=True)}">
+              <div>
+                <b>{_e(order.get('order_id'))}</b>
+                <small>{client_line}</small>
+              </div>
+              <div>
+                <strong>{_money_rub(order.get('customer_total_rub'))}</strong>
+                <small>{_e(order.get('created_at'))}</small>
+              </div>
+              <div>
+                <span class="badge">{_e(status_label)}</span>
+                <small>{_e(order.get('item_count'))} поз. · {_e(order.get('warehouse_item_count'))} склад.</small>
+              </div>
+            </a>"""
+        )
+
+    search_value = escape(str(search or ""), quote=True)
+    return f"""<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WEB ADMIN · Заказы</title>
+<style>
+body{{font-family:Arial,sans-serif;background:#f3f5f7;margin:0;color:#18202a}}
+main{{max-width:1200px;margin:24px auto;padding:0 18px}}
+header{{display:flex;justify-content:space-between;gap:18px;align-items:flex-start;flex-wrap:wrap}}
+h1{{margin:0 0 6px}}
+.nav{{display:flex;gap:12px;flex-wrap:wrap;margin:10px 0 18px}}
+.nav a{{text-decoration:none;font-weight:700;color:inherit}}
+.card{{background:#fff;border-radius:14px;padding:16px;margin:14px 0;box-shadow:0 2px 10px #0000000d}}
+.tabs{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}}
+.tab{{padding:8px 10px;border-radius:999px;background:#eef2f6;text-decoration:none;color:inherit;font-weight:700}}
+.tab.active{{background:#18202a;color:#fff}}
+.search{{display:flex;gap:8px;flex-wrap:wrap}}
+.search input{{flex:1;min-width:240px;padding:10px 12px;border:1px solid #d0d5dd;border-radius:9px}}
+.search button{{padding:10px 14px;border:0;border-radius:9px;font-weight:700;cursor:pointer}}
+.order-row{{display:grid;grid-template-columns:1.5fr 1fr 1fr;gap:12px;align-items:center;padding:14px 4px;border-bottom:1px solid #eaecf0;text-decoration:none;color:inherit}}
+.order-row:last-child{{border-bottom:0}}
+.order-row small{{display:block;color:#667085;margin-top:4px}}
+.order-row strong{{display:block}}
+.badge{{display:inline-block;padding:6px 9px;border-radius:999px;background:#e8edf2;font-weight:700}}
+.empty{{padding:24px 4px;color:#667085}}
+.muted{{color:#667085;font-size:13px}}
+@media(max-width:700px){{.order-row{{grid-template-columns:1fr}}}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <div class="muted">Extremizer Pro</div>
+      <h1>WEB ADMIN · Клиентские заказы</h1>
+    </div>
+    <form method="post" action="/admin/logout"><button type="submit">Выйти</button></form>
+  </header>
+
+  <div class="nav">
+    <a href="/admin">🧾 Клиентские заказы</a>
+    <a href="/admin/supplier-orders">📦 Supplier Orders</a>
+    <a href="/admin/supplier-channels">⚙️ Каналы складов</a>
+  </div>
+
+  <section class="card">
+    <div class="tabs">{''.join(tabs)}</div>
+    <form class="search" method="get" action="/admin">
+      {f'<input type="hidden" name="status" value="{escape(filter_name, quote=True)}">' if filter_name != "all" else ""}
+      <input type="search" name="search" value="{search_value}" placeholder="Заказ, клиент, username или OEM">
+      <button type="submit">Найти</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <div class="muted">Найдено: <b>{len(orders)}</b></div>
+    {''.join(rows) if rows else '<div class="empty">Заказы не найдены.</div>'}
+  </section>
+</main>
+</body>
+</html>"""
