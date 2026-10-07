@@ -9997,6 +9997,21 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 "_dealer_price_status": result.get("_dealer_price_status"),
                 "qty": 1,
             }
+        analytics_user = update.effective_user
+        analytics_oem = str(
+            result.get("item_sku")
+            or result.get("oem")
+            or result.get("query_oem")
+            or ""
+        ).strip()
+        if analytics_user is not None and analytics_oem:
+            pricing_analytics.mark_latest_matching_cart(
+                ORDERS_DB_FILE,
+                source_bot="pricing",
+                telegram_user_id=int(analytics_user.id),
+                oem=analytics_oem,
+            )
+
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ В корзине", callback_data="cart")],
             [InlineKeyboardButton("🔎 Искать ещё", callback_data="search_again"), InlineKeyboardButton("🛒 Моя корзина", callback_data="cart")],
@@ -10471,6 +10486,23 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 show_alert=True,
             )
             return
+
+        if user is not None:
+            for analytics_item in cart.values():
+                analytics_oem = str(
+                    analytics_item.get("oem")
+                    or analytics_item.get("requested_oem")
+                    or ""
+                ).strip()
+                if not analytics_oem:
+                    continue
+                pricing_analytics.mark_latest_matching_order(
+                    ORDERS_DB_FILE,
+                    source_bot="pricing",
+                    telegram_user_id=int(user.id),
+                    oem=analytics_oem,
+                    order_id=order_id,
+                )
 
         # Create Supplier Orders only after the client order exists.
         # One recipient is copied to each warehouse shipment; USA items are ignored by service.
