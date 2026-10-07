@@ -601,7 +601,7 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
     lines = [f"🔎 <b>OEM:</b> <code>{escape(oem)}</code>"]
     if info.get("name"):
         lines.append(escape(str(info["name"])))
-    lines.extend(["", "🇺🇸 <b>США:</b>"])
+    lines.extend(["", "🇺🇸 склад <b>США:</b>"])
 
     customer_rub = info.get("customer_rub")
     rrp_rub = info.get("rrp_rub")
@@ -612,12 +612,12 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
             lines.append(f"РРЦ: <b>{_format_rub(rrp_rub)}</b>")
             benefit_pct = (rrp_rub - customer_rub) / rrp_rub * 100
             lines.append(f"Ваша выгода: <b>{benefit_pct:.1f}%</b>")
-        delivery_line = "<b>* -</b> в цену не входит стоимость доставки 🚚 из США."
+        delivery_line = "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"
     else:
         lines.append("Цена сейчас недоступна. Попробуйте повторить запрос позже.")
         delivery_line = "🚚 Доставка в РФ оплачивается отдельно."
 
-    lines.extend(["", delivery_line, "", "🇷🇺 <b>Из наличия в РФ:</b>"])
+    lines.extend(["", delivery_line, "", "🇷🇺 <b>Наличие в РФ:</b>"])
 
     positive = [
         r for r in rows
