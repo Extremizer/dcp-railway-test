@@ -4,11 +4,26 @@
 FIELDS=("name","phone","city","method","destination")
 PROMPTS={
 "name":"👤 <b>Получатель</b>\nВведи имя и фамилию получателя.",
-"phone":"📞 <b>Телефон</b>\nВведи номер телефона получателя.",
+"phone":"📞 <b>Телефон</b>\nВведи номер телефона получателя в формате: <code>+79991234567</code>.",
 "city":"🏙 <b>Город</b>\nВведи город получения.",
 "method":"🚚 <b>Способ получения</b>\nНапиши перевозчика/способ, например: <code>СДЭК ПВЗ</code> или <code>Курьер</code>.",
 "destination":"📍 <b>Адрес или ПВЗ</b>\nВведи адрес доставки или адрес/код ПВЗ.",
 }
+def normalize_phone(value):
+ s=str(value or "").strip()
+ if not s: raise ValueError("empty")
+ if any(ch.isalpha() for ch in s): raise ValueError("invalid")
+ cleaned=s.replace(" ","").replace("\u00a0","").replace("(","").replace(")","").replace("-","")
+ if cleaned.startswith("+"):
+  digits=cleaned[1:]
+  if not digits.isdigit(): raise ValueError("invalid")
+ else:
+  digits=cleaned
+  if not digits.isdigit(): raise ValueError("invalid")
+ if len(digits)!=11 or digits[0] not in {"7","8"}: raise ValueError("invalid")
+ if digits[0]=="8": digits="7"+digits[1:]
+ return "+"+digits
+
 def has_warehouse(cart): return any(str(x.get("offer_source") or "usa").lower()=="warehouse" for x in cart.values())
 def complete(r): return all(str((r or {}).get(k) or "").strip() for k in FIELDS)
 def normalize(r):
