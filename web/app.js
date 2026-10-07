@@ -127,6 +127,8 @@ function renderProduct(card) {
   $("productBrand").textContent = [card.manufacturer, card.catalog].filter(Boolean).join(" • ");
   $("productName").textContent = card.name || "OEM позиция";
   $("productOem").textContent = card.oem;
+  const pricePanel = document.querySelector(".price-panel");
+  pricePanel?.classList.toggle("hidden", Boolean(card.warehouse_only));
   $("customerPrice").textContent = rub(card.price.customer_rub);
 
   const replacement = $("replacement");
