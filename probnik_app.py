@@ -605,7 +605,7 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
     lines = [f"🔎 <b>OEM:</b> <code>{escape(oem)}</code>"]
     if info.get("name"):
         lines.append(escape(str(info["name"])))
-    lines.extend(["", "🇺🇸 склад <b>США:</b>"])
+    lines.extend(["", "🇺🇸 <b>склад США—</b>"])
 
     customer_rub = info.get("customer_rub")
     rrp_rub = info.get("rrp_rub")

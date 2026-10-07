@@ -58,7 +58,7 @@ function renderOffers(offers = []) {
   offers.forEach((offer) => {
     const el = document.createElement("article");
     el.className = "offer-card";
-    const sourceLabel = offer.source === "usa" ? "🇺🇸 США" : `🇷🇺 ${escapeHtml(offer.label)}`;
+    const sourceLabel = offer.source === "usa" ? "🇺🇸 склад США" : `🇷🇺 ${escapeHtml(offer.label)}`;
     const availability = offer.source === "usa"
       ? "Заказ из США"
       : `В наличии: ${qtyText(offer.available_quantity)} шт.`;
@@ -243,7 +243,7 @@ $("offers").addEventListener("click", (event) => {
       name: currentProduct.name,
       offer_source: offer.source,
       warehouse_id: offer.warehouse_id,
-      source_label: offer.source === "usa" ? "США" : offer.label,
+      source_label: offer.source === "usa" ? "склад США" : offer.label,
       unit_rub: offer.price_rub,
       available_quantity: offer.available_quantity,
       qty: Math.min(maxQty, currentQty),
@@ -279,7 +279,7 @@ function renderCart() {
         <div>
           <div class="cart-item-name">${escapeHtml(item.name || item.manufacturer)}</div>
           <div class="cart-item-oem">${escapeHtml(item.oem)}</div>
-          <div class="cart-item-source">${item.offer_source === "warehouse" ? "🇷🇺" : "🇺🇸"} ${escapeHtml(item.source_label || "США")}</div>
+          <div class="cart-item-source">${item.offer_source === "warehouse" ? "🇷🇺" : "🇺🇸"} ${escapeHtml(item.source_label || "склад США")}</div>
         </div>
         <button class="remove" data-remove="${index}" type="button">Удалить</button>
       </div>

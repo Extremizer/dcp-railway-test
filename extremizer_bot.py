@@ -2086,7 +2086,7 @@ def found_keyboard(result: dict) -> InlineKeyboardMarkup:
     if customer_price_rub is not None:
         rows.append([
             InlineKeyboardButton(
-                f"🛒 В корзину: 🇺🇸 США • {format_rub(customer_price_rub)}",
+                f"🛒 В корзину: 🇺🇸 склад США • {format_rub(customer_price_rub)}",
                 callback_data=f"cartadd:{usa_key}",
             )
         ])
@@ -2584,14 +2584,14 @@ def format_client_offer_card(result: dict) -> str:
 
     lines.append("")
     if customer_price is not None:
-        lines.append(f"🇺🇸 <b>ИЗ США — {format_rub(customer_price)}</b>")
+        lines.append(f"🇺🇸 <b>склад США— {format_rub(customer_price)}</b>")
         if rrp_rub is not None and rrp_rub > customer_price:
             lines.append(f"РРЦ: {format_rub(rrp_rub)}")
             benefit_pct = (rrp_rub - customer_price) / rrp_rub * 100
             lines.append(f"<b>Выгода:</b> {benefit_pct:.1f}%")
         lines.append("🚚 Доставка из США оплачивается отдельно.")
     else:
-        lines.append("🇺🇸 <b>ИЗ США — цена уточняется</b>")
+        lines.append("🇺🇸 <b>склад США— цена уточняется</b>")
 
     offers = []
     for row in warehouse_stock_service.client_stock_summary(oem, db_file=ORDERS_DB_FILE):
