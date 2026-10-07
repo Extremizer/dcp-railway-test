@@ -473,11 +473,83 @@ def _queue_stock_refresh(background_tasks: BackgroundTasks, oem: str) -> bool:
     return True
 
 
+def _warehouse_only_card(raw_oem: str) -> dict[str, Any] | None:
+    """Build a client-safe card from fresh priced warehouse stock only."""
+    try:
+        oem = core.finder.normalize_oem(str(raw_oem or ""))
+    except ValueError:
+        return None
+    if not oem:
+        return None
+
+    stock_rows = _stock_rows(oem)
+    positive_stock = []
+    warehouse_offers = []
+    for row in stock_rows:
+        qty = row.get("available_quantity")
+        if row.get("is_fresh") and qty is not None and float(qty) > 0:
+            price_rub = row.get("price_rub")
+            positive_stock.append({
+                "warehouse_id": int(row.get("warehouse_id") or 0),
+                "warehouse": str(row.get("public_name") or ""),
+                "quantity": float(qty),
+                "price_rub": float(price_rub) if price_rub is not None else None,
+            })
+            if price_rub is not None and float(price_rub) > 0:
+                warehouse_offers.append({
+                    "key": f"warehouse:{int(row.get('warehouse_id') or 0)}",
+                    "source": "warehouse",
+                    "warehouse_id": int(row.get("warehouse_id") or 0),
+                    "label": str(row.get("public_name") or ""),
+                    "price_rub": float(price_rub),
+                    "available_quantity": float(qty),
+                    "can_add": True,
+                })
+
+    if not warehouse_offers:
+        return None
+
+    stock_known = bool(stock_rows) and all(
+        row.get("is_fresh") and row.get("available_quantity") is not None
+        for row in stock_rows
+    )
+    return {
+        "manufacturer": "",
+        "oem": oem,
+        "requested_oem": oem,
+        "name": None,
+        "catalog": None,
+        "previous_oems": [],
+        "price": {
+            "available": False,
+            "customer_rub": None,
+            "msrp_rub": None,
+            "benefit_pct": None,
+        },
+        "offers": warehouse_offers,
+        "stock": {
+            "known": stock_known,
+            "warehouses": positive_stock,
+        },
+        "weight": _weight_for_oem(oem),
+        "delivery_notice": "Для позиции со склада РФ доставка из США не требуется.",
+        "warehouse_only": True,
+    }
+
+
 def build_oem_card(
     raw_oem: str,
     manufacturer: str | None = None,
 ) -> dict[str, Any]:
-    result = _resolve_catalog_result(raw_oem, manufacturer)
+    try:
+        result = _resolve_catalog_result(raw_oem, manufacturer)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        warehouse_card = _warehouse_only_card(raw_oem)
+        if warehouse_card is not None:
+            return warehouse_card
+        raise
     canonical = str(result.get("manufacturer") or "")
     current_oem = str(result.get("item_sku") or result.get("oem") or "")
     requested_oem = str(result.get("query_oem") or raw_oem or current_oem)
@@ -530,7 +602,7 @@ def build_oem_card(
                 "label": str(row.get("public_name") or ""),
                 "price_rub": float(price_rub) if price_rub is not None else None,
                 "available_quantity": float(qty),
-                "can_add": price_rub is not None,
+                "can_add": price_rub is not None and float(price_rub) > 0,
             })
     stock_known = bool(stock_rows) and all(
         row.get("is_fresh") and row.get("available_quantity") is not None
@@ -596,9 +668,8 @@ def get_oem_stock(
     background_tasks: BackgroundTasks,
     manufacturer: str | None = None,
 ) -> dict[str, Any]:
-    result = _resolve_catalog_result(oem, manufacturer)
-    current_oem = str(result.get("item_sku") or result.get("oem") or oem)
-    card = build_oem_card(current_oem, str(result.get("manufacturer") or ""))
+    card = build_oem_card(oem, manufacturer)
+    current_oem = str(card["oem"])
     if _stock_refresh_needed(current_oem):
         _queue_stock_refresh(background_tasks, current_oem)
     stock = dict(card["stock"])
