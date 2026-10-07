@@ -74,28 +74,32 @@ def record_event(
         if metadata
         else None
     )
-    with sqlite3.connect(_db_path(db_file), timeout=10) as conn:
-        conn.execute(
-            f"""INSERT INTO {TABLE}(
-                created_at,source_bot,event_type,
-                telegram_user_id,username,
-                source_chat_id,source_chat_type,
-                oem,manufacturer,result_status,metadata_json
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-            (
-                now,
-                str(source_bot),
-                str(event_type),
-                int(telegram_user_id) if telegram_user_id is not None else None,
-                (str(username).lstrip("@") if username else None),
-                int(source_chat_id) if source_chat_id is not None else None,
-                str(source_chat_type) if source_chat_type else None,
-                str(oem) if oem else None,
-                str(manufacturer) if manufacturer else None,
-                str(result_status) if result_status else None,
-                payload,
-            ),
-        )
+    try:
+        with sqlite3.connect(_db_path(db_file), timeout=10) as conn:
+            conn.execute(
+                f"""INSERT INTO {TABLE}(
+                    created_at,source_bot,event_type,
+                    telegram_user_id,username,
+                    source_chat_id,source_chat_type,
+                    oem,manufacturer,result_status,metadata_json
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    now,
+                    str(source_bot),
+                    str(event_type),
+                    int(telegram_user_id) if telegram_user_id is not None else None,
+                    (str(username).lstrip("@") if username else None),
+                    int(source_chat_id) if source_chat_id is not None else None,
+                    str(source_chat_type) if source_chat_type else None,
+                    str(oem) if oem else None,
+                    str(manufacturer) if manufacturer else None,
+                    str(result_status) if result_status else None,
+                    payload,
+                ),
+            )
+    except sqlite3.Error:
+        return False
+    return True
 
 
 def record_update_event(
