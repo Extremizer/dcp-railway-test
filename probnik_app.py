@@ -11,13 +11,16 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
+import logging
 import math
 import os
 import sqlite3
 from html import escape
 from pathlib import Path
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
@@ -649,8 +652,126 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _price_link_payload(chat_id: int) -> str:
+    raw_chat_id = str(int(chat_id))
+    signature = hmac.new(
+        TOKEN.encode("utf-8"),
+        f"price:{raw_chat_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:12]
+    return f"price_{raw_chat_id}_{signature}"
+
+
+def _parse_price_link_payload(payload: str) -> int | None:
+    if not payload.startswith("price_"):
+        return None
+    try:
+        _, raw_chat_id, signature = payload.split("_", 2)
+        chat_id = int(raw_chat_id)
+    except (TypeError, ValueError):
+        return None
+    expected = hmac.new(
+        TOKEN.encode("utf-8"),
+        f"price:{chat_id}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:12]
+    if not hmac.compare_digest(signature, expected):
+        return None
+    return chat_id
+
+
+async def _is_chat_member(
+    context: ContextTypes.DEFAULT_TYPE,
+    chat_id: int,
+    user_id: int,
+) -> bool:
+    try:
+        member = await context.bot.get_chat_member(chat_id, user_id)
+    except Exception:
+        logging.exception(
+            "PROBNIK price-link membership check failed chat_id=%s user_id=%s",
+            chat_id,
+            user_id,
+        )
+        return False
+    return str(member.status) in {"creator", "administrator", "member", "restricted"}
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    payload = str(context.args[0]).strip() if context.args else ""
+    if payload.startswith("price_"):
+        source_chat_id = _parse_price_link_payload(payload)
+        user = update.effective_user
+        chat = update.effective_chat
+        if (
+            source_chat_id is None
+            or user is None
+            or chat is None
+            or str(chat.type) != "private"
+            or not await _is_chat_member(context, source_chat_id, int(user.id))
+        ):
+            await update.effective_message.reply_text(
+                "🔒 Кнопка ПРОЦЕНИТЬ доступна участникам рабочего чата."
+            )
+            return
+        await update.effective_message.reply_text(
+            "Отправь OEM-каталожный номер одним сообщением."
+        )
+        return
+
     await update.effective_message.reply_text(WELCOME, parse_mode=ParseMode.HTML)
+
+
+async def price_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    user = update.effective_user
+    message = update.effective_message
+    if chat is None or user is None or message is None:
+        return
+    if str(chat.type) not in {"group", "supergroup"}:
+        await message.reply_text("Эта команда используется только в рабочем чате.")
+        return
+
+    try:
+        caller = await context.bot.get_chat_member(int(chat.id), int(user.id))
+    except Exception:
+        await message.reply_text("Не удалось проверить права администратора.")
+        return
+    if str(caller.status) not in {"creator", "administrator"}:
+        await message.reply_text("Кнопку ПРОЦЕНИТЬ может установить администратор чата.")
+        return
+
+    me = await context.bot.get_me()
+    username = str(me.username or "").strip()
+    if not username:
+        await message.reply_text("Не удалось определить username Пробника.")
+        return
+
+    payload = _price_link_payload(int(chat.id))
+    url = f"https://t.me/{username}?start={payload}"
+    markup = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("ПРОЦЕНИТЬ", url=url)]]
+    )
+    posted = await context.bot.send_message(
+        chat_id=int(chat.id),
+        text="Узнать цену и наличие по OEM",
+        reply_markup=markup,
+    )
+    try:
+        await context.bot.pin_chat_message(
+            chat_id=int(chat.id),
+            message_id=int(posted.message_id),
+            disable_notification=True,
+        )
+    except Exception:
+        logging.exception(
+            "PROBNIK could not pin price button chat_id=%s message_id=%s",
+            chat.id,
+            posted.message_id,
+        )
+        await message.reply_text(
+            "Кнопка ПРОЦЕНИТЬ создана. Закрепи это сообщение вручную."
+        )
 
 
 async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -691,6 +812,7 @@ def build_application(token: str | None = None) -> Application:
         raise RuntimeError("PROBNIK_BOT_TOKEN is not configured")
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("pricebutton", price_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, oem_message))
     return app
 
