@@ -495,7 +495,7 @@ def _warehouse_only_card(raw_oem: str) -> dict[str, Any] | None:
                 "quantity": float(qty),
                 "price_rub": float(price_rub) if price_rub is not None else None,
             })
-            if price_rub is not None:
+            if price_rub is not None and float(price_rub) > 0:
                 warehouse_offers.append({
                     "key": f"warehouse:{int(row.get('warehouse_id') or 0)}",
                     "source": "warehouse",
@@ -602,7 +602,7 @@ def build_oem_card(
                 "label": str(row.get("public_name") or ""),
                 "price_rub": float(price_rub) if price_rub is not None else None,
                 "available_quantity": float(qty),
-                "can_add": price_rub is not None,
+                "can_add": price_rub is not None and float(price_rub) > 0,
             })
     stock_known = bool(stock_rows) and all(
         row.get("is_fresh") and row.get("available_quantity") is not None
