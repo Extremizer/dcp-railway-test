@@ -153,6 +153,32 @@ def admin_logout():
     return response
 
 
+@app.get("/admin", response_class=HTMLResponse)
+def admin_order_queue(
+    request: Request,
+    status: str | None = None,
+    search: str = "",
+):
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
+    allowed_statuses = {"new", "confirmed", "executing", "completed", "cancelled"}
+    selected_status = str(status or "").strip().lower()
+    if selected_status and selected_status not in allowed_statuses:
+        raise HTTPException(status_code=400, detail="invalid order status filter")
+    orders = admin_order_service.list_orders(
+        core.ORDERS_DB_FILE,
+        status=selected_status or None,
+        search=search,
+        limit=200,
+    )
+    return admin_order_web.render_order_queue(
+        orders,
+        filter_name=selected_status or "all",
+        search=search,
+    )
+
+
 @app.get("/admin/orders/{order_id}", response_class=HTMLResponse)
 def admin_order_card(request: Request, order_id: str):
     redirect = _admin_page_login_redirect(request)
