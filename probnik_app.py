@@ -786,6 +786,9 @@ async def price_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat = update.effective_chat
+    if chat is None or str(chat.type) != "private":
+        return
     raw = str(update.effective_message.text or "").strip()
     parts = [x for x in raw.replace(",", " ").replace(";", " ").split() if x]
     if len(parts) != 1:
