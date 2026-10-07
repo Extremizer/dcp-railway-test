@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Shared authenticated API used by WEB ADMIN; same service is used by Telegram."""
 from __future__ import annotations
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 import supplier_admin_auth
 import supplier_delivery
@@ -23,9 +23,17 @@ class BatchSendIn(BaseModel):
 class SupplierChannelIn(BaseModel):
     channel:str; recipient:str; custom_name:str|None=None
 
-def _web_admin(x_extremizer_admin_token:str|None=Header(default=None)):
-    try:return supplier_admin_auth.require_web_admin_token(x_extremizer_admin_token)
-    except PermissionError as e:raise HTTPException(status_code=401,detail=str(e))
+def _web_admin(
+    request: Request,
+    x_extremizer_admin_token: str | None = Header(default=None),
+):
+    try:
+        return supplier_admin_auth.require_web_admin_access(
+            header_token=x_extremizer_admin_token,
+            session_cookie=request.cookies.get(supplier_admin_auth.WEB_ADMIN_COOKIE),
+        )
+    except PermissionError as e:
+        raise HTTPException(status_code=401, detail=str(e))
 
 def build_supplier_router(service):
     r=APIRouter(prefix="/api/admin/supplier-orders",tags=["supplier-orders"])
