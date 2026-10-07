@@ -20,9 +20,15 @@ def normalize_phone(value):
  else:
   digits=cleaned
   if not digits.isdigit(): raise ValueError("invalid")
- if len(digits)!=11 or digits[0] not in {"7","8"}: raise ValueError("invalid")
- if digits[0]=="8": digits="7"+digits[1:]
- return "+"+digits
+ if len(digits)==10:
+  national=digits
+ elif len(digits)==11 and digits[0] in {"7","8"}:
+  national=digits[1:]
+ else:
+  raise ValueError("invalid")
+ if len(national)!=10 or national[0]!="9":
+  raise ValueError("invalid")
+ return "+7"+national
 
 def has_warehouse(cart): return any(str(x.get("offer_source") or "usa").lower()=="warehouse" for x in cart.values())
 def complete(r): return all(str((r or {}).get(k) or "").strip() for k in FIELDS)
