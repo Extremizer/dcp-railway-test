@@ -146,6 +146,10 @@ def request_live_dp(
 
 def claim_next(db_file: Path | str) -> dict | None:
     init(db_file)
+    if _health_enforced():
+        health = dp_live_health.get_health(db_file)
+        if not health.get("live_allowed"):
+            return None
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
