@@ -111,21 +111,22 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
     canonical, slug = _parts_slug(manufacturer)
     normalized_oem = _normalize_oem(oem)
 
-    health = dp_live_health.read_local_health(LOCAL_HEALTH_FILE)
-    if not health.get("live_allowed"):
-        status = str(
-            health.get("effective_status")
-            or health.get("status")
-            or "TECHNICAL_ERROR"
-        ).upper()
-        return DealerPriceResult(
-            status,
-            canonical,
-            normalized_oem,
-            authorized=(False if status == "AUTH_REQUIRED" else None),
-            message="DCP health guard blocked live lookup: "
-            + str(health.get("detail") or status),
-        )
+    if LOCAL_HEALTH_FILE.exists():
+        health = dp_live_health.read_local_health(LOCAL_HEALTH_FILE)
+        if not health.get("live_allowed"):
+            status = str(
+                health.get("effective_status")
+                or health.get("status")
+                or "TECHNICAL_ERROR"
+            ).upper()
+            return DealerPriceResult(
+                status,
+                canonical,
+                normalized_oem,
+                authorized=(False if status == "AUTH_REQUIRED" else None),
+                message="DCP health guard blocked live lookup: "
+                + str(health.get("detail") or status),
+            )
 
     # First prefer an already-open exact DCP page. This avoids an extra request
     # and keeps working when Cloudflare blocks background fetches but the user's
