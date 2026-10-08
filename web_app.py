@@ -32,6 +32,7 @@ import warehouse_store
 import stock_engine
 import web_handoff
 import dp_live_bridge
+import dp_live_health
 import pricing_analytics
 import supplier_runtime
 import supplier_api
@@ -283,6 +284,13 @@ class DPSyncResultRequest(BaseModel):
     manufacturer: str | None = None
 
 
+class DPSyncHealthRequest(BaseModel):
+    status: str
+    detail: str | None = None
+    source: str | None = "local_agent"
+    checked_at: str | None = None
+
+
 class OEMixiAnalyticsRequest(BaseModel):
     telegram_user_id: int
     username: str | None = None
@@ -394,6 +402,7 @@ def _init_web1() -> None:
     warehouse_store.init_warehouse_db(core.ORDERS_DB_FILE)
     web_handoff.init_web_handoff_db(core.ORDERS_DB_FILE)
     dp_live_bridge.init(core.ORDERS_DB_FILE)
+    dp_live_health.init(core.ORDERS_DB_FILE)
     pricing_analytics.init_analytics(core.ORDERS_DB_FILE)
 
 
@@ -588,6 +597,109 @@ def oemixibot_pricing_analytics_request(
         stock_rf=[],
     )
     return {"ok": True, "request_id": request_id}
+
+
+
+def _dp_health_alert_text(transition: dict[str, Any]) -> str | None:
+    status = str(transition.get("status") or "UNKNOWN").upper()
+    previous = str(transition.get("previous_status") or "UNKNOWN").upper()
+    detail = str(transition.get("detail") or "").strip()
+
+    if status == "READY":
+        if previous not in {
+            "CLOUDFLARE", "AUTH_REQUIRED", "BROWSER_DOWN", "TECHNICAL_ERROR",
+        }:
+            return None
+        return (
+            "✅ DCP LIVE восстановлен\n"
+            "Live-DP снова доступен в Пробнике, OEMixiBOT и Проценках."
+        )
+
+    if status == "CLOUDFLARE":
+        return (
+            "⚠️ DCP требует Cloudflare\n"
+            "Live-DP временно недоступен во всех ботах.\n"
+            "Открой специальный Chrome DCP и пройди проверку."
+        )
+
+    if status == "AUTH_REQUIRED":
+        return (
+            "⚠️ DCP требует авторизацию\n"
+            "Live-DP временно недоступен во всех ботах.\n"
+            "Открой специальный Chrome DCP и войди в DCP."
+        )
+
+    if status == "BROWSER_DOWN":
+        return (
+            "⚠️ DCP Chrome недоступен\n"
+            "Live-DP временно недоступен во всех ботах.\n"
+            "Проверь специальный Chrome с портом 9222."
+        )
+
+    if status == "TECHNICAL_ERROR":
+        suffix = f"\nДиагностика: {detail[:160]}" if detail else ""
+        return (
+            "⚠️ Ошибка DCP LIVE\n"
+            "Live-DP временно недоступен во всех ботах."
+            + suffix
+        )
+
+    return None
+
+
+def _send_dp_health_alert(transition: dict[str, Any]) -> None:
+    text = _dp_health_alert_text(transition)
+    if not text:
+        return
+    token = os.getenv("EXTREMIZER_BOT_TOKEN", "").strip()
+    chat_id = os.getenv("TELEGRAM_MANAGER_CHAT_ID", "").strip()
+    if not token or not chat_id:
+        return
+    data = urllib.parse.urlencode(
+        {"chat_id": chat_id, "text": text, "disable_web_page_preview": "true"}
+    ).encode("utf-8")
+    request = urllib.request.Request(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data=data,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            response.read()
+    except Exception:
+        # Health reporting must never fail because Telegram is temporarily down.
+        pass
+
+
+@app.post("/internal/dp-sync/health")
+def dp_sync_health(
+    payload: DPSyncHealthRequest,
+    background_tasks: BackgroundTasks,
+    x_dp_sync_ts: str | None = Header(default=None),
+    x_dp_sync_sig: str | None = Header(default=None),
+) -> dict[str, Any]:
+    path = "/internal/dp-sync/health"
+    _require_dp_sync_signature(path, x_dp_sync_ts, x_dp_sync_sig)
+
+    status = str(payload.status or "").strip().upper()
+    if status not in dp_live_health.VALID_STATUSES:
+        raise HTTPException(status_code=400, detail={"code": "invalid_health_status"})
+
+    transition = dp_live_health.set_health(
+        core.ORDERS_DB_FILE,
+        status,
+        detail=payload.detail,
+        source=payload.source or "local_agent",
+        checked_at=payload.checked_at,
+    )
+    if transition.get("changed"):
+        background_tasks.add_task(_send_dp_health_alert, transition)
+
+    return {
+        "ok": True,
+        "health": dp_live_health.get_health(core.ORDERS_DB_FILE),
+        "changed": bool(transition.get("changed")),
+    }
 
 
 @app.get("/internal/dp-sync/next")
