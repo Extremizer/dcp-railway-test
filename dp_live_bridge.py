@@ -8,18 +8,28 @@ DCP Chrome session, and posts only the verified result back to Railway.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+import dp_live_health
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _health_enforced() -> bool:
+    return str(
+        os.getenv("EXTREMIZER_DP_HEALTH_ENFORCE", "0") or "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def init(db_file: Path | str) -> None:
+    dp_live_health.init(db_file)
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute(
             """CREATE TABLE IF NOT EXISTS dp_live_requests (
@@ -61,6 +71,20 @@ def request_live_dp(
     oem = str(oem or "").strip()
     if not manufacturer or not oem:
         return {"status": "INVALID"}
+
+    if _health_enforced():
+        health = dp_live_health.get_health(db_file)
+        if not health.get("live_allowed"):
+            status = str(
+                health.get("effective_status")
+                or health.get("status")
+                or "TECHNICAL_ERROR"
+            ).upper()
+            return {
+                "status": status,
+                "error_code": "dcp_health_" + status.lower(),
+                "health": health,
+            }
 
     request_id = None
     now = _now()
