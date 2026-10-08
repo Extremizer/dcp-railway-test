@@ -8,14 +8,17 @@ import json
 import re
 import urllib.request
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Any
 
 import websocket
 
 import dealercostparts_manufacturer_finder_v6_6 as finder
+import dp_live_health
 
 CDP_HTTP = "http://127.0.0.1:9222"
 DCP_HOST = "www.dealercostparts.com"
+LOCAL_HEALTH_FILE = Path(__file__).with_name("dp_sync_agent_status.json")
 
 @dataclass(frozen=True)
 class DealerPriceResult:
@@ -107,6 +110,22 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
     """Return the dealer price from the user's authorized DCP Chrome session."""
     canonical, slug = _parts_slug(manufacturer)
     normalized_oem = _normalize_oem(oem)
+
+    health = dp_live_health.read_local_health(LOCAL_HEALTH_FILE)
+    if not health.get("live_allowed"):
+        status = str(
+            health.get("effective_status")
+            or health.get("status")
+            or "TECHNICAL_ERROR"
+        ).upper()
+        return DealerPriceResult(
+            status,
+            canonical,
+            normalized_oem,
+            authorized=(False if status == "AUTH_REQUIRED" else None),
+            message="DCP health guard blocked live lookup: "
+            + str(health.get("detail") or status),
+        )
 
     # First prefer an already-open exact DCP page. This avoids an extra request
     # and keeps working when Cloudflare blocks background fetches but the user's
