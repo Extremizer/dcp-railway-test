@@ -196,7 +196,11 @@ def get_health(
         )
         stale = stale_after_seconds > 0 and age > float(stale_after_seconds)
 
-    effective = "TECHNICAL_ERROR" if stale else status
+    effective = (
+        "TECHNICAL_ERROR"
+        if stale or status == "UNKNOWN"
+        else status
+    )
     detail = str(row[1] or "").strip() or None
     if stale:
         detail = "health_stale" if not detail else f"{detail};health_stale"
@@ -241,11 +245,26 @@ def read_local_health(
             "live_allowed": False,
         }
 
-    status = _normalize_status(
+    raw_status = str(
         payload.get("dcp_status")
         or payload.get("status")
         or "UNKNOWN"
-    )
+    ).strip().upper()
+    legacy_detail = str(payload.get("detail") or "").strip().upper()
+    # Backward-compatible rollout: the current local agent writes
+    # online/human_required/offline until the watchdog patch is installed.
+    if raw_status == "ONLINE":
+        status = "READY"
+    elif raw_status == "HUMAN_REQUIRED":
+        status = (
+            "AUTH_REQUIRED"
+            if "AUTH_REQUIRED" in legacy_detail
+            else "CLOUDFLARE"
+        )
+    elif raw_status == "OFFLINE":
+        status = "TECHNICAL_ERROR"
+    else:
+        status = _normalize_status(raw_status)
     checked_at = (
         payload.get("dcp_checked_at")
         or payload.get("checked_at")
@@ -260,7 +279,11 @@ def read_local_health(
         )
         stale = stale_after_seconds > 0 and age > float(stale_after_seconds)
 
-    effective = "TECHNICAL_ERROR" if stale else status
+    effective = (
+        "TECHNICAL_ERROR"
+        if stale or status == "UNKNOWN"
+        else status
+    )
     detail = str(
         payload.get("dcp_detail")
         or payload.get("detail")
