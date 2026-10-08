@@ -1,0 +1,30 @@
+name: DCP Health Core CI
+
+on:
+  push:
+    branches:
+      - dcp-health-core-20261008
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  dcp-health-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax check
+        run: |
+          python -m py_compile             dp_live_health.py             dp_live_bridge.py             web_app.py             oemixibot_dcp_price.py             extremizer_bot.py             dp_sync_agent.py             test_dcp_health_core.py
+
+      - name: DCP health regression
+        run: |
+          python -m unittest -v test_dcp_health_core.py
