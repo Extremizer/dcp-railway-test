@@ -61,6 +61,8 @@ import supplier_telegram_admin
 import supplier_telegram_handlers
 import warehouse_recipient
 import pricing_analytics
+import dp_live_bridge
+import dp_live_health
 
 
 # ---------------------------------------------------------------------------
@@ -1506,9 +1508,53 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
             result["_dealer_price_cache_age_hours"] = float(
                 cached.get("age_hours") or 0.0
             )
-        else:
-            result["_dealer_price_status"] = "CACHE_MISS"
-            result["_dealer_price_checked_at"] = checked_at
+            return result
+
+        # Production runs the main client bot in cache-only mode so Railway
+        # never opens DCP directly. On a real cache miss, use the same trusted
+        # bridge as Probnik: shared health guard -> local authorized DCP agent
+        # -> verified result -> persistent DP cache.
+        try:
+            live = await asyncio.to_thread(
+                dp_live_bridge.request_live_dp,
+                ORDERS_DB_FILE,
+                manufacturer,
+                oem,
+                wait_seconds=10.0,
+            )
+            live_status = str(live.get("status") or "TECHNICAL_ERROR").upper()
+        except Exception:
+            live = {}
+            live_status = "TECHNICAL_ERROR"
+            log.exception(
+                "Shared DP bridge failed for %s / %s",
+                manufacturer,
+                oem,
+            )
+
+        result["_dealer_price_status"] = live_status
+        result["_dealer_price_live_status"] = live_status
+        result["_dealer_price_checked_at"] = checked_at
+
+        if (
+            live_status == "FOUND"
+            and isinstance(live.get("dealer_price_usd"), (int, float))
+            and float(live["dealer_price_usd"]) > 0
+        ):
+            dealer_price_usd = float(live["dealer_price_usd"])
+            dealer_price_source = str(
+                live.get("source") or "verified_live_dp"
+            )
+            result["_dealer_price_usd"] = dealer_price_usd
+            result["_dealer_price_source"] = dealer_price_source
+            upsert_dealer_price_cache(
+                manufacturer,
+                oem,
+                dealer_price_usd,
+                dealer_price_source,
+                checked_at,
+            )
+
         return result
 
     live_status = None
