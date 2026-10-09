@@ -12,7 +12,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install HTTP test dependencies
+        run: pip install fastapi httpx python-multipart
       - name: Compile
-        run: python -m py_compile admin_order_apply_service.py admin_order_service.py stock_engine.py supplier_admin_auth.py test_web_admin_2_apply_isolated.py test_web_admin_2_apply_csrf.py
+        run: python -m py_compile admin_order_apply_service.py admin_order_service.py stock_engine.py supplier_admin_auth.py test_web_admin_2_apply_isolated.py test_web_admin_2_apply_csrf.py test_web_admin_2_apply_http.py
       - name: Isolated SQLite transaction tests
-        run: python -m unittest -v test_web_admin_2_apply_isolated test_web_admin_2_apply_csrf
+        run: python -m unittest -v test_web_admin_2_apply_isolated test_web_admin_2_apply_csrf test_web_admin_2_apply_http
