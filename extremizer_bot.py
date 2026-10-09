@@ -1512,34 +1512,50 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
         return result
 
     live_status = None
-    try:
-        private = await asyncio.to_thread(get_dealer_price, manufacturer, oem)
-        live_status = str(private.status or "").upper()
-        result["_dealer_price_status"] = live_status
-        result["_dealer_price_checked_at"] = checked_at
+    health_enforced = str(
+        os.getenv("EXTREMIZER_DP_HEALTH_ENFORCE", "0") or "0"
+    ).strip().lower() in {"1", "true", "yes", "on"}
+    if health_enforced:
+        health = dp_live_health.get_health(ORDERS_DB_FILE)
+        if not health.get("live_allowed"):
+            live_status = str(
+                health.get("effective_status")
+                or health.get("status")
+                or "TECHNICAL_ERROR"
+            ).upper()
+            result["_dealer_price_status"] = live_status
+            result["_dealer_price_live_status"] = live_status
+            result["_dealer_price_checked_at"] = checked_at
 
-        if live_status == "FOUND" and private.dealer_price_usd is not None:
-            dealer_price_usd = float(private.dealer_price_usd)
-            dealer_price_source = str(private.source or "")
-            result["_dealer_price_usd"] = dealer_price_usd
-            result["_dealer_price_source"] = dealer_price_source
-            upsert_dealer_price_cache(
+    if live_status is None:
+        try:
+            private = await asyncio.to_thread(get_dealer_price, manufacturer, oem)
+            live_status = str(private.status or "").upper()
+            result["_dealer_price_status"] = live_status
+            result["_dealer_price_checked_at"] = checked_at
+
+            if live_status == "FOUND" and private.dealer_price_usd is not None:
+                dealer_price_usd = float(private.dealer_price_usd)
+                dealer_price_source = str(private.source or "")
+                result["_dealer_price_usd"] = dealer_price_usd
+                result["_dealer_price_source"] = dealer_price_source
+                upsert_dealer_price_cache(
+                    manufacturer,
+                    oem,
+                    dealer_price_usd,
+                    dealer_price_source,
+                    checked_at,
+                )
+                return result
+        except Exception:
+            live_status = "TECHNICAL_ERROR"
+            result["_dealer_price_status"] = live_status
+            result["_dealer_price_checked_at"] = checked_at
+            log.exception(
+                "Private DCP dealer-price lookup failed for %s / %s",
                 manufacturer,
                 oem,
-                dealer_price_usd,
-                dealer_price_source,
-                checked_at,
             )
-            return result
-    except Exception:
-        live_status = "TECHNICAL_ERROR"
-        result["_dealer_price_status"] = live_status
-        result["_dealer_price_checked_at"] = checked_at
-        log.exception(
-            "Private DCP dealer-price lookup failed for %s / %s",
-            manufacturer,
-            oem,
-        )
 
     # Cache fallback is intentionally allowed only when live DP could not be
     # checked for technical/session reasons. Explicit NOT_FOUND / NO_PRICE
