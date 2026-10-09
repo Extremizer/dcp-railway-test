@@ -203,13 +203,19 @@ def admin_order_prepare_dry_run(request: Request, order_id: str):
         dry_run = admin_order_service.prepare_order_dry_run(order_id, core.ORDERS_DB_FILE)
     except admin_order_service.OrderNotFound:
         raise HTTPException(status_code=404, detail="client order not found")
-    return admin_order_web.render_order_card(snapshot, dry_run=dry_run)
+    csrf = supplier_admin_auth.issue_apply_csrf_token(request.cookies.get(supplier_admin_auth.WEB_ADMIN_COOKIE), order_id)
+    return admin_order_web.render_order_card(snapshot, dry_run=dry_run, apply_csrf_token=csrf)
 
 @app.post("/admin/orders/{order_id}/prepare-apply", response_class=HTMLResponse)
-def admin_order_prepare_apply(request: Request, order_id: str):
+def admin_order_prepare_apply(request: Request, order_id: str, csrf_token: str = Form(default="")):
     redirect = _admin_page_login_redirect(request)
     if redirect:
         return redirect
+
+    if not supplier_admin_auth.verify_apply_csrf_token(
+        request.cookies.get(supplier_admin_auth.WEB_ADMIN_COOKIE), order_id, csrf_token
+    ):
+        raise HTTPException(status_code=403, detail="Invalid Apply CSRF token")
 
     result = admin_order_apply_service.prepare_order_apply(
         order_id,
