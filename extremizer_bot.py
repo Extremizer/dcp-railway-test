@@ -27,12 +27,13 @@ import re
 import secrets
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from html import escape
 from pathlib import Path
 
+from common_finance_contract import PaymentRoute, default_client_payment_route
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import RetryAfter
 from telegram.constants import ParseMode
@@ -56,6 +57,13 @@ import warehouse_refresh_scheduler
 import warehouse_alerts
 import web_handoff
 import oem_reference_service
+from client_checkout_callback_adapter import (
+    CheckoutPostCommitError,
+    execute_prepared_checkout,
+)
+from client_finance_adapter import ClientFinanceAdapter
+from client_finance_schema import ensure_client_finance_schema
+from oemixibot_finance import FinanceEngine
 import supplier_runtime
 import supplier_telegram_admin
 import supplier_telegram_handlers
@@ -357,6 +365,7 @@ def init_orders_db() -> None:
             ("reference_weight_state", "TEXT"),
             ("reference_weight_source", "TEXT"),
             ("offer_source", "TEXT NOT NULL DEFAULT 'usa'"),
+            ("payment_route", "TEXT NOT NULL DEFAULT 'extremizer_balance'"),
             ("warehouse_id", "INTEGER"),
             ("warehouse_public_name", "TEXT"),
             ("price_snapshot_rub", "REAL"),
@@ -1681,9 +1690,18 @@ def save_order_to_history(
     cart: dict,
     delivery_preference: str | None = None,
     origin: str = "telegram",
+    conn: sqlite3.Connection | None = None,
 ) -> None:
     """Persist one confirmed request and all of its cart positions."""
-    init_orders_db()
+    owns_connection = conn is None
+    if owns_connection:
+        init_orders_db()
+    else:
+        order_item_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(order_items)").fetchall()
+        }
+        if "payment_route" not in order_item_columns:
+            raise RuntimeError("orders schema is not initialized for payment_route")
     origin = "web" if str(origin or "").strip().lower() == "web" else "telegram"
 
     total_usd = 0.0
@@ -1727,6 +1745,12 @@ def save_order_to_history(
                 PRICE_COEFFICIENT,
                 USD_RUB_RATE,
             )
+        requested_payment_route = str(item.get("payment_route") or "").strip().lower()
+        payment_route = (
+            PaymentRoute(requested_payment_route).value
+            if requested_payment_route
+            else default_client_payment_route(offer_source).value
+        )
         if customer_unit_rub is None:
             auto_pricing_complete = False
         else:
@@ -1786,7 +1810,8 @@ def save_order_to_history(
                 reference_volume_weight_kg,
                 reference_weight_state,
                 reference_weight_source,
-                str(item.get("offer_source") or "usa"),
+                offer_source,
+                payment_route,
                 item.get("warehouse_id"),
                 item.get("warehouse_public_name"),
                 item.get("price_snapshot_rub"),
@@ -1804,9 +1829,15 @@ def save_order_to_history(
     )
     created_at = datetime.now().astimezone().isoformat(timespec="seconds")
 
-    with sqlite3.connect(ORDERS_DB_FILE) as conn:
+    with (
+        sqlite3.connect(ORDERS_DB_FILE)
+        if owns_connection
+        else nullcontext(conn)
+    ) as active_conn:
+        conn = active_conn
         try:
-            conn.execute("BEGIN")
+            if owns_connection:
+                conn.execute("BEGIN")
 
             conn.execute(
                 """
@@ -1902,6 +1933,7 @@ def save_order_to_history(
                     reference_weight_state,
                     reference_weight_source,
                     offer_source,
+                    payment_route,
                     warehouse_id,
                     warehouse_public_name,
                     price_snapshot_rub,
@@ -1964,6 +1996,7 @@ def save_order_to_history(
                         reference_weight_state,
                         reference_weight_source,
                         offer_source,
+                        payment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -1971,7 +2004,7 @@ def save_order_to_history(
                         selected_delivery_tariff,
                         delivery_selected_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item_order_id,
@@ -1994,6 +2027,7 @@ def save_order_to_history(
                         reference_weight_state,
                         reference_weight_source,
                         offer_source,
+                        payment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -2003,10 +2037,12 @@ def save_order_to_history(
                     ),
                 )
 
-            conn.commit()
+            if owns_connection:
+                conn.commit()
 
         except Exception:
-            conn.rollback()
+            if owns_connection:
+                conn.rollback()
             raise
 
 
@@ -8214,6 +8250,348 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+
+async def _shadow_checkout_confirm(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    *,
+    finance_adapter,
+):
+    """Unregistered shadow copy of checkout_confirm using atomic finance core.
+
+    IMPORTANT: this function is intentionally not called by manufacturer_callback
+    and is not registered as a Telegram handler. It exists only for branch-level
+    integration/regression until an explicit production switch is approved.
+    """
+    query = update.callback_query
+    cart = context.user_data.setdefault("cart", {})
+
+    committed_order_id = str(
+        context.user_data.get("checkout_committed_order_id") or ""
+    ).strip()
+    if committed_order_id:
+        await query.answer(
+            (
+                "Этот запрос уже создан. Повторное оформление отключено, "
+                "чтобы не создать дубль."
+            ),
+            show_alert=True,
+        )
+        return {
+            "status": "committed_pending",
+            "order_id": committed_order_id,
+            "failed_action": context.user_data.get(
+                "checkout_post_commit_failed_action"
+            ),
+        }
+
+    if not cart:
+        await query.edit_message_text(
+            "Корзина пуста.",
+            reply_markup=cart_keyboard({}),
+        )
+        return {"status": "blocked", "reason": "empty_cart"}
+
+    if warehouse_recipient.has_warehouse(cart):
+        recipient = context.user_data.get("warehouse_recipient") or {}
+        if not warehouse_recipient.complete(recipient):
+            field = warehouse_recipient.next_field(recipient)
+            context.user_data["warehouse_recipient_field"] = field
+            await query.edit_message_text(
+                "🇷🇺 <b>Доставка позиции со склада РФ</b>\n\n"
+                + warehouse_recipient.PROMPTS[field],
+                parse_mode=ParseMode.HTML,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "🛒 Вернуться в корзину",
+                        callback_data="cart",
+                    )
+                ]]),
+            )
+            return {"status": "blocked", "reason": "recipient_incomplete"}
+
+    changed_offers = []
+    unverified_offers = []
+    for key, item in list(cart.items()):
+        if str(item.get("offer_source") or "usa") != "warehouse":
+            continue
+        validation = await _revalidate_warehouse_cart_item(item)
+        target = (
+            key,
+            str(item.get("warehouse_public_name") or "склад"),
+            str(item.get("oem") or "—"),
+        )
+        if validation["status"] == "changed":
+            changed_offers.append(target)
+        elif validation["status"] == "unverified":
+            unverified_offers.append(target)
+
+    if changed_offers or unverified_offers:
+        if changed_offers:
+            problem_lines = [
+                f"• {escape(name)} — <code>{escape(oem)}</code>"
+                for _, name, oem in changed_offers
+            ]
+            message_text = (
+                "⚠️ <b>Условия по части позиций изменились.</b>\n\n"
+                + "\n".join(problem_lines)
+                + "\n\nОбнови эти предложения через поиск."
+            )
+            reason = "warehouse_changed"
+        else:
+            problem_lines = [
+                f"• {escape(name)} — <code>{escape(oem)}</code>"
+                for _, name, oem in unverified_offers
+            ]
+            message_text = (
+                "⚠️ <b>Сейчас не удалось перепроверить склад.</b>\n\n"
+                + "\n".join(problem_lines)
+                + "\n\nКорзина сохранена. Попробуй подтвердить запрос чуть позже."
+            )
+            reason = "warehouse_unverified"
+        await query.edit_message_text(
+            message_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🛒 Вернуться в корзину",
+                    callback_data="cart",
+                )],
+                [InlineKeyboardButton(
+                    "🔎 Искать ещё",
+                    callback_data="search_again",
+                )],
+            ]),
+        )
+        return {"status": "blocked", "reason": reason}
+
+    has_usa = any(
+        str(item.get("offer_source") or "usa").strip().lower() == "usa"
+        for item in cart.values()
+    )
+    if has_usa:
+        prepare_cart_delivery_choices(cart)
+        if not cart_delivery_choice_complete(cart):
+            await query.edit_message_text(
+                format_cart(cart, checkout=True)
+                + "\n\n"
+                + format_checkout_delivery_choices(cart),
+                parse_mode=ParseMode.HTML,
+                reply_markup=checkout_delivery_keyboard(cart),
+                disable_web_page_preview=True,
+            )
+            await query.answer(
+                "Сначала выбери доставку для каждой позиции из США.",
+                show_alert=True,
+            )
+            return {"status": "blocked", "reason": "delivery_incomplete"}
+        delivery_preference = common_cart_delivery_preference(cart)
+    else:
+        delivery_preference = "local_only"
+
+    if not MANAGER_CHAT_ID:
+        await query.answer(
+            "Не настроен чат менеджера. Запрос остался в корзине.",
+            show_alert=True,
+        )
+        return {"status": "blocked", "reason": "manager_chat_missing"}
+
+    user = update.effective_user
+    order_origin = (
+        "web"
+        if any(
+            str(item.get("_origin") or "").lower() == "web"
+            for item in cart.values()
+        )
+        else "telegram"
+    )
+    web_handoff_token = next(
+        (
+            str(item.get("_web_handoff_token") or "").strip()
+            for item in cart.values()
+            if item.get("_web_handoff_token")
+        ),
+        "",
+    )
+
+    try:
+        order_id = generate_order_id()
+    except Exception:
+        log.exception("Shadow checkout failed to generate order ID")
+        await query.answer(
+            "Не удалось создать номер запроса. Корзина сохранена — попробуй ещё раз.",
+            show_alert=True,
+        )
+        return {"status": "blocked", "reason": "order_id_failed"}
+
+    async def manager_notify():
+        await context.bot.send_message(
+            chat_id=MANAGER_CHAT_ID,
+            text=format_manager_order(
+                order_id,
+                user,
+                cart,
+                delivery_preference,
+                order_origin,
+            ),
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+        )
+
+    def pricing_analytics_hook():
+        if user is None:
+            return None
+        for analytics_item in cart.values():
+            analytics_oem = str(
+                analytics_item.get("requested_oem")
+                or analytics_item.get("oem")
+                or ""
+            ).strip()
+            if not analytics_oem:
+                continue
+            pricing_analytics.mark_latest_matching_order(
+                ORDERS_DB_FILE,
+                source_bot="pricing",
+                telegram_user_id=int(user.id),
+                oem=analytics_oem,
+                order_id=order_id,
+            )
+        return None
+
+    def supplier_orders():
+        if not warehouse_recipient.has_warehouse(cart):
+            return []
+        return supplier_order_service.create_from_client_order(
+            order_id,
+            warehouse_recipient.normalize(
+                context.user_data.get("warehouse_recipient") or {}
+            ),
+        )
+
+    def warehouse_reservation():
+        return reserve_local_order_items(order_id)
+
+    def web_link():
+        if order_origin != "web" or not web_handoff_token:
+            return True
+        return web_handoff.link_handoff_order(
+            web_handoff_token,
+            order_id,
+            int(user.id),
+            ORDERS_DB_FILE,
+        )
+
+    def auto_quote_promotion():
+        return prepare_auto_quote_after_checkout(
+            order_id,
+            int(user.id),
+        )
+
+    def finalize_session():
+        context.user_data["last_order"] = [
+            dict(x) for x in cart.values()
+        ]
+        context.user_data["last_order_id"] = order_id
+        context.user_data["cart"] = {}
+        context.user_data.pop("checkout_delivery_preference", None)
+        context.user_data.pop("warehouse_recipient", None)
+        context.user_data.pop("warehouse_recipient_field", None)
+        context.user_data.pop("checkout_committed_order_id", None)
+        context.user_data.pop("checkout_post_commit_failed_action", None)
+
+    try:
+        result = await execute_prepared_checkout(
+            db_path=ORDERS_DB_FILE,
+            save_order_fn=save_order_to_history,
+            finance_adapter=finance_adapter,
+            order_id=order_id,
+            user=user,
+            cart=cart,
+            delivery_preference=delivery_preference,
+            origin=order_origin,
+            actor="telegram_checkout_shadow",
+            manager_notify=manager_notify,
+            pricing_analytics=pricing_analytics_hook,
+            supplier_orders=supplier_orders,
+            warehouse_reservation=warehouse_reservation,
+            web_handoff_link=web_link,
+            auto_quote_promotion=auto_quote_promotion,
+            finalize_session=finalize_session,
+        )
+    except CheckoutPostCommitError as exc:
+        context.user_data["checkout_committed_order_id"] = order_id
+        context.user_data["checkout_post_commit_failed_action"] = exc.action
+        context.user_data["last_order_id"] = order_id
+        await query.edit_message_text(
+            "⚠️ <b>Запрос уже создан.</b>\n\n"
+            f"Номер запроса: <code>{escape(order_id)}</code>\n\n"
+            "После сохранения заказа возникла техническая ошибка. "
+            "Повторно оформлять корзину не нужно.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "🔎 Искать ещё",
+                    callback_data="search_again",
+                )]
+            ]),
+        )
+        return {
+            "status": "committed_post_action_failed",
+            "order_id": order_id,
+            "failed_action": exc.action,
+            "completed_actions": exc.completed_actions,
+        }
+    except Exception:
+        log.exception("Shadow atomic checkout failed for %s", order_id)
+        await query.answer(
+            "Не удалось оформить запрос. Корзина сохранена — попробуй ещё раз.",
+            show_alert=True,
+        )
+        return {
+            "status": "core_failed",
+            "order_id": order_id,
+        }
+
+    if result.auto_quote is not None:
+        await query.edit_message_text(
+            result.auto_quote,
+            parse_mode=ParseMode.HTML,
+            disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton(
+                    "✅ Подтвердить запрос",
+                    callback_data=f"clientconfirm:{order_id}",
+                )],
+                [InlineKeyboardButton(
+                    "🔎 Искать ещё",
+                    callback_data="search_again",
+                )],
+            ]),
+        )
+    else:
+        await query.edit_message_text(
+            "✅ <b>Запрос отправлен менеджеру</b>\n\n"
+            f"Номер запроса: <code>{escape(order_id)}</code>\n\n"
+            "Автоматический расчёт по одной или нескольким позициям "
+            "требует проверки менеджера.\n\n"
+            + DELIVERY_SEPARATE_NOTICE,
+            parse_mode=ParseMode.HTML,
+            reply_markup=InlineKeyboardMarkup(
+                [[InlineKeyboardButton(
+                    "🔎 Искать ещё",
+                    callback_data="search_again",
+                )]]
+            ),
+        )
+
+    return {
+        "status": "success",
+        "order_id": order_id,
+        "finance_event_id": result.finance_event_id,
+        "warnings": result.warnings,
+    }
+
+
 async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     data = query.data or ""
@@ -10385,6 +10763,14 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if data == "checkout_confirm":
+        return await _shadow_checkout_confirm(
+            update,
+            context,
+            finance_adapter=ClientFinanceAdapter(
+                FinanceEngine(str(ORDERS_DB_FILE))
+            ),
+        )
+
         cart = context.user_data.setdefault("cart", {})
         if not cart:
             await query.edit_message_text("Корзина пуста.", reply_markup=cart_keyboard({}))
@@ -11954,6 +12340,7 @@ def main():
     USD_RUB_RATE = load_usd_rub_rate()
     PRICE_COEFFICIENT = load_price_coefficient()
     init_orders_db()
+    ensure_client_finance_schema(ORDERS_DB_FILE)
     pricing_analytics.init_analytics(ORDERS_DB_FILE)
     warehouse_admin.configure(
         ORDERS_DB_FILE,
