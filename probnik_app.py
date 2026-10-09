@@ -38,15 +38,11 @@ DP_MAX_AGE_HOURS = float(os.getenv("EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "168") o
 PRICE_COEFFICIENT = float(os.getenv("EXTREMIZER_PRICE_COEFFICIENT", "1.34") or "1.34")
 USD_RUB_RATE = float((os.getenv("EXTREMIZER_USD_RUB_RATE", "0") or "0").replace(",", "."))
 
-DELIVERY_NOTICE = (
-    "🚚 Доставка из США не входит в стоимость товаров и оплачивается отдельно."
-)
-
 WELCOME = (
     "👋 <b>EXTREMIZER — ПРОБНИК</b>\n\n"
     "Отправь каталожный номер одним сообщением.\n"
     "Я покажу:\n"
-    "🇺🇸 цену со склада США (доставка в РФ оплачивается отдельно)\n"
+    "🇺🇸 цену со склада США\n"
     "🇷🇺 цены и наличие на складах РФ, если твой номер есть в наличии"
 )
 
