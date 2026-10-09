@@ -18,6 +18,7 @@ Safety properties:
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -98,7 +99,7 @@ def prepare_order_apply(
     now = datetime.now().astimezone()
 
     try:
-        with sqlite3.connect(db_file, timeout=30) as conn:
+        with closing(sqlite3.connect(db_file, timeout=30)) as conn:
             conn.row_factory = sqlite3.Row
             conn.execute("BEGIN IMMEDIATE")
 
