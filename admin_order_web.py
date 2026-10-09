@@ -56,7 +56,7 @@ def _qty(value: Any) -> str:
 
 
 def _source_label(item: dict[str, Any]) -> str:
-    source = str(item.get("offer_source") or "usa").lower()
+    source = str(item.get("offer_source") or item.get("source") or "usa").lower()
     if source == "warehouse":
         return _e(item.get("warehouse_public_name") or "Склад")
     return "США"
