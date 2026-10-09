@@ -102,9 +102,7 @@ ORDERS_DB_FILE = Path(
 supplier_order_service = supplier_runtime.get_supplier_order_service(ORDERS_DB_FILE)
 
 DELIVERY_SEPARATE_NOTICE = (
-    "🚚 Доставка из США в указанную стоимость не входит и оплачивается отдельно. "
-    "Окончательная стоимость доставки определяется после прихода груза в Москву, "
-    "исходя из фактического веса заказа, его размеров и выбранного способа доставки."
+    "* - в цену не входит стоимость доставки из штатов 🚚"
 )
 REFERENCE_WEIGHT_NOTICE = "Данные по весу носят справочный характер."
 
@@ -2312,7 +2310,7 @@ def format_cart(cart: dict, checkout: bool = False) -> str:
                 lines.append("Цена: —")
             lines.append("")
         if group_label == "🇺🇸 ИЗ США":
-            lines.append("🚚 Доставка из США оплачивается отдельно.")
+            lines.append("* - в цену не входит стоимость доставки из штатов 🚚")
             lines.append("")
 
     lines.append(f"<b>Товары: {format_rub(total_rub)}</b>")
@@ -3785,7 +3783,7 @@ def format_customer_delivery_intro() -> str:
         "",
         "⚠️ Сроки ориентировочные.",
         "",
-        "Стоимость доставки рассчитывается отдельно после прихода груза в Москву.",
+        "* - в цену не входит стоимость доставки из штатов 🚚",
     ])
 
 
@@ -3931,8 +3929,7 @@ def format_customer_delivery_details() -> str:
         "",
         "⚠️ Все сроки ориентировочные.",
         "",
-        "Стоимость доставки не входит в стоимость товара и оплачивается "
-        "отдельно после прихода груза в Москву.",
+        "* - в цену не входит стоимость доставки из штатов 🚚",
     ]
     return "\n".join(lines)
 
@@ -6415,7 +6412,7 @@ def format_checkout_delivery_choices(cart: dict) -> str:
                 f"{escape(short_eta[tariff_code])}"
             )
     if available_tariffs:
-        lines.extend(["", "Доставка оплачивается отдельно после прихода груза в Москву.", ""])
+        lines.extend(["", "* - в цену не входит стоимость доставки из штатов 🚚", ""])
     lines.extend(["<b>Выберите способ доставки:</b>", ""])
     has_warehouse = False
 
@@ -8285,8 +8282,8 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     await query.edit_message_reply_markup(reply_markup=None)
                     await query.message.reply_text(msg)
                     await query.message.reply_text(
-                        f"🇺🇸 Цена из США для {x['oem']}: <b>{_total:,} ₽</b> за {_short_q(x['shortage_qty'])} шт.\n\n"
-                        "Стоимость доставки из США не входит в стоимость товаров и оплачивается отдельно.",
+                        f"🇺🇸 Цена из США для {x['oem']}: <b>{_total:,}* ₽</b> за {_short_q(x['shortage_qty'])} шт.\n\n"
+                        "* - в цену не входит стоимость доставки из штатов 🚚",
                         parse_mode=ParseMode.HTML,
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Заказать по этой цене",callback_data=f"shortageusa:accept:{sid}")],[InlineKeyboardButton("❌ Не заказывать",callback_data=f"shortageusa:decline:{sid}")]])
                     ); return
