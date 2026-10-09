@@ -191,6 +191,19 @@ def admin_order_card(request: Request, order_id: str):
     return admin_order_web.render_order_card(snapshot)
 
 
+@app.get("/admin/orders/{order_id}/prepare-dry-run", response_class=HTMLResponse)
+def admin_order_prepare_dry_run(request: Request, order_id: str):
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
+    try:
+        snapshot = admin_order_service.get_order(order_id, core.ORDERS_DB_FILE)
+        dry_run = admin_order_service.prepare_order_dry_run(order_id, core.ORDERS_DB_FILE)
+    except admin_order_service.OrderNotFound:
+        raise HTTPException(status_code=404, detail="client order not found")
+    return admin_order_web.render_order_card(snapshot, dry_run=dry_run)
+
+
 @app.get("/admin/supplier-orders", response_class=HTMLResponse)
 def supplier_admin_queue(request: Request, filter: str = "all"):
     redirect = _admin_page_login_redirect(request)
