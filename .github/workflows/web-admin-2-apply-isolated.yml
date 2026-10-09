@@ -13,6 +13,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Compile
-        run: python -m py_compile admin_order_apply_service.py admin_order_service.py stock_engine.py test_web_admin_2_apply_isolated.py
+        run: python -m py_compile admin_order_apply_service.py admin_order_service.py stock_engine.py supplier_admin_auth.py test_web_admin_2_apply_isolated.py test_web_admin_2_apply_csrf.py
       - name: Isolated SQLite transaction tests
-        run: python -m unittest -v test_web_admin_2_apply_isolated
+        run: python -m unittest -v test_web_admin_2_apply_isolated test_web_admin_2_apply_csrf
