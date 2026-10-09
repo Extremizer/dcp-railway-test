@@ -3783,7 +3783,7 @@ def format_customer_delivery_intro() -> str:
         "",
         "⚠️ Сроки ориентировочные.",
         "",
-        "Стоимость доставки рассчитывается отдельно после прихода груза в Москву.",
+        "* - в цену не входит стоимость доставки из штатов 🚚",
     ])
 
 
@@ -6413,7 +6413,7 @@ def format_checkout_delivery_choices(cart: dict) -> str:
                 f"{escape(short_eta[tariff_code])}"
             )
     if available_tariffs:
-        lines.extend(["", "Доставка оплачивается отдельно после прихода груза в Москву.", ""])
+        lines.extend(["", "* - в цену не входит стоимость доставки из штатов 🚚", ""])
     lines.extend(["<b>Выберите способ доставки:</b>", ""])
     has_warehouse = False
 
