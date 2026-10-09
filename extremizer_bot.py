@@ -1454,10 +1454,14 @@ def get_dealer_price_cache(
 
 async def enrich_found_result_with_dealer_price(result: dict) -> dict:
     """Attach private DCP dealer-price metadata without changing customer UI."""
-    if str(result.get("status") or "").upper() != "FOUND":
+    status = str(result.get("status") or "").upper()
+    resolved_item_type = str(result.get("_resolved_item_type") or "").strip().lower()
+    partial_parts = status == "PARTIAL" and resolved_item_type in {"part", "parts"}
+    if status != "FOUND" and not partial_parts:
         return result
     catalog_is_parts = (
         str(result.get("catalog") or "").strip().lower() == "parts"
+        or partial_parts
     )
 
     manufacturer = str(result.get("manufacturer") or "").strip()

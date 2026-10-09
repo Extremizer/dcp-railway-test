@@ -25,8 +25,8 @@ jobs:
 
       - name: Syntax check
         run: |
-          python -m py_compile             dp_live_health.py             dp_live_bridge.py             web_app.py             oemixibot_dcp_price.py             extremizer_bot.py             dp_sync_agent.py             test_dcp_health_core.py             test_procenka_dp_bridge.py
+          python -m py_compile             dp_live_health.py             dp_live_bridge.py             web_app.py             oemixibot_dcp_price.py             extremizer_bot.py             dp_sync_agent.py             test_dcp_health_core.py             test_procenka_dp_bridge.py             test_procenka_partial_parts_bridge.py
 
       - name: DCP health regression
         run: |
-          python -m unittest -v test_dcp_health_core.py test_procenka_dp_bridge.py
+          python -m unittest -v test_dcp_health_core.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py
