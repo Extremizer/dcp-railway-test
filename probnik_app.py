@@ -617,7 +617,9 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
         lines.append("Цена сейчас недоступна. Попробуйте повторить запрос позже.")
         delivery_line = None
 
-    if delivery_line:\n        lines.extend(["", delivery_line])\n    lines.extend(["", "🇷🇺 <b>Наличие в РФ:</b>"])
+    if delivery_line:
+        lines.extend(["", delivery_line])
+    lines.extend(["", "🇷🇺 <b>Наличие в РФ:</b>"])
 
     positive = [
         r for r in rows
