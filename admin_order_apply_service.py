@@ -281,7 +281,17 @@ def prepare_order_apply(
             details={"error_type": type(exc).__name__},
         )
 
-    post = admin_order_service.prepare_order_dry_run(order_id, db_file)
+    # The transaction has already committed: do not claim a rollback on failure.
+    try:
+        post = admin_order_service.prepare_order_dry_run(order_id, db_file)
+    except Exception as exc:
+        return {
+            "ok": False, "order_id": order_id,
+            "state": "committed_postcheck_error", "changed": bool(created_ids),
+            "reason": "postcheck_error_after_commit",
+            "details": {"error_type": type(exc).__name__, "manual_review_required": True},
+            "reservation_ids": created_ids, "dry_run": pre, "post_dry_run": None,
+        }
     post_ready = bool(post.get("ready_to_apply"))
     post_has_actions = bool(post.get("would_change_db"))
 
@@ -291,7 +301,7 @@ def prepare_order_apply(
         "state": (
             "prepared"
             if post_ready and not post_has_actions
-            else "postcheck_blocked"
+            else "committed_postcheck_blocked"
         ),
         "changed": bool(created_ids),
         "reason": (
@@ -301,6 +311,7 @@ def prepare_order_apply(
         ),
         "details": {
             "blockers": list(post.get("blockers") or []),
+            "manual_review_required": not (post_ready and not post_has_actions),
             "remaining_actions": list(post.get("actions") or []),
         },
         "reservation_ids": created_ids,
