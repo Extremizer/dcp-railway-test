@@ -41,6 +41,7 @@ import supplier_channels
 import supplier_channel_web
 import supplier_admin_auth
 import admin_order_service
+import admin_order_apply_service
 import admin_order_web
 import oem_import_maintenance
 try:
@@ -203,6 +204,34 @@ def admin_order_prepare_dry_run(request: Request, order_id: str):
     except admin_order_service.OrderNotFound:
         raise HTTPException(status_code=404, detail="client order not found")
     return admin_order_web.render_order_card(snapshot, dry_run=dry_run)
+
+@app.post("/admin/orders/{order_id}/prepare-apply", response_class=HTMLResponse)
+def admin_order_prepare_apply(request: Request, order_id: str):
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
+
+    result = admin_order_apply_service.prepare_order_apply(
+        order_id,
+        core.ORDERS_DB_FILE,
+    )
+    if result.get("reason") == "order_not_found":
+        raise HTTPException(status_code=404, detail="client order not found")
+
+    try:
+        snapshot = admin_order_service.get_order(order_id, core.ORDERS_DB_FILE)
+        dry_run = admin_order_service.prepare_order_dry_run(
+            order_id,
+            core.ORDERS_DB_FILE,
+        )
+    except admin_order_service.OrderNotFound:
+        raise HTTPException(status_code=404, detail="client order not found")
+
+    return admin_order_web.render_order_card(
+        snapshot,
+        dry_run=dry_run,
+        apply_result=result,
+    )
 
 
 @app.get("/admin/supplier-orders", response_class=HTMLResponse)

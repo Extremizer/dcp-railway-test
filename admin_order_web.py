@@ -88,7 +88,7 @@ def _supplier_label(item: dict[str, Any], supplier_orders: list[dict[str, Any]])
     return "<br>".join(parts)
 
 
-def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None = None) -> str:
+def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None = None, apply_result: dict[str, Any] | None = None) -> str:
     order = snapshot["order"]
     items = snapshot["items"]
     supplier_orders = snapshot["supplier_orders"]
@@ -223,11 +223,23 @@ def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None =
             if dry_run.get("would_change_db")
             else "При будущем Apply дополнительных резервов создавать не нужно."
         )
+        apply_html = ""
+        if dry_run.get("ready_to_apply"):
+            if dry_run.get("would_change_db"):
+                apply_html = f"""
+                <form method="post" action="/admin/orders/{escape(str(order.get('order_id') or ''), quote=True)}/prepare-apply" style="margin-top:14px">
+                  <button type="submit">⚙️ Применить подготовку</button>
+                </form>
+                """
+            else:
+                apply_html = '<div class="muted" style="margin-top:14px">Дополнительная подготовка не требуется.</div>'
+
         dry_run_html = f"""
         <section class="card ready {dry_state}">
           <h2>WEB ADMIN 2 · Dry-run подготовки</h2>
           <h3>{_e(dry_title)}</h3>
           <div class="muted">Это только проверка. База данных не изменялась. {_e(change_text)}</div>
+          {apply_html}
           <div class="table-wrap" style="margin-top:12px">
             <table>
               <thead><tr>
@@ -239,6 +251,23 @@ def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None =
           </div>
         </section>
         """
+
+    apply_result_html = ""
+    if apply_result is not None:
+        if apply_result.get("ok"):
+            created = len(apply_result.get("reservation_ids") or [])
+            text = (
+                f"Apply PASS · создано резервов: {created}"
+                if apply_result.get("changed")
+                else "Apply PASS · изменений не потребовалось"
+            )
+            apply_result_html = f'<section class="card ready ok"><h3>{_e(text)}</h3></section>'
+        else:
+            reason = str(apply_result.get("reason") or "unknown")
+            apply_result_html = (
+                '<section class="card ready warn"><h3>Apply BLOCK</h3>'
+                f'<div class="muted">{_e(reason)}</div></section>'
+            )
 
     problems = readiness.get("problems") or []
     problem_html = ""
@@ -325,6 +354,8 @@ td small{{display:block;color:#667085;margin-top:3px}}
   </section>
 
   {dry_run_html}
+
+  {apply_result_html}
 
   <section class="card">
     <h2>Позиции заказа</h2>
