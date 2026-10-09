@@ -107,5 +107,20 @@ class ApplyRegression(unittest.TestCase):
         self.assertEqual(self.count(), 0)
 
 
+    def test_postcheck_exception_reports_committed_state(self):
+        original = admin_order_service.prepare_order_dry_run
+        calls = [0]
+        def post_fail(*args):
+            calls[0] += 1
+            if calls[0] > 1:
+                raise RuntimeError("forced postcheck failure")
+            return original(*args)
+        with patch.object(admin_order_service, "prepare_order_dry_run", side_effect=post_fail):
+            result = apply.prepare_order_apply("SAFE-1", self.db)
+        self.assertEqual(result["state"], "committed_postcheck_error")
+        self.assertTrue(result["changed"])
+        self.assertFalse(result["ok"])
+        self.assertEqual(self.count(), 1)
+
 if __name__ == "__main__":
     unittest.main()
