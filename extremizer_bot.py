@@ -61,6 +61,8 @@ import supplier_telegram_admin
 import supplier_telegram_handlers
 import warehouse_recipient
 import pricing_analytics
+import dp_live_bridge
+import dp_live_health
 
 
 # ---------------------------------------------------------------------------
@@ -100,9 +102,7 @@ ORDERS_DB_FILE = Path(
 supplier_order_service = supplier_runtime.get_supplier_order_service(ORDERS_DB_FILE)
 
 DELIVERY_SEPARATE_NOTICE = (
-    "🚚 Доставка из США в указанную стоимость не входит и оплачивается отдельно. "
-    "Окончательная стоимость доставки определяется после прихода груза в Москву, "
-    "исходя из фактического веса заказа, его размеров и выбранного способа доставки."
+    "* - в цену не входит стоимость доставки из штатов 🚚"
 )
 REFERENCE_WEIGHT_NOTICE = "Данные по весу носят справочный характер."
 
@@ -1452,10 +1452,14 @@ def get_dealer_price_cache(
 
 async def enrich_found_result_with_dealer_price(result: dict) -> dict:
     """Attach private DCP dealer-price metadata without changing customer UI."""
-    if str(result.get("status") or "").upper() != "FOUND":
+    status = str(result.get("status") or "").upper()
+    resolved_item_type = str(result.get("_resolved_item_type") or "").strip().lower()
+    partial_parts = status == "PARTIAL" and resolved_item_type in {"part", "parts"}
+    if status != "FOUND" and not partial_parts:
         return result
     catalog_is_parts = (
         str(result.get("catalog") or "").strip().lower() == "parts"
+        or partial_parts
     )
 
     manufacturer = str(result.get("manufacturer") or "").strip()
@@ -1506,9 +1510,53 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
             result["_dealer_price_cache_age_hours"] = float(
                 cached.get("age_hours") or 0.0
             )
-        else:
-            result["_dealer_price_status"] = "CACHE_MISS"
-            result["_dealer_price_checked_at"] = checked_at
+            return result
+
+        # Production runs the main client bot in cache-only mode so Railway
+        # never opens DCP directly. On a real cache miss, use the same trusted
+        # bridge as Probnik: shared health guard -> local authorized DCP agent
+        # -> verified result -> persistent DP cache.
+        try:
+            live = await asyncio.to_thread(
+                dp_live_bridge.request_live_dp,
+                ORDERS_DB_FILE,
+                manufacturer,
+                oem,
+                wait_seconds=10.0,
+            )
+            live_status = str(live.get("status") or "TECHNICAL_ERROR").upper()
+        except Exception:
+            live = {}
+            live_status = "TECHNICAL_ERROR"
+            log.exception(
+                "Shared DP bridge failed for %s / %s",
+                manufacturer,
+                oem,
+            )
+
+        result["_dealer_price_status"] = live_status
+        result["_dealer_price_live_status"] = live_status
+        result["_dealer_price_checked_at"] = checked_at
+
+        if (
+            live_status == "FOUND"
+            and isinstance(live.get("dealer_price_usd"), (int, float))
+            and float(live["dealer_price_usd"]) > 0
+        ):
+            dealer_price_usd = float(live["dealer_price_usd"])
+            dealer_price_source = str(
+                live.get("source") or "verified_live_dp"
+            )
+            result["_dealer_price_usd"] = dealer_price_usd
+            result["_dealer_price_source"] = dealer_price_source
+            upsert_dealer_price_cache(
+                manufacturer,
+                oem,
+                dealer_price_usd,
+                dealer_price_source,
+                checked_at,
+            )
+
         return result
 
     live_status = None
@@ -2262,7 +2310,7 @@ def format_cart(cart: dict, checkout: bool = False) -> str:
                 lines.append("Цена: —")
             lines.append("")
         if group_label == "🇺🇸 ИЗ США":
-            lines.append("🚚 Доставка из США оплачивается отдельно.")
+            lines.append("* - в цену не входит стоимость доставки из штатов 🚚")
             lines.append("")
 
     lines.append(f"<b>Товары: {format_rub(total_rub)}</b>")
@@ -2600,12 +2648,13 @@ def format_client_offer_card(result: dict) -> str:
 
     lines.append("")
     if customer_price is not None:
-        lines.append(f"🇺🇸 <b>склад США— {format_rub(customer_price)}</b>")
+        customer_price_text = format_rub(customer_price).replace(" ₽", "* ₽")
+        lines.append(f"🇺🇸 <b>склад США— {customer_price_text}</b>")
         if rrp_rub is not None and rrp_rub > customer_price:
             lines.append(f"РРЦ: {format_rub(rrp_rub)}")
             benefit_pct = (rrp_rub - customer_price) / rrp_rub * 100
             lines.append(f"<b>Выгода:</b> {benefit_pct:.1f}%")
-        lines.append("🚚 Доставка из США оплачивается отдельно.")
+        lines.append("* - в цену не входит стоимость доставки из штатов 🚚")
     else:
         lines.append("🇺🇸 <b>склад США— цена уточняется</b>")
 
@@ -3734,7 +3783,7 @@ def format_customer_delivery_intro() -> str:
         "",
         "⚠️ Сроки ориентировочные.",
         "",
-        "Стоимость доставки рассчитывается отдельно после прихода груза в Москву.",
+        "* - в цену не входит стоимость доставки из штатов 🚚",
     ])
 
 
@@ -3880,8 +3929,7 @@ def format_customer_delivery_details() -> str:
         "",
         "⚠️ Все сроки ориентировочные.",
         "",
-        "Стоимость доставки не входит в стоимость товара и оплачивается "
-        "отдельно после прихода груза в Москву.",
+        "* - в цену не входит стоимость доставки из штатов 🚚",
     ]
     return "\n".join(lines)
 
@@ -6364,7 +6412,7 @@ def format_checkout_delivery_choices(cart: dict) -> str:
                 f"{escape(short_eta[tariff_code])}"
             )
     if available_tariffs:
-        lines.extend(["", "Доставка оплачивается отдельно после прихода груза в Москву.", ""])
+        lines.extend(["", "* - в цену не входит стоимость доставки из штатов 🚚", ""])
     lines.extend(["<b>Выберите способ доставки:</b>", ""])
     has_warehouse = False
 
@@ -8234,8 +8282,8 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     await query.edit_message_reply_markup(reply_markup=None)
                     await query.message.reply_text(msg)
                     await query.message.reply_text(
-                        f"🇺🇸 Цена из США для {x['oem']}: <b>{_total:,} ₽</b> за {_short_q(x['shortage_qty'])} шт.\n\n"
-                        "Стоимость доставки из США не входит в стоимость товаров и оплачивается отдельно.",
+                        f"🇺🇸 Цена из США для {x['oem']}: <b>{_total:,}* ₽</b> за {_short_q(x['shortage_qty'])} шт.\n\n"
+                        "* - в цену не входит стоимость доставки из штатов 🚚",
                         parse_mode=ParseMode.HTML,
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Заказать по этой цене",callback_data=f"shortageusa:accept:{sid}")],[InlineKeyboardButton("❌ Не заказывать",callback_data=f"shortageusa:decline:{sid}")]])
                     ); return
