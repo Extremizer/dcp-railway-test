@@ -2312,7 +2312,7 @@ def format_cart(cart: dict, checkout: bool = False) -> str:
                 lines.append("Цена: —")
             lines.append("")
         if group_label == "🇺🇸 ИЗ США":
-            lines.append("🚚 Доставка из США оплачивается отдельно.")
+            lines.append("* - в цену не входит стоимость доставки из штатов 🚚")
             lines.append("")
 
     lines.append(f"<b>Товары: {format_rub(total_rub)}</b>")
@@ -8285,8 +8285,8 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     await query.edit_message_reply_markup(reply_markup=None)
                     await query.message.reply_text(msg)
                     await query.message.reply_text(
-                        f"🇺🇸 Цена из США для {x['oem']}: <b>{_total:,} ₽</b> за {_short_q(x['shortage_qty'])} шт.\n\n"
-                        "Стоимость доставки из США не входит в стоимость товаров и оплачивается отдельно.",
+                        f"🇺🇸 Цена из США для {x['oem']}: <b>{_total:,}* ₽</b> за {_short_q(x['shortage_qty'])} шт.\n\n"
+                        "* - в цену не входит стоимость доставки из штатов 🚚",
                         parse_mode=ParseMode.HTML,
                         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("✅ Заказать по этой цене",callback_data=f"shortageusa:accept:{sid}")],[InlineKeyboardButton("❌ Не заказывать",callback_data=f"shortageusa:decline:{sid}")]])
                     ); return
