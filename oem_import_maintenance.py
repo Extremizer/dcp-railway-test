@@ -20,7 +20,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import sqlite3
 import threading
 import time
@@ -36,6 +35,7 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from openpyxl import load_workbook
 
+import backup_object_store
 import supplier_admin_auth
 
 log = logging.getLogger("oem_import_maintenance")
@@ -44,13 +44,12 @@ DATA_DIR = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"))
 DB_PATH = DATA_DIR / "oem_reference.db"
 SOURCE_DIR = DATA_DIR / "import_sources"
 REPORT_DIR = DATA_DIR / "import_reports"
-BACKUP_DIR = DATA_DIR / "backups"
 JOB_DIR = DATA_DIR / "import_jobs"
 MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 _WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="oem-import")
 _JOB_LOCK = threading.Lock()
 
-for _p in (SOURCE_DIR, REPORT_DIR, BACKUP_DIR, JOB_DIR):
+for _p in (SOURCE_DIR, REPORT_DIR, JOB_DIR):
     _p.mkdir(parents=True, exist_ok=True)
 
 # Reusable profiles. More can be added without changing the runner.
@@ -645,25 +644,22 @@ def _build_dry_run(source_path: Path, profile_key: str) -> dict[str, Any]:
     return report
 
 
-def _backup_database(job_id: str) -> tuple[Path, str]:
-    free = shutil.disk_usage(DATA_DIR).free
-    db_size = DB_PATH.stat().st_size
-    if free < db_size * 2 + 100 * 1024 * 1024:
-        raise RuntimeError("insufficient free space for safe database backup/import")
-    backup = BACKUP_DIR / f"oem_reference.pre_{job_id}_{int(time.time())}.db"
-    src = sqlite3.connect(DB_PATH)
-    dst = sqlite3.connect(backup)
-    try:
-        src.backup(dst)
-    finally:
-        dst.close()
-        src.close()
-    with sqlite3.connect(backup) as c:
-        integrity = c.execute("PRAGMA integrity_check").fetchone()[0]
-    if integrity != "ok":
-        backup.unlink(missing_ok=True)
-        raise RuntimeError("backup integrity check failed")
-    return backup, _sha256(backup)
+def _backup_database(job_id: str) -> tuple[str, str]:
+    stamp = datetime.now(timezone.utc)
+    safe_job = re.sub(r"[^A-Za-z0-9._-]+", "_", str(job_id)).strip("._") or "job"
+    object_key = (
+        f"preimport/oem-reference/{stamp:%Y/%m/%d}/"
+        f"oem_reference.pre_{safe_job}_{int(time.time())}.db"
+    )
+    result = backup_object_store.backup_sqlite_to_bucket(
+        DB_PATH,
+        object_key,
+        metadata={
+            "kind": "pre-import",
+            "job_id": safe_job,
+        },
+    )
+    return str(result["uri"]), str(result["sha256"])
 
 
 def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
