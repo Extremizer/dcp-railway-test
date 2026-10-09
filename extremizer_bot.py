@@ -2650,12 +2650,13 @@ def format_client_offer_card(result: dict) -> str:
 
     lines.append("")
     if customer_price is not None:
-        lines.append(f"🇺🇸 <b>склад США— {format_rub(customer_price)}</b>")
+        customer_price_text = format_rub(customer_price).replace(" ₽", "* ₽")
+        lines.append(f"🇺🇸 <b>склад США— {customer_price_text}</b>")
         if rrp_rub is not None and rrp_rub > customer_price:
             lines.append(f"РРЦ: {format_rub(rrp_rub)}")
             benefit_pct = (rrp_rub - customer_price) / rrp_rub * 100
             lines.append(f"<b>Выгода:</b> {benefit_pct:.1f}%")
-        lines.append("🚚 Доставка из США оплачивается отдельно.")
+        lines.append("* - в цену не входит стоимость доставки из штатов 🚚")
     else:
         lines.append("🇺🇸 <b>склад США— цена уточняется</b>")
 
