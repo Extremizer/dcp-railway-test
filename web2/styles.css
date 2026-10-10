@@ -158,7 +158,7 @@ footer { max-width: 1180px; margin: auto; padding: 30px 24px; border-top: 1px so
   main { padding: 48px 16px 80px; }
   .lead { font-size: 16px; }
   .search-box { flex-direction: column; background: transparent; padding: 0; }
-  .search-box input { background: #fff; border-radius: 12px; padding: 16px; }
+  .search-box input { background: #141716; color: var(--metal-hi); border: 1px solid #3a403d; border-radius: 12px; padding: 16px; }
   .search-box button { min-height: 50px; }
   .product-head { grid-template-columns: 1fr; padding: 24px; }
   .price-panel { text-align: left; min-width: 0; }
