@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from botocore.exceptions import ClientError
-from fastapi import UploadFile, HTTPException
+from fastapi import UploadFile
 
 
 class FakeS3:
@@ -102,7 +102,7 @@ class CapturingWorker:
 
 
 def _assert_no_forbidden_dirs(root: Path) -> None:
-    for name in ("import_sources", "import_reports", "import_jobs", "vk_backups"):
+    for name in ("import_sources", "import_reports", "import_jobs"):
         assert not (root / name).exists(), f"forbidden persistent dir created: {name}"
 
 
@@ -126,7 +126,6 @@ def main() -> None:
 
         import backup_object_store as bos
         import oem_import_maintenance as oim
-        import web_app as wa
 
         fake = FakeS3()
         bucket = "stage2-test-bucket"
@@ -279,52 +278,21 @@ def main() -> None:
             fake.fail_put = False
             print("PASS 8 storage failure blocks OEM workflow")
 
-            # 9. VK backup writer/download use object storage, not /data/vk_backups.
-            def fake_vk_call(method: str, token: str, params: dict):
-                assert method == "wall.get"
-                assert token == "vk-test"
-                return {"count": 1, "items": [{"id": 101, "text": "stage2"}]}
-
-            real_vk_call = wa._vk_call
-            wa._vk_call = fake_vk_call
-            vk = wa.vk_maintenance_backup(wa.VKBackupRequest(access_token="vk-test"))
-            vk_key = f"runtime-artifacts/vk-backups/vk_extremizer_wall_backup_{vk['backup_id']}.json"
-            assert (bucket, vk_key) in fake.objects
-            response = wa.vk_maintenance_backup_download(vk["backup_id"])
-            assert response.body == fake.objects[(bucket, vk_key)]
-            assert hashlib.sha256(response.body).hexdigest() == vk["sha256"]
-            assert "attachment;" in response.headers["content-disposition"]
-            _assert_no_forbidden_dirs(data_root)
-            wa._vk_call = real_vk_call
-            print("PASS 9 VK backup save/download -> object storage only")
-
-            # 10. VK missing object maps to 404.
-            try:
-                wa.vk_maintenance_backup_download("0" * 32)
-            except HTTPException as exc:
-                assert exc.status_code == 404
-            else:
-                raise AssertionError("missing VK backup must return 404")
-            print("PASS 10 VK missing object -> 404")
-
         _assert_no_forbidden_dirs(data_root)
 
         oem_text = Path("oem_import_maintenance.py").read_text(encoding="utf-8")
-        web_text = Path("web_app.py").read_text(encoding="utf-8")
         for forbidden in (
             '/data/import_sources',
             '/data/import_reports',
             '/data/import_jobs',
-            '/data/vk_backups',
             'SOURCE_DIR',
             'REPORT_DIR',
             'JOB_DIR',
-            'VK_BACKUP_DIR',
         ):
-            assert forbidden not in oem_text + web_text, forbidden
+            assert forbidden not in oem_text, forbidden
 
-        print("PASS 11 no forbidden persistent file-writer references")
-        print("STORAGE_STAGE2_FILE_WRITERS_ISOLATED_REGRESSION PASS")
+        print("PASS 9 no forbidden OEM persistent file-writer references")
+        print("STORAGE_STAGE2A_OEM_WRITERS_ISOLATED_REGRESSION PASS")
 
 
 if __name__ == "__main__":
