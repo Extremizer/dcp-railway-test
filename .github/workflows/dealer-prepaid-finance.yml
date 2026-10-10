@@ -15,6 +15,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Install isolated runtime import dependencies
+        run: pip install 'python-telegram-bot>=22.8,<23' 'websocket-client>=1.9,<2' 'playwright>=1.50'
       - name: Syntax and import smoke
         run: |
           python -B - <<'PY'
@@ -24,9 +26,10 @@ jobs:
               ast.parse(path.read_text(encoding='utf-8-sig'), filename=str(path))
           import oemixibot_finance, common_finance_contract, client_finance_adapter
           import client_order_finance_bridge, client_checkout_orchestrator
+          import oemixibot_app, oemixibot_store, oemixibot_catalog
           PY
       - name: Dealer prepaid regression
-        run: python -B -m unittest -v test_dealer_prepaid_finance.py
+        run: python -B -m unittest -v test_dealer_prepaid_finance.py test_oemixibot_prepaid_runtime.py
       - name: Client RUB and ORDER CORE atomicity regression
         run: |
           python -B _atomic_client_finance_regression.py

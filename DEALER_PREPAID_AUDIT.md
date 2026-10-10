@@ -115,3 +115,22 @@ rollback/close. Insufficient balance and injected INSERT OperationalError
 prove explicit rollback-before-close for owned connections. The same failure
 cases prove caller transaction remains open, retains pending order/top-up
 changes, accepts further SQL and remains under caller rollback control.
+
+## Stage 3: actual runtime supplied and adapted
+
+The earlier compatibility limitation is superseded for the uploaded source
+snapshot: the user supplied actual OEMixiBOT app/store/domain/catalog/Telegram
+and support modules. The supplied app DOES contain active removed-API consumers,
+so earlier checkout-only negative searches must not be treated as a statement
+about that actual runtime. Source hashes, integration choices and remaining
+scope limits are recorded in `OEMIXIBOT_RUNTIME_PROVENANCE.md`.
+
+The adapted app removes all those credit/debt/due-date/aging/alert consumers,
+UI callbacks/buttons/state and job registration. Balance display is prepaid
+USD only; no credit-limit display. Cart/order/refund logic remains unchanged
+and executes against the approved prepaid FinanceEngine. Runtime delivery
+billing no longer writes a separate wallet_events ledger and is atomic with
+the shared FinanceEngine charge. Historical schema/data is preserved, not
+imported or deleted. No production startup wiring or shared protected files
+are changed. Compatibility tests exercise actual app callbacks, real store,
+shared engine and temporary databases without Telegram/DCP/production access.
