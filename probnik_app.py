@@ -598,20 +598,21 @@ async def _stock_with_refresh(oem: str) -> list[dict]:
 
 
 def _compose(oem: str, info: dict, rows: list[dict]) -> str:
-    lines = [f"🔎 <b>OEM:</b> <code>{escape(oem)}</code>"]
-    if info.get("name"):
-        lines.append(escape(str(info["name"])))
-    lines.extend(["", "🇺🇸 <b>склад США—</b>"])
+    manufacturer = escape(str(info.get("manufacturer") or "—"))
+    lines = [
+        f"🔎 <b>OEM:</b> <b>{escape(oem)} ({manufacturer})</b>",
+        "",
+        "🇺🇸 <b>склад США:</b>",
+    ]
 
     customer_rub = info.get("customer_rub")
     rrp_rub = info.get("rrp_rub")
     if customer_rub is not None:
         customer_price = _format_rub(customer_rub).replace(" ₽", "* ₽")
-        lines.append(f"Ваша цена: <b>{customer_price}</b>")
+        lines.append(f"Ваша цена — <b>{customer_price}</b>")
         if rrp_rub is not None and rrp_rub > customer_rub:
-            lines.append(f"РРЦ: <b>{_format_rub(rrp_rub)}</b>")
             benefit_pct = (rrp_rub - customer_rub) / rrp_rub * 100
-            lines.append(f"Ваша выгода: <b>{benefit_pct:.1f}%</b>")
+            lines.append(f"Ваша выгода — <b>{benefit_pct:.1f}%</b>")
         delivery_line = "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"
     else:
         lines.append("Цена сейчас недоступна. Попробуйте повторить запрос позже.")
