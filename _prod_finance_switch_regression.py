@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import hashlib
 from pathlib import Path
 
@@ -18,6 +19,10 @@ WEB_APP = ROOT / "web_app.py"
 
 PROD_LEGACY_CHECKOUT_BLOB = "0ebb62fdbf6cef25c915fa16da4687e80b1410d7"
 PROD_PROBNIK_BLOB = "87e316e0af75b0c3447214044d57fc1debd67bf3"
+# Derived from that same verified baseline after excluding ONLY the _compose
+# body. Its signature and every other byte (pricing/cache/live/access/startup)
+# stay pinned. PR #25 changes presentation; it does not rebaseline finance.
+PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB = "b4b2dd134c45619ccb13168eedca61cf278f69be"
 # CURRENT 79a47e23 includes the reviewed PR #20 Apply/CSRF changes.
 PROD_WEB_APP_BLOB = "b30b75569c3ed409924cf8939193e95034d7903a"
 
@@ -46,6 +51,25 @@ def git_blob_sha(text: str) -> str:
 
 def file_git_blob(path: Path) -> str:
     return git_blob_sha(path.read_text(encoding="utf-8"))
+
+
+def probnik_outside_compose_blob(source: str) -> str:
+    targets = [
+        node for node in ast.parse(source).body
+        if isinstance(node, ast.FunctionDef) and node.name == "_compose"
+    ]
+    require(len(targets) == 1, "exactly one Probnik _compose required")
+    target = targets[0]
+    lines = source.splitlines(keepends=True)
+    outside = "".join(lines[:target.body[0].lineno - 1] + lines[target.end_lineno:])
+    return git_blob_sha(outside)
+
+
+def require_probnik_non_ui_unchanged(source: str):
+    require(
+        probnik_outside_compose_blob(source) == PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB,
+        "probnik_app.py changed outside _compose body",
+    )
 
 
 async def adapter_order_regression():
@@ -105,9 +129,9 @@ async def adapter_order_regression():
 def run():
     source = BOT.read_text(encoding="utf-8")
 
-    # Production files unrelated to finance switch must stay exactly at the
-    # post-hotfix production checkpoint.
-    require(file_git_blob(PROBNIK) == PROD_PROBNIK_BLOB, "probnik_app.py changed")
+    # Only the reviewed customer-card body is allowed to change. All non-UI
+    # Probnik bytes and the complete WEB file retain the original checkpoint.
+    require_probnik_non_ui_unchanged(PROBNIK.read_text(encoding="utf-8"))
     require(file_git_blob(WEB_APP) == PROD_WEB_APP_BLOB, "web_app.py changed")
 
     # Handler registration is unchanged; the live branch alone delegates.
@@ -191,7 +215,7 @@ def run():
 
     print("PASS production finance switch port regression")
     print("legacy production checkout body: byte-identical")
-    print("probnik_app.py hotfix: byte-identical")
+    print("probnik_app.py outside _compose body: byte-identical to original checkpoint")
     print("web_app.py: byte-identical")
     print("pricing analytics preserved after core commit")
     print("shared transaction + payment_route migration present")

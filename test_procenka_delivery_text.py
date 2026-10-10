@@ -10,7 +10,7 @@ class ProcenkaDeliveryTextTests(unittest.TestCase):
         end = source.index("\ndef format_result", start)
         block = source[start:end]
         self.assertIn('replace(" ₽", "* ₽")', block)
-        self.assertIn('* - в цену не входит стоимость доставки из штатов 🚚', block)
+        self.assertIn('<b>* -</b> в цену не входит стоимость доставки из штатов 🚚', block)
         self.assertNotIn('🚚 Доставка из США оплачивается отдельно.', block)
 
 
