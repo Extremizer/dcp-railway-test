@@ -1,0 +1,17 @@
+name: Startup Safety Isolated Regression
+on:
+  pull_request:
+    branches: [probnik-runtime-20261005]
+permissions:
+  contents: read
+jobs:
+  startup-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Isolated startup lifecycle regression
+        run: python -B -m unittest -v test_startup_safety.py
