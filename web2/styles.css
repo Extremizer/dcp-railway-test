@@ -1,19 +1,23 @@
 :root {
-  --bg: #080a09;
-  --panel: #101310;
-  --panel2: #151915;
-  --text: #f4f7f3;
-  --muted: #9da59d;
-  --line: #252b25;
-  --acid: #b8ff2c;
-  --acid2: #d5ff7a;
+  --bg: #050606;
+  --panel: #0d0f0f;
+  --panel2: #121515;
+  --text: #eef1ef;
+  --muted: #8d9491;
+  --line: #2a2f2d;
+  --metal: #c8cdca;
+  --metal-hi: #f4f6f5;
+  --acid: #BFF803;
+  --acid2: #d8ff63;
   --danger: #ff6b6b;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
 }
 * { box-sizing: border-box; }
 html { background: var(--bg); color: var(--text); }
 body { margin: 0; min-height: 100vh; background:
-  radial-gradient(circle at 50% -10%, #263312 0, transparent 35rem), var(--bg); }
+  radial-gradient(ellipse at 50% -12%, #343837 0, #171919 24%, transparent 52rem),
+  radial-gradient(circle at 73% 19%, #bff80312 0, transparent 17rem),
+  linear-gradient(180deg, #090a0a 0%, #030404 100%); }
 button, input { font: inherit; }
 button { cursor: pointer; }
 .hidden { display: none !important; }
@@ -25,11 +29,13 @@ button { cursor: pointer; }
   background: color-mix(in srgb, var(--bg) 88%, transparent);
   backdrop-filter: blur(14px);
 }
-.brand { color: var(--text); text-decoration: none; font-weight: 800; letter-spacing: .04em;
-  display: flex; align-items: center; gap: 10px; }
-.brand b { color: var(--acid); }
-.brand-mark { width: 34px; height: 34px; border: 2px solid var(--acid); border-radius: 50%;
-  display: grid; place-items: center; color: var(--acid); }
+.brand { color: var(--metal-hi); text-decoration: none; font-weight: 650; letter-spacing: .22em;
+  display: flex; align-items: center; gap: 12px; text-shadow: 0 1px 0 #fff3, 0 8px 24px #000; }
+.brand b { color: var(--acid); font-weight: 700; }
+.brand-mark { width: 38px; height: 38px; border: 1px solid #7d8380; border-radius: 50%;
+  display: grid; place-items: center; color: var(--metal-hi); font-weight: 900;
+  background: radial-gradient(circle at 35% 25%, #3b3f3d, #080909 58%);
+  box-shadow: inset 0 0 0 1px #ffffff18, 0 0 22px #bff80312; }
 .cart-button { border: 1px solid var(--line); background: var(--panel); color: var(--text);
   border-radius: 999px; padding: 9px 13px; display: flex; align-items: center; gap: 7px;
   box-shadow: 0 8px 30px #0007; }
@@ -42,14 +48,20 @@ button { cursor: pointer; }
 main { max-width: 980px; margin: auto; padding: 70px 24px 120px; }
 .hero { text-align: center; }
 .eyebrow { color: var(--acid); font-size: 12px; font-weight: 800; letter-spacing: .16em; }
-h1 { margin: 12px 0 18px; font-size: clamp(46px, 8vw, 88px); line-height: .95;
-  letter-spacing: -.055em; }
-h1 span { color: var(--acid); }
+h1 { margin: 14px 0 20px; font-size: clamp(46px, 8vw, 88px); line-height: .95;
+  letter-spacing: -.045em; font-weight: 760; color: var(--metal-hi);
+  text-shadow: 0 1px 0 #fff3, 0 16px 45px #000; }
+h1 span { color: var(--metal); }
+h1 span::after { content: ""; display: block; width: 76px; height: 3px; margin: 20px auto 0;
+  background: var(--acid); box-shadow: 0 0 18px #bff80388; }
 .lead { max-width: 600px; margin: 0 auto 32px; color: #c3c9c3; font-size: 18px; line-height: 1.55; }
 .search-box { max-width: 700px; margin: auto; padding: 7px; display: flex; gap: 8px;
-  background: #fff; border-radius: 16px; box-shadow: 0 18px 60px #0008; }
+  background: linear-gradient(180deg, #171a19, #0b0d0c); border: 1px solid #3a403d; border-radius: 14px;
+  box-shadow: inset 0 1px 0 #ffffff10, 0 18px 60px #000b, 0 0 42px #bff80308; }
+.search-box:focus-within { border-color: #78852f; box-shadow: inset 0 1px 0 #ffffff12, 0 18px 60px #000b, 0 0 32px #bff80312; }
 .search-box input { flex: 1; min-width: 0; border: 0; outline: 0; padding: 15px 16px;
-  background: transparent; color: #111; font-size: 18px; }
+  background: transparent; color: var(--metal-hi); font-size: 18px; letter-spacing: .02em; }
+.search-box input::placeholder { color: #686f6c; }
 .search-box button, .primary, .telegram { border: 0; border-radius: 11px; background: var(--acid);
   color: #10140a; font-weight: 850; padding: 14px 24px; }
 .hint { margin-top: 12px; color: #727a72; font-size: 13px; }
