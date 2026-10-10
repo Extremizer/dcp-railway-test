@@ -136,6 +136,7 @@ class Web2BrowserTests(unittest.TestCase):
     def test_stock_refresh_replaces_offers(self):
         with mock_server() as (base, _), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
             page.route("**/api/v1/oem/417300574", lambda route: route.fulfill(
                 status=200, content_type="application/json",
                 body=json.dumps({**mock_card(), "stock": {
