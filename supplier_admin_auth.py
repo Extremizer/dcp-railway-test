@@ -85,6 +85,8 @@ def verify_web_admin_session(
     parts = raw.split(".")
     if len(parts) != 4 or parts[0] != "v1":
         return False
+    if len(parts[3]) != 64 or any(c not in "0123456789abcdef" for c in parts[3]):
+        return False
     try:
         issued_at = int(parts[1])
     except (TypeError, ValueError):
@@ -131,3 +133,20 @@ def require_web_admin_access(
     ):
         raise PermissionError("invalid WEB admin session")
     return True
+
+def issue_apply_csrf_token(session_cookie: str, order_id: str) -> str:
+    """Bind a stateless CSRF token to the signed admin session and order."""
+    if not verify_web_admin_session(session_cookie):
+        raise PermissionError("invalid WEB admin session")
+    payload = ("apply-v1\0" + str(session_cookie) + "\0" + str(order_id)).encode("utf-8")
+    return hmac.new(_web_admin_session_key(), payload, hashlib.sha256).hexdigest()
+
+
+def verify_apply_csrf_token(session_cookie: str, order_id: str, token: str) -> bool:
+    if not isinstance(token, str) or len(token) != 64 or any(c not in "0123456789abcdef" for c in token):
+        return False
+    try:
+        expected = issue_apply_csrf_token(session_cookie, order_id)
+    except PermissionError:
+        return False
+    return hmac.compare_digest(str(token), expected)
