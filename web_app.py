@@ -226,18 +226,24 @@ def admin_order_prepare_apply(request: Request, order_id: str, csrf_token: str =
 
     try:
         snapshot = admin_order_service.get_order(order_id, core.ORDERS_DB_FILE)
-        dry_run = admin_order_service.prepare_order_dry_run(
-            order_id,
-            core.ORDERS_DB_FILE,
+        # Reuse the service's postcheck. A second read can fail after commit
+        # and must never hide the already persisted result.
+        dry_run = result.get("post_dry_run") or result.get("dry_run")
+        return admin_order_web.render_order_card(
+            snapshot,
+            dry_run=dry_run,
+            apply_result=result,
         )
-    except admin_order_service.OrderNotFound:
-        raise HTTPException(status_code=404, detail="client order not found")
-
-    return admin_order_web.render_order_card(
-        snapshot,
-        dry_run=dry_run,
-        apply_result=result,
-    )
+    except Exception:
+        if result.get("changed") or str(result.get("state") or "").startswith("committed_"):
+            return HTMLResponse(
+                "<h1>Apply сохранён; отображение результата недоступно</h1>"
+                "<p>Транзакция уже завершена. Изменения не откатывались. "
+                "Требуется ручная проверка заказа и резервов. Не повторяйте Apply "
+                "до проверки.</p>",
+                status_code=200,
+            )
+        raise
 
 
 @app.get("/admin/supplier-orders", response_class=HTMLResponse)

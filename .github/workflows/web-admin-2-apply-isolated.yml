@@ -3,6 +3,8 @@ on:
   pull_request:
     branches: [probnik-runtime-20261005]
   workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   isolated-apply:
     runs-on: ubuntu-latest
@@ -15,6 +17,12 @@ jobs:
       - name: Install HTTP test dependencies
         run: pip install fastapi httpx python-multipart
       - name: Compile
-        run: python -m py_compile admin_order_apply_service.py admin_order_service.py stock_engine.py supplier_admin_auth.py test_web_admin_2_apply_isolated.py test_web_admin_2_apply_csrf.py test_web_admin_2_apply_http.py
+        run: python -m py_compile admin_order_apply_service.py admin_order_service.py admin_order_web.py web_app.py stock_engine.py supplier_admin_auth.py run_web_admin_2_apply_regression.py test_web_admin_2_apply_isolated.py test_web_admin_2_apply_csrf.py test_web_admin_2_apply_http.py test_web_admin_2_apply_real_sqlite.py
       - name: Isolated SQLite transaction tests
-        run: python -m unittest -v test_web_admin_2_apply_isolated test_web_admin_2_apply_csrf test_web_admin_2_apply_http
+        run: python -B run_web_admin_2_apply_regression.py
+      - name: Checkout and finance compatibility
+        run: |
+          python -B _atomic_client_finance_regression.py
+          python -B _save_order_shared_tx_regression.py
+          python -B _client_checkout_orchestrator_regression.py
+          python -B _client_checkout_callback_adapter_regression.py

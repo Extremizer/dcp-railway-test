@@ -258,11 +258,20 @@ def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None =
         if apply_result.get("ok"):
             created = len(apply_result.get("reservation_ids") or [])
             text = (
-                f"Apply PASS · создано резервов: {created}"
+                f"Apply PASS · создано или дополнено резервов: {created}"
                 if apply_result.get("changed")
                 else "Apply PASS · изменений не потребовалось"
             )
             apply_result_html = f'<section class="card ready ok"><h3>{_e(text)}</h3></section>'
+        elif str(apply_result.get("state") or "").startswith("committed_"):
+            reason = str(apply_result.get("reason") or "unknown")
+            ids = ", ".join(str(x) for x in apply_result.get("reservation_ids") or [])
+            apply_result_html = (
+                '<section class="card ready warn"><h3>Apply сохранён · нужна ручная проверка</h3>'
+                '<div>Транзакция завершена; изменения не откатывались. '
+                'Не повторяйте Apply до проверки заказа и резервов.</div>'
+                f'<div class="muted">{_e(reason)} · Резервы: {_e(ids)}</div></section>'
+            )
         else:
             reason = str(apply_result.get("reason") or "unknown")
             apply_result_html = (

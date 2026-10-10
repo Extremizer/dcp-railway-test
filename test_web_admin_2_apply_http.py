@@ -46,6 +46,7 @@ class HttpApplyRegression(unittest.TestCase):
             "urllib": __import__("urllib"),
         }
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "web_app.py", "exec"), env)
+        self.runtime = env
         self.client = TestClient(app, follow_redirects=False)
         self.cookie = auth.issue_web_admin_session()
 
@@ -80,6 +81,59 @@ class HttpApplyRegression(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         kwargs = self.admin_order_web.render_order_card.call_args.kwargs
         self.assertTrue(auth.verify_apply_csrf_token(self.cookie, "T-1", kwargs["apply_csrf_token"]))
+
+    def post_apply(self, token=None):
+        self.client.cookies.set(auth.WEB_ADMIN_COOKIE, self.cookie)
+        if token is None:
+            token = auth.issue_apply_csrf_token(self.cookie, "T-1")
+        return self.client.post("/admin/orders/T-1/prepare-apply", data={"csrf_token": token})
+
+    def test_non_ascii_csrf_denied(self):
+        self.assertEqual(self.post_apply("я" * 64).status_code, 403)
+        self.apply.assert_not_called()
+
+    def test_invalid_session_denied(self):
+        self.cookie = self.cookie.rsplit(".", 1)[0] + "." + "g" * 64
+        self.assertEqual(self.post_apply("a" * 64).status_code, 303)
+        self.apply.assert_not_called()
+
+    def test_expired_session_denied(self):
+        self.cookie = auth.issue_web_admin_session(now=1)
+        self.assertEqual(self.post_apply("a" * 64).status_code, 303)
+        self.apply.assert_not_called()
+
+    def test_get_apply_is_not_a_write(self):
+        self.client.cookies.set(auth.WEB_ADMIN_COOKIE, self.cookie)
+        response = self.client.get("/admin/orders/T-1/prepare-apply")
+        self.assertEqual(response.status_code, 405)
+        self.apply.assert_not_called()
+
+    def test_postcheck_result_is_reused_without_second_dry_run(self):
+        post = {"ready_to_apply": True, "would_change_db": False}
+        self.apply.return_value = {"ok": True, "changed": True, "post_dry_run": post}
+        self.admin_order_service.prepare_order_dry_run.side_effect = RuntimeError("no extra read")
+        self.assertEqual(self.post_apply().status_code, 200)
+        self.admin_order_service.prepare_order_dry_run.assert_not_called()
+        self.assertEqual(self.admin_order_web.render_order_card.call_args.kwargs["dry_run"], post)
+
+    def test_committed_snapshot_failure_is_explicit(self):
+        self.apply.return_value = {"ok": False, "changed": True, "state": "committed_postcheck_error"}
+        self.admin_order_service.get_order.side_effect = RuntimeError("snapshot failed")
+        response = self.post_apply()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Изменения не откатывались", response.text)
+        self.apply.assert_called_once()
+
+    def test_committed_render_failure_is_explicit(self):
+        self.apply.return_value = {"ok": True, "changed": True, "state": "prepared"}
+        self.admin_order_web.render_order_card.side_effect = RuntimeError("render failed")
+        response = self.post_apply()
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("ручная проверка", response.text)
+
+    def test_missing_order_is_404(self):
+        self.apply.return_value = {"ok": False, "changed": False, "reason": "order_not_found"}
+        self.assertEqual(self.post_apply().status_code, 404)
 
 
 if __name__ == "__main__":

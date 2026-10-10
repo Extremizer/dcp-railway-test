@@ -85,6 +85,8 @@ def verify_web_admin_session(
     parts = raw.split(".")
     if len(parts) != 4 or parts[0] != "v1":
         return False
+    if len(parts[3]) != 64 or any(c not in "0123456789abcdef" for c in parts[3]):
+        return False
     try:
         issued_at = int(parts[1])
     except (TypeError, ValueError):
@@ -141,7 +143,7 @@ def issue_apply_csrf_token(session_cookie: str, order_id: str) -> str:
 
 
 def verify_apply_csrf_token(session_cookie: str, order_id: str, token: str) -> bool:
-    if not token:
+    if not isinstance(token, str) or len(token) != 64 or any(c not in "0123456789abcdef" for c in token):
         return False
     try:
         expected = issue_apply_csrf_token(session_cookie, order_id)

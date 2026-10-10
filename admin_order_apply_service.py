@@ -3,14 +3,14 @@
 """WEB ADMIN 2 preparation Apply service.
 
 The public entry point is intentionally DB-file driven so the first regression
-stage can run against an isolated SQLite fixture. No web route calls this
-module yet.
+stage can run against an isolated SQLite fixture.
 
 Safety properties:
 - order must still be confirmed;
 - one BEGIN IMMEDIATE covers the full warehouse-order preparation;
 - current stock/price are rechecked inside the write transaction;
-- only missing reservation quantity is created;
+- only missing reservation quantity is added; unsent partial reservations
+  are topped up without violating the active-item unique index;
 - a repeated Apply is idempotent;
 - any blocker rolls back every reservation created by that Apply.
 """
@@ -57,7 +57,7 @@ def prepare_order_apply(
     order_id: str,
     db_file: Path | str,
 ) -> dict[str, Any]:
-    """Create only missing warehouse reservations for one confirmed order.
+    """Add only missing warehouse reservation coverage for one confirmed order.
 
     The initial dry-run keeps the UI/business result aligned with WEB ADMIN 2.
     Every write-sensitive condition is then checked again under BEGIN IMMEDIATE,
@@ -225,6 +225,7 @@ def prepare_order_apply(
                 )
 
                 own_coverage = 0.0
+                own_reservations = []
                 for reservation in active:
                     if (
                         str(reservation.get("order_id") or "") == order_id
@@ -232,6 +233,7 @@ def prepare_order_apply(
                         and int(reservation["order_item_id"]) == item_id
                     ):
                         own_coverage += float(reservation.get("quantity") or 0)
+                        own_reservations.append(reservation)
 
                 missing = max(required - own_coverage, 0.0)
                 if missing <= 0:
@@ -249,6 +251,22 @@ def prepare_order_apply(
                         missing_quantity=missing,
                         available_quantity=available_now,
                     )
+
+                if own_coverage > 0:
+                    # The real schema permits only one active reservation per
+                    # item. Top up its unsent coverage instead of inserting a
+                    # second row. Never mutate a reservation sent to a supplier.
+                    if len(own_reservations) != 1 or own_reservations[0].get("status") not in {"hold", "reserved"}:
+                        raise _ApplyBlocked("reservation_not_mutable", order_item_id=item_id)
+                    reservation_id = int(own_reservations[0]["id"])
+                    conn.execute(
+                        "UPDATE warehouse_stock_reservations SET quantity=quantity+?, "
+                        "status='reserved', expires_at=NULL, confirmed_at=? WHERE id=?",
+                        (missing, now.isoformat(timespec="seconds"), reservation_id),
+                    )
+                    stock_engine._log_event(conn, reservation_id, "apply_top_up", quantity=missing)
+                    created_ids.append(reservation_id)
+                    continue
 
                 reservation_id = stock_engine._create_reservation(
                     conn,
