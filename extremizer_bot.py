@@ -2667,14 +2667,11 @@ def format_client_offer_card(result: dict) -> str:
 
     oem = _client_stock_oem(result)
     manufacturer = escape(str(result.get("manufacturer") or "—"))
-    lines = [f"🔎 <b>{escape(oem)}</b>", "", f"<b>{manufacturer}</b>"]
-
-    # A PARTIAL identity may come from warehouse/OEM-reference data.  Warehouse
-    # descriptions are supplier metadata and must never become a customer title.
-    if status == "FOUND":
-        clean_name = _client_safe_item_name(result.get("name"))
-        if clean_name and clean_name != "—":
-            lines.append(f"<i>{escape(clean_name)}</i>")
+    lines = [
+        f"🔎 <b>OEM:</b> <b>{escape(oem)} ({manufacturer})</b>",
+        "",
+        "🇺🇸 <b>склад США:</b>",
+    ]
 
     customer_price = customer_rub_price_from_dp(
         result.get("_dealer_price_usd"),
@@ -2682,17 +2679,15 @@ def format_client_offer_card(result: dict) -> str:
     )
     rrp_rub = customer_rub_price(result.get("price"))
 
-    lines.append("")
     if customer_price is not None:
         customer_price_text = format_rub(customer_price).replace(" ₽", "* ₽")
-        lines.append(f"🇺🇸 <b>склад США— {customer_price_text}</b>")
+        lines.append(f"Ваша цена — <b>{customer_price_text}</b>")
         if rrp_rub is not None and rrp_rub > customer_price:
-            lines.append(f"РРЦ: {format_rub(rrp_rub)}")
             benefit_pct = (rrp_rub - customer_price) / rrp_rub * 100
-            lines.append(f"<b>Выгода:</b> {benefit_pct:.1f}%")
-        lines.append("* - в цену не входит стоимость доставки из штатов 🚚")
+            lines.append(f"Ваша выгода — <b>{benefit_pct:.1f}%</b>")
+        lines += ["", "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"]
     else:
-        lines.append("🇺🇸 <b>склад США— цена уточняется</b>")
+        lines.append("Цена сейчас недоступна. Попробуйте повторить запрос позже.")
 
     offers = []
     for row in warehouse_stock_service.client_stock_summary(oem, db_file=ORDERS_DB_FILE):
@@ -2704,17 +2699,17 @@ def format_client_offer_card(result: dict) -> str:
         offers.append(row)
 
     if offers:
-        lines += ["", "🇷🇺 <b>В НАЛИЧИИ В РФ</b>", ""]
+        lines += ["", "🇷🇺 <b>Наличие в РФ:</b>"]
         for row in offers:
             qty = float(row["available_quantity"])
             price = row.get("price_rub")
             warehouse = escape(str(row.get("public_name") or "склад"))
             if price is not None:
                 lines.append(
-                    f"<b>{warehouse} — {format_rub(float(price))} • {qty:g} шт.</b>"
+                    f"• <b>{warehouse}</b> — <b>{format_rub(float(price))}</b> (<b>{qty:g} шт.</b>)"
                 )
             else:
-                lines.append(f"<b>{warehouse} — {qty:g} шт. • цена уточняется</b>")
+                lines.append(f"• <b>{warehouse}</b> — (<b>{qty:g} шт.</b>)")
 
     return "\n".join(lines)
 
