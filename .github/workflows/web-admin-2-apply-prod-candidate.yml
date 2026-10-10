@@ -1,0 +1,27 @@
+name: WEB ADMIN 2 Apply Production-Base Candidate
+on:
+  push:
+    branches: [web-admin-2-apply-prod-candidate-20261010]
+permissions:
+  contents: read
+jobs:
+  isolated-apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install HTTP test dependencies
+        run: pip install fastapi httpx python-multipart
+      - name: Compile
+        run: python -m py_compile admin_order_apply_service.py admin_order_service.py admin_order_web.py web_app.py stock_engine.py supplier_admin_auth.py run_web_admin_2_apply_regression.py test_web_admin_2_apply_isolated.py test_web_admin_2_apply_csrf.py test_web_admin_2_apply_http.py test_web_admin_2_apply_real_sqlite.py
+      - name: Isolated SQLite transaction tests
+        run: python -B run_web_admin_2_apply_regression.py
+      - name: Checkout and finance compatibility
+        run: |
+          python -B _atomic_client_finance_regression.py
+          python -B _save_order_shared_tx_regression.py
+          python -B _client_checkout_orchestrator_regression.py
+          python -B _client_checkout_callback_adapter_regression.py
