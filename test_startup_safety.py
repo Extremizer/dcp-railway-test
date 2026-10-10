@@ -63,13 +63,15 @@ class StartupSafetyTests(unittest.TestCase):
                     for t in tables}
         return hashlib.sha256(self.db.read_bytes()).hexdigest(), schema, rows
 
-    def launch(self, *, token=True, spawn=None, probnik=False):
+    def launch(self, *, token=True, spawn=None, probnik=False, web2=False):
         runtime = runpy.run_path(str(ROOT / "web1_runtime.py"), run_name="startup_test")
         env = {"EXTREMIZER_ORDERS_DB_FILE": str(self.db)}
         if token:
             env["EXTREMIZER_BOT_TOKEN"] = "synthetic-test-token"
         if probnik:
             env["PROBNIK_BOT_TOKEN"] = "synthetic-probnik-token"
+        if web2:
+            env["EXTREMIZER_WEB2_ENABLED"] = "1"
         with patch.dict("os.environ", env, clear=True), \
              patch.object(subprocess, "run", side_effect=AssertionError("seed/run forbidden")) as seed, \
              patch.object(subprocess, "Popen", side_effect=spawn or (lambda args: ExitedChild())) as children, \
@@ -116,6 +118,16 @@ class StartupSafetyTests(unittest.TestCase):
         for _ in range(3):
             self.launch()
             self.assertEqual(self.snapshot(), before)
+
+    def test_explicit_web2_host_preserves_supervisor_and_database(self):
+        self.initialize_orders()
+        before = self.snapshot()
+        result, commands = self.launch(probnik=True, web2=True)
+        self.assertEqual(result, 1)
+        self.assertEqual(commands[-1][3:5], ["uvicorn", "web2_runtime_app:app"])
+        self.assertEqual([args[2] for args in commands],
+                         ["extremizer_bot.py", "probnik_app.py", "backup_snapshot_helper.py", "-m"])
+        self.assertEqual(self.snapshot(), before)
 
     def test_empty_first_boot_reaches_established_initializer(self):
         self.assertFalse(self.db.exists())

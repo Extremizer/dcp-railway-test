@@ -5,6 +5,12 @@ on:
     paths:
       - "web2/**"
       - "web2_ui_routes.py"
+      - "web2_runtime_app.py"
+      - "web1_runtime.py"
+      - "web_app.py"
+      - "extremizer_bot.py"
+      - "requirements.txt"
+      - "test_web2_host_integration.py"
       - "test_web2_ui_routes.py"
       - "test_web2_contract.py"
       - "test_web2_browser.py"
@@ -41,3 +47,7 @@ jobs:
         run: python -B -m unittest -v test_web2_browser.py
       - name: WEB2 isolated routing regression
         run: python -B -m unittest -v test_web2_ui_routes.py
+      - name: Install real host dependencies
+        run: python -m pip install -r requirements.txt
+      - name: WEB2 real host and API integration on temporary SQLite
+        run: python -B -m unittest -v test_web2_host_integration.py
