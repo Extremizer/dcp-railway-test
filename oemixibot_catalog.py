@@ -16,7 +16,7 @@ def _production_candidates(oem):
                 cols={r[1] for r in c.execute("pragma table_info("+table+")")}
                 if col not in cols or "manufacturer" not in cols: continue
                 for r in c.execute("select distinct manufacturer from "+table+" where "+col+"=?",(oem,)):
-                    v=finder.manufacturer_alias(str(r[0] or "")); 
+                    v=finder.manufacturer_alias(str(r[0] or ""));
                     if v: values.add(v)
                 if table=="order_items" and "requested_oem" in cols:
                     for r in c.execute("select distinct manufacturer from order_items where requested_oem=?",(oem,)):
@@ -61,4 +61,3 @@ def resolve_offer(oem,manufacturer=None):
             "requested_oem":ident["oem"],"name":dp.get("name"),"dl_usd":dp.get("dealer_price_usd"),
             "actual_weight_kg":ref.get("actual_weight_kg"),"volume_weight_kg":ref.get("volume_weight_kg"),
             "price_source":dp.get("source")}
-

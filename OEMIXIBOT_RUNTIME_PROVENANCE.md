@@ -16,7 +16,7 @@ Source: 11 individual files uploaded by the user on 2026-10-10 as their working 
 | supplier_admin_auth.py | `1918b8de93e1d3e2605e1022e88d1277a7768b4d3014dec0d5cd1e48f289975b` | existing retained |
 | oemixibot_identity_client.py | `91078f7720f39c0a488d2cfef1e9eaef18753b34c223d7a691a8c89e36508b37` | existing retained |
 
-Existing shared reference, identity/analytics clients and supplier_admin_auth are retained from the PR checkout. Their required public APIs are present; uploaded copies are not substituted for unrelated repository changes. DCP client is byte-identical. New domain, Telegram and identity-service modules are byte-identical to uploaded sources. Only app and store are adapted.
+Existing shared reference, identity/analytics clients and supplier_admin_auth are retained from the PR checkout. Their required public APIs are present; uploaded copies are not substituted for unrelated repository changes. DCP client is byte-identical. New domain, Telegram and identity-service modules are byte-identical to uploaded sources. Only app and store have behavioral adaptations; catalog whitespace is normalized without changing its AST.
 
 ## Adaptation boundaries
 
