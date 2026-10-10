@@ -3,8 +3,8 @@
 Run with: python -m playwright install chromium
           python -m unittest -v test_web2_browser.py
 """
-import json
 import threading
+import json
 import unittest
 from contextlib import contextmanager
 from socket import socket
@@ -98,8 +98,9 @@ class Web2BrowserTests(unittest.TestCase):
             page.locator('button[data-offer-key="warehouse:1"]').click()
             self.assertTrue(page.locator("#cartPanel").evaluate("(el) => el.classList.contains('open')"))
             self.assertIn("34", page.locator("#cartTotal").inner_text())
-            with page.expect_navigation(url="https://t.me/Extremizer_bot", wait_until="commit", timeout=8000) as _:
-                page.locator("#telegramButton").click()
+            page.route("https://t.me/**", lambda route: route.fulfill(status=200, body="Telegram mocked"))
+            page.locator("#telegramButton").click()
+            page.wait_for_url("https://t.me/Extremizer_bot")
             self.assertEqual(handoffs[0]["items"][0]["offer_source"], "warehouse")
             self.assertEqual(handoffs[0]["items"][0]["warehouse_id"], 1)
             browser.close()
@@ -113,6 +114,41 @@ class Web2BrowserTests(unittest.TestCase):
             page.locator("#searchForm button").click()
             page.locator("#product").wait_for(state="visible")
             self.assertFalse(page.locator("#msrpBlock").is_visible())
+            browser.close()
+
+
+    def test_cart_quantity_cannot_exceed_warehouse_stock(self):
+        with mock_server() as (base, _), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(base + "/web2")
+            page.locator("#oemInput").fill("417300574")
+            page.locator("#searchForm button").click()
+            page.locator("#product").wait_for(state="visible")
+            page.locator('button[data-offer-key="warehouse:1"]').click()
+            for _ in range(30):
+                page.locator('[data-plus="0"]').click()
+            self.assertEqual(page.locator("#cartCount").inner_text(), "26")
+            page.locator('[data-remove="0"]').click()
+            self.assertEqual(page.locator("#cartCount").inner_text(), "0")
+            browser.close()
+
+    def test_stock_refresh_replaces_offers(self):
+        with mock_server() as (base, _), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page.route("**/api/v1/oem/417300574", lambda route: route.fulfill(
+                status=200, content_type="application/json",
+                body=json.dumps({**mock_card(), "stock": {
+                    "known": False, "refreshing": True, "warehouses": []}})))
+            page.route("**/api/v1/oem/417300574/stock?*", lambda route: route.fulfill(
+                status=200, content_type="application/json",
+                body=json.dumps({**mock_card()["stock"], "offers": mock_card()["offers"]})))
+            page.goto(base + "/web2")
+            page.locator("#oemInput").fill("417300574")
+            page.locator("#searchForm button").click()
+            page.locator("#product").wait_for(state="visible")
+            page.get_by_text("Проверяем склады…").wait_for(state="visible")
+            page.locator("#stock").get_by_text("Склад 1").wait_for(state="visible", timeout=10000)
             browser.close()
 
 
