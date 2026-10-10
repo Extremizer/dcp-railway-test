@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Extremizer Pro — WEB2</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22><circle cx=%2232%22 cy=%2232%22 r=%2230%22 fill=%22%23080a09%22/><text x=%2232%22 y=%2243%22 text-anchor=%22middle%22 font-size=%2234%22 font-family=%22Arial%22 font-weight=%22900%22 fill=%22%23b8ff2c%22>E</text></svg>">
+  <meta name="description" content="Поиск OEM, цена и наличие Extremizer Pro">
+  <link rel="stylesheet" href="/web2-static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Extremizer Pro">
+      <span class="brand-mark">E</span>
+      <span>EXTREMIZER <b>PRO</b><small class="web2-badge">WEB2</small></span>
+    </a>
+    <button id="cartButton" class="cart-button" type="button" aria-label="Открыть корзину">
+      <span class="cart-icon">🛒</span>
+      <span>Корзина</span>
+      <span id="cartCount" class="cart-count">0</span>
+      <span id="cartButtonTotal" class="cart-button-total">0 ₽</span>
+    </button>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="eyebrow">OEM • АКСЕССУАРЫ • ЭКИПИРОВКА • ТЕХНИКА</div>
+      <h1>Найди OEM.<br><span>Узнай свою цену.</span></h1>
+      <p class="lead">
+        Оригинальные запчасти, аксессуары и складские остатки в одном окне.
+        Введи каталожный номер — без регистрации.
+      </p>
+      <form id="searchForm" class="search-box">
+        <input id="oemInput" name="oem" autocomplete="off"
+               placeholder="Например, 417224332" aria-label="OEM номер">
+        <button type="submit">Найти</button>
+      </form>
+      <div id="searchHint" class="hint">Единый поиск Extremizer Pro: США + наличие на складах РФ</div>
+    </section>
+    <section id="state" class="state hidden" aria-live="polite"></section>
+
+    <section id="product" class="product hidden">
+      <div class="product-head">
+        <div>
+          <div id="productBrand" class="eyebrow"></div>
+          <h2 id="productName"></h2>
+          <div class="oem-line">OEM <strong id="productOem"></strong></div>
+          <div id="replacement" class="replacement hidden"></div>
+        </div>
+        <div class="price-panel">
+          <div class="price-label">Цена из США</div>
+          <div id="customerPrice" class="price"></div>
+          <div id="msrpBlock" class="msrp hidden">
+            РРЦ <span id="msrpPrice"></span>
+            <b id="benefit"></b>
+          </div>
+        </div>
+      </div>
+
+      <section class="offers-section">
+        <div class="offers-head">
+          <h3>Варианты покупки</h3>
+          <span>Выбери откуда добавить позицию в корзину</span>
+        </div>
+        <div id="offers" class="offers"></div>
+      </section>
+
+      <div class="product-grid">
+        <article class="info-card">
+          <h3>Наличие на складах</h3>
+          <div id="stock"></div>
+        </article>
+        <article class="info-card">
+          <h3>Вес</h3>
+          <div id="weight"></div>
+        </article>
+      </div>
+
+      <div class="actions">
+        <span class="qty-label">Количество</span>
+        <div class="qty">
+          <button id="qtyMinus" type="button">−</button>
+          <span id="qtyValue">1</span>
+          <button id="qtyPlus" type="button">+</button>
+        </div>
+      </div>
+      <p id="deliveryNotice" class="delivery"></p>
+    </section>
+  </main>
+  <aside id="cartPanel" class="cart-panel" aria-hidden="true">
+    <div class="cart-head">
+      <div>
+        <div class="eyebrow">WEB2</div>
+        <h2>Корзина</h2>
+      </div>
+      <button id="cartClose" class="close" type="button">×</button>
+    </div>
+    <div id="cartItems" class="cart-items"></div>
+    <div id="cartEmpty" class="empty">Корзина пока пуста.</div>
+    <div id="cartFooter" class="cart-footer hidden">
+      <div class="cart-total">
+        <span>Товары</span>
+        <strong id="cartTotal"></strong>
+      </div>
+      <button id="telegramButton" class="telegram" type="button">
+        Продолжить в Telegram
+      </button>
+      <button id="continueSearchButton" class="continue-search" type="button">
+        Продолжить поиск по OEM
+      </button>
+      <p>
+        Корзина безопасно передастся в @Extremizer_bot.
+        Запрос подтверждается уже в Telegram.
+      </p>
+    </div>
+  </aside>
+  <div id="scrim" class="scrim hidden"></div>
+
+  <footer>
+    <span>EXTREMIZER PRO</span>
+    <span>OEM • PRICE • STOCK</span>
+  </footer>
+
+  <script src="/web2-static/app.js" defer></script>
+</body>
+</html>
