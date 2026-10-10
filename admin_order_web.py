@@ -88,7 +88,7 @@ def _supplier_label(item: dict[str, Any], supplier_orders: list[dict[str, Any]])
     return "<br>".join(parts)
 
 
-def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None = None, apply_result: dict[str, Any] | None = None) -> str:
+def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None = None, apply_result: dict[str, Any] | None = None, apply_csrf_token: str | None = None) -> str:
     order = snapshot["order"]
     items = snapshot["items"]
     supplier_orders = snapshot["supplier_orders"]
@@ -225,9 +225,10 @@ def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None =
         )
         apply_html = ""
         if dry_run.get("ready_to_apply"):
-            if dry_run.get("would_change_db"):
+            if dry_run.get("would_change_db") and apply_csrf_token:
                 apply_html = f"""
                 <form method="post" action="/admin/orders/{escape(str(order.get('order_id') or ''), quote=True)}/prepare-apply" style="margin-top:14px">
+                  <input type="hidden" name="csrf_token" value="{escape(apply_csrf_token, quote=True)}">
                   <button type="submit">⚙️ Применить подготовку</button>
                 </form>
                 """
@@ -257,11 +258,20 @@ def render_order_card(snapshot: dict[str, Any], dry_run: dict[str, Any] | None =
         if apply_result.get("ok"):
             created = len(apply_result.get("reservation_ids") or [])
             text = (
-                f"Apply PASS · создано резервов: {created}"
+                f"Apply PASS · создано или дополнено резервов: {created}"
                 if apply_result.get("changed")
                 else "Apply PASS · изменений не потребовалось"
             )
             apply_result_html = f'<section class="card ready ok"><h3>{_e(text)}</h3></section>'
+        elif str(apply_result.get("state") or "").startswith("committed_"):
+            reason = str(apply_result.get("reason") or "unknown")
+            ids = ", ".join(str(x) for x in apply_result.get("reservation_ids") or [])
+            apply_result_html = (
+                '<section class="card ready warn"><h3>Apply сохранён · нужна ручная проверка</h3>'
+                '<div>Транзакция завершена; изменения не откатывались. '
+                'Не повторяйте Apply до проверки заказа и резервов.</div>'
+                f'<div class="muted">{_e(reason)} · Резервы: {_e(ids)}</div></section>'
+            )
         else:
             reason = str(apply_result.get("reason") or "unknown")
             apply_result_html = (
