@@ -58,12 +58,6 @@ def _spawn(name, args):
 def main():
     port = os.getenv("PORT", "8080").strip() or "8080"
 
-    print("WEB1_RUNTIME: running persistent seed", flush=True)
-    seed = subprocess.run([sys.executable, "-u", "seed_probe14.py"], check=False)
-    if seed.returncode != 0:
-        print(f"WEB1_RUNTIME: seed failed with {seed.returncode}", flush=True)
-        return seed.returncode or 1
-
     if not os.getenv("EXTREMIZER_BOT_TOKEN", "").strip():
         print("WEB1_RUNTIME: EXTREMIZER_BOT_TOKEN missing", flush=True)
         return 2
