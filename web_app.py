@@ -51,7 +51,6 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 WEB_DIR = BASE_DIR / "web"
-WEB2_DIR = BASE_DIR / "web2"
 BOT_USERNAME = (
     os.getenv("EXTREMIZER_TELEGRAM_BOT_USERNAME", "Extremizer_bot")
     .strip()
@@ -69,7 +68,6 @@ app = FastAPI(
     redoc_url=None,
 )
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
-app.mount("/web2-static", StaticFiles(directory=WEB2_DIR), name="web2-static")
 
 # Supplier Orders uses the exact same persistent orders DB as Telegram.
 supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
@@ -470,11 +468,6 @@ def startup() -> None:
 @app.get("/")
 def index():
     return FileResponse(WEB_DIR / "index.html")
-
-
-@app.get("/web2")
-def web2_index():
-    return FileResponse(WEB2_DIR / "index.html")
 
 
 @app.get("/health")
