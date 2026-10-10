@@ -82,3 +82,36 @@ External callers of removed APIs must migrate. Historical credit schemas
 and debt remain; no production introspection was performed. Arbitrary SQL
 writers outside FinanceEngine are not governed by this application-level
 policy. A release needs separate deployment authorization and recovery planning.
+
+## Stage 2: compatibility and transaction hardening
+
+Read-only investigation at PR HEAD
+`368a872ec4aa3ed7cd8d949d388a491e5a54ab73`: fetched remote heads/tags
+without checking out or modifying other branches. Inspected 51 remote branch
+tips and 235 historical Python/JS/HTML/SQL/Markdown/text blobs reachable from
+local/fetched refs. Full history is available (not a shallow clone).
+The OEMixiBOT-named branch `oemixibot-accessories-fallback-20261008` has only
+identity/analytics/DCP clients, not the isolated bot. The historical
+`_client_finance_adapter_regression.py` asserts that CLIENT exposes neither
+credit_limit nor aging_summary; it is not a dealer API caller. Historical
+FinanceEngine versions contain the removed methods and internal aging calls.
+No external removed-API consumers, dealer-credit callback/button/command UI
+or actual OEMixiBOT bot were found in these checked sources or available
+workspace checkouts. GitHub repository discovery for `user:Extremizer OEMixiBOT`
+returned no accessible matching repository. This does not establish absence
+of private/unavailable/deleted sources: actual OEMixiBOT compatibility remains
+**UNVERIFIED**, and no replacement bot or compatibility implementation is invented.
+
+Confirmed issue: post_event rolled back only INSERT IntegrityError. Capacity
+and other errors after BEGIN IMMEDIATE relied on close for implicit cleanup.
+The outer exception handler now explicitly rolls back every failed
+engine-owned transaction before close, preserving the original exception.
+The INSERT-specific handler still translates duplicate idempotency errors.
+Caller-owned connections are never committed, rolled back or closed by this
+method, including on capacity/INSERT failure.
+
+New tests use a real SQLite Connection subclass to record BEGIN/commit/
+rollback/close. Insufficient balance and injected INSERT OperationalError
+prove explicit rollback-before-close for owned connections. The same failure
+cases prove caller transaction remains open, retains pending order/top-up
+changes, accepts further SQL and remains under caller rollback control.

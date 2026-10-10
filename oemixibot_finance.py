@@ -135,9 +135,11 @@ class FinanceEngine:
                 if own_conn: c.commit()
                 return cur.lastrowid
             except sqlite3.IntegrityError as e:
-                if own_conn: c.rollback()
                 if 'finance_ledger.idempotency_key' in str(e): raise ValueError('duplicate idempotency_key') from e
                 raise
+        except BaseException:
+            if own_conn: c.rollback()
+            raise
         finally:
             if own_conn: c.close()
 

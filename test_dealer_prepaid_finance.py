@@ -5,10 +5,38 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from client_finance_schema import ensure_client_finance_schema
 from common_finance_contract import DEALER_POLICY, CLIENT_POLICY
 from oemixibot_finance import FinanceEngine
+
+
+class TrackedConnection(sqlite3.Connection):
+    """Real SQLite transaction with observable ownership/lifecycle calls."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.calls = []
+        self.fail_insert = False
+
+    def execute(self, sql, *args, **kwargs):
+        if sql == 'BEGIN IMMEDIATE':
+            self.calls.append('begin')
+        if self.fail_insert and sql.startswith('INSERT INTO finance_ledger'):
+            raise sqlite3.OperationalError('injected insert failure')
+        return super().execute(sql, *args, **kwargs)
+
+    def rollback(self):
+        self.calls.append('rollback')
+        return super().rollback()
+
+    def commit(self):
+        self.calls.append('commit')
+        return super().commit()
+
+    def close(self):
+        self.calls.append('close')
+        return super().close()
 
 
 class DealerPrepaidTests(unittest.TestCase):
@@ -108,6 +136,55 @@ class DealerPrepaidTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inactive dealer'):
             self.charge(1)
         self.assertEqual(self.engine.balance('dealer'), Decimal('100'))
+
+    def test_owned_failure_explicitly_rolls_back_then_closes(self):
+        for insert_error in (False, True):
+            with self.subTest(insert_error=insert_error):
+                if insert_error:
+                    self.pay(100)
+                c = sqlite3.connect(self.path, factory=TrackedConnection)
+                c.row_factory = sqlite3.Row
+                c.fail_insert = insert_error
+                error = sqlite3.OperationalError if insert_error else ValueError
+                message = 'injected insert failure' if insert_error else 'INSUFFICIENT_AVAILABLE'
+                with patch.object(self.engine, '_db', return_value=c):
+                    with self.assertRaisesRegex(error, message):
+                        self.charge(1)
+                self.assertEqual(c.calls, ['begin', 'rollback', 'close'])
+                with self.assertRaises(sqlite3.ProgrammingError):
+                    c.execute('SELECT 1')
+                self.assertFalse(any(r['event_type'] == 'ORDER_CHARGE'
+                                     for r in self.engine.history('dealer')))
+
+    def test_caller_failure_never_finishes_or_closes_transaction(self):
+        for insert_error in (False, True):
+            with self.subTest(insert_error=insert_error):
+                c = sqlite3.connect(self.path, factory=TrackedConnection)
+                c.row_factory = sqlite3.Row
+                try:
+                    c.execute('BEGIN IMMEDIATE')
+                    c.execute("INSERT INTO dealer_orders VALUES('pending','dealer')")
+                    if insert_error:
+                        self.engine.post_event(buyer_type='dealer', buyer_id='dealer',
+                            currency='USD', event_type='PAYMENT', amount=100,
+                            description='topup', reference_type='payment', reference_id='shared',
+                            actor='test', idempotency_key='shared-payment', conn=c)
+                    c.calls.clear()
+                    c.fail_insert = insert_error
+                    error = sqlite3.OperationalError if insert_error else ValueError
+                    with self.assertRaises(error):
+                        self.charge(1, conn=c)
+                    self.assertEqual(c.calls, [])
+                    self.assertTrue(c.in_transaction)
+                    self.assertEqual(c.execute('SELECT COUNT(*) FROM dealer_orders').fetchone()[0], 1)
+                    self.assertEqual(c.execute("SELECT COUNT(*) FROM finance_ledger WHERE event_type='ORDER_CHARGE'").fetchone()[0], 0)
+                    # Caller can keep working and decides when to rollback.
+                    c.execute("UPDATE dealer_orders SET id='still-controlled'")
+                    c.rollback()
+                    self.assertEqual(c.calls, ['rollback'])
+                finally:
+                    c.close()
+                self.assertEqual(self.engine.history('dealer'), [])
 
     def test_exact_balance_and_insufficient_balance(self):
         self.pay(10)
