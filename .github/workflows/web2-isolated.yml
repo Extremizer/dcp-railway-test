@@ -30,7 +30,9 @@ jobs:
       - name: WEB2 frontend API contract regression
         run: python -B -m unittest -v test_web2_contract.py
       - name: Install browser smoke dependencies
-        run: |\n          python -m pip install "uvicorn>=0.27,<1" "playwright>=1.50,<2"\n          python -m playwright install --with-deps chromium
+        run: |
+          python -m pip install "uvicorn>=0.27,<1" "playwright>=1.50,<2"
+          python -m playwright install --with-deps chromium
       - name: WEB2 browser functional smoke
         run: python -B -m unittest -v test_web2_browser.py
       - name: WEB2 isolated routing regression
