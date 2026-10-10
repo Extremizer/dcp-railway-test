@@ -55,9 +55,9 @@ CLIENT_POLICY = FinancePolicy(
 DEALER_POLICY = FinancePolicy(
     buyer_type="dealer",
     wallet_currency="USD",
-    credit_enabled=True,
-    due_date_enabled=True,
-    aging_enabled=True,
+    credit_enabled=False,
+    due_date_enabled=False,
+    aging_enabled=False,
 )
 
 

@@ -1,0 +1,36 @@
+name: Dealer Prepaid Finance Regression
+on:
+  pull_request:
+    branches: [probnik-runtime-20261005]
+  push:
+    branches: [dealer-prepaid-only-20261010]
+permissions:
+  contents: read
+jobs:
+  prepaid-finance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax and import smoke
+        run: |
+          python -B - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in Path('.').glob('*.py'):
+              ast.parse(path.read_text(encoding='utf-8-sig'), filename=str(path))
+          import oemixibot_finance, common_finance_contract, client_finance_adapter
+          import client_order_finance_bridge, client_checkout_orchestrator
+          PY
+      - name: Dealer prepaid regression
+        run: python -B -m unittest -v test_dealer_prepaid_finance.py
+      - name: Client RUB and ORDER CORE atomicity regression
+        run: |
+          python -B _atomic_client_finance_regression.py
+          python -B _save_order_shared_tx_regression.py
+          python -B _client_checkout_orchestrator_regression.py
+          python -B _client_checkout_callback_adapter_regression.py
+          python -B _prod_finance_switch_regression.py
