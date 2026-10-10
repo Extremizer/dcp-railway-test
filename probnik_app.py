@@ -611,6 +611,7 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
         customer_price = _format_rub(customer_rub).replace(" ₽", "* ₽")
         lines.append(f"Ваша цена — <b>{customer_price}</b>")
         if rrp_rub is not None and rrp_rub > customer_rub:
+            lines.append(f"РРЦ — <b>{_format_rub(rrp_rub)}</b>")
             benefit_pct = (rrp_rub - customer_rub) / rrp_rub * 100
             lines.append(f"Ваша выгода — <b>{benefit_pct:.1f}%</b>")
         delivery_line = "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"
