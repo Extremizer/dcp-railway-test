@@ -6,7 +6,7 @@
 Processes:
 - @Extremizer_bot -> extremizer_bot.py
 - @ExtremizerBOT -> probnik_app.py when PROBNIK_BOT_TOKEN exists
-- WEB1 -> uvicorn web_app:app
+- WEB1 -> uvicorn web_app:app (WEB2 host when EXTREMIZER_WEB2_ENABLED=1)
 
 @OEMixiBOT is intentionally not started here because its current dealer-price
 backend requires an authorized local Chrome CDP session on 127.0.0.1:9222.
@@ -87,7 +87,9 @@ def main():
             "-u",
             "-m",
             "uvicorn",
-            "web_app:app",
+            "web2_runtime_app:app"
+            if os.getenv("EXTREMIZER_WEB2_ENABLED", "").strip() == "1"
+            else "web_app:app",
             "--host",
             "0.0.0.0",
             "--port",

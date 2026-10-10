@@ -1,0 +1,53 @@
+name: WEB2 Isolated UI Regression
+
+on:
+  pull_request:
+    paths:
+      - "web2/**"
+      - "web2_ui_routes.py"
+      - "web2_runtime_app.py"
+      - "web1_runtime.py"
+      - "web_app.py"
+      - "extremizer_bot.py"
+      - "requirements.txt"
+      - "test_web2_host_integration.py"
+      - "test_web2_ui_routes.py"
+      - "test_web2_contract.py"
+      - "test_web2_browser.py"
+      - "web2_staging_app.py"
+      - "test_web2_staging.py"
+      - ".github/workflows/web2-isolated.yml"
+  workflow_dispatch:
+
+jobs:
+  web2-ui:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install isolated test dependencies
+        run: python -m pip install "fastapi>=0.110,<1" "httpx>=0.27,<1"
+      - name: JavaScript syntax
+        run: node --check web2/app.js
+      - name: Python syntax
+        run: python -m py_compile web2_ui_routes.py test_web2_ui_routes.py
+      - name: WEB2 frontend API contract regression
+        run: python -B -m unittest -v test_web2_contract.py
+      - name: Install browser smoke dependencies
+        run: |
+          python -m pip install "uvicorn>=0.27,<1" "playwright>=1.50,<2"
+          python -m playwright install --with-deps chromium
+      - name: WEB2 mock staging regression
+        run: python -B -m unittest -v test_web2_staging.py
+      - name: WEB2 browser functional smoke
+        run: python -B -m unittest -v test_web2_browser.py
+      - name: WEB2 isolated routing regression
+        run: python -B -m unittest -v test_web2_ui_routes.py
+      - name: Install real host dependencies
+        run: python -m pip install -r requirements.txt
+      - name: WEB2 real host and API integration on temporary SQLite
+        run: python -B -m unittest -v test_web2_host_integration.py
