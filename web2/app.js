@@ -62,7 +62,9 @@ function renderOffers(offers = []) {
     const availability = offer.source === "usa"
       ? "Заказ из США"
       : `В наличии: ${qtyText(offer.available_quantity)} шт.`;
-    const price = offer.price_rub == null\n      ? "Цена уточняется"\n      : (offer.source === "usa" ? rub(offer.price_rub).replace(" ₽", "* ₽") : rub(offer.price_rub));
+    const price = offer.price_rub == null
+      ? "Цена уточняется"
+      : (offer.source === "usa" ? rub(offer.price_rub).replace(" ₽", "* ₽") : rub(offer.price_rub));
     const disabled = offer.can_add ? "" : " disabled";
     const cartKey = `${currentProduct?.manufacturer || ""}|${currentProduct?.oem || ""}|${offer.key}`;
     const existingQty = cart.find((x) => x.key === cartKey)?.qty || 0;
@@ -129,7 +131,9 @@ function renderProduct(card) {
   $("productOem").textContent = card.oem;
   const pricePanel = document.querySelector(".price-panel");
   pricePanel?.classList.toggle("hidden", Boolean(card.warehouse_only));
-  $("customerPrice").textContent = card.price.customer_rub == null\n    ? rub(null)\n    : rub(card.price.customer_rub).replace(" ₽", "* ₽");
+  $("customerPrice").textContent = card.price.customer_rub == null
+    ? rub(null)
+    : rub(card.price.customer_rub).replace(" ₽", "* ₽");
 
   const replacement = $("replacement");
   if (card.requested_oem && card.requested_oem !== card.oem) {
@@ -171,7 +175,9 @@ function renderProduct(card) {
     weight.textContent = "Вес неизвестен.";
   }
 
-  $("deliveryNotice").textContent = card.delivery_notice?.startsWith("* -")\n    ? card.delivery_notice\n    : "🚚 " + card.delivery_notice;
+  $("deliveryNotice").textContent = card.delivery_notice?.startsWith("* -")
+    ? card.delivery_notice
+    : "🚚 " + card.delivery_notice;
   product.classList.remove("hidden");
   product.scrollIntoView({ behavior: "smooth", block: "start" });
 }
