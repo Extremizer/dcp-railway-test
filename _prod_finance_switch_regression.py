@@ -18,7 +18,8 @@ WEB_APP = ROOT / "web_app.py"
 
 PROD_LEGACY_CHECKOUT_BLOB = "0ebb62fdbf6cef25c915fa16da4687e80b1410d7"
 PROD_PROBNIK_BLOB = "87e316e0af75b0c3447214044d57fc1debd67bf3"
-PROD_WEB_APP_BLOB = "311fa317ce96bc75b0ba061cfb978f03c1fe7882"
+# CURRENT 79a47e23 includes the reviewed PR #20 Apply/CSRF changes.
+PROD_WEB_APP_BLOB = "b30b75569c3ed409924cf8939193e95034d7903a"
 
 SWITCH_PREFIX = """    if data == "checkout_confirm":
         return await _shadow_checkout_confirm(
