@@ -8,7 +8,7 @@ Goals:
 - dry-run first, apply only after an explicit confirmation;
 - keep immutable source SHA/provenance;
 - make a consistent SQLite backup before every apply;
-- emit compact JSON reports into Railway logs and /data/import_reports.
+- emit compact JSON reports into Railway logs and verified object storage.
 
 This module is intentionally isolated from customer-facing business logic.
 """
@@ -24,6 +24,8 @@ import sqlite3
 import threading
 import time
 import uuid
+import tempfile
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from html import escape
@@ -42,15 +44,13 @@ log = logging.getLogger("oem_import_maintenance")
 
 DATA_DIR = Path(os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data"))
 DB_PATH = DATA_DIR / "oem_reference.db"
-SOURCE_DIR = DATA_DIR / "import_sources"
-REPORT_DIR = DATA_DIR / "import_reports"
-JOB_DIR = DATA_DIR / "import_jobs"
+ARTIFACT_PREFIX = str(os.getenv("OEM_IMPORT_OBJECT_PREFIX", "runtime-artifacts/oem-import")).strip("/")
+TMP_DIR = Path(os.getenv("OEM_IMPORT_TMP_DIR", "/tmp/extremizer-oem-import"))
 MAX_UPLOAD_BYTES = 80 * 1024 * 1024
 _WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix="oem-import")
 _JOB_LOCK = threading.Lock()
 
-for _p in (SOURCE_DIR, REPORT_DIR, JOB_DIR):
-    _p.mkdir(parents=True, exist_ok=True)
+TMP_DIR.mkdir(parents=True, exist_ok=True)
 
 # Reusable profiles. More can be added without changing the runner.
 PROFILES: dict[str, dict[str, Any]] = {
@@ -272,31 +272,59 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _job_path(job_id: str) -> Path:
-    return JOB_DIR / f"{job_id}.json"
+def _job_key(job_id: str) -> str:
+    return f"{ARTIFACT_PREFIX}/jobs/{job_id}.json"
 
 
-def _report_path(job_id: str, mode: str) -> Path:
-    return REPORT_DIR / f"{job_id}_{mode}.json"
+def _report_key(job_id: str, mode: str) -> str:
+    return f"{ARTIFACT_PREFIX}/reports/{job_id}_{mode}.json"
 
 
-def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+def _source_key(job_id: str, name: str) -> str:
+    return f"{ARTIFACT_PREFIX}/sources/{job_id}__{_safe_filename(name)}"
+
+
+def _write_json_object(key: str, payload: dict[str, Any], *, kind: str) -> dict[str, Any]:
+    raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
+    return backup_object_store.put_bytes_verified(
+        raw,
+        key,
+        metadata={"kind": kind},
+        content_type="application/json; charset=utf-8",
+    )
+
+
+def _read_json_object(key: str) -> dict[str, Any]:
+    raw = backup_object_store.read_bytes_verified(key)
+    return json.loads(raw.decode("utf-8"))
 
 
 def _load_job(job_id: str) -> dict[str, Any]:
-    path = _job_path(job_id)
-    if not path.exists():
-        raise KeyError(job_id)
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return _read_json_object(_job_key(job_id))
+    except FileNotFoundError as exc:
+        raise KeyError(job_id) from exc
 
 
 def _save_job(job: dict[str, Any]) -> None:
     with _JOB_LOCK:
         job["updated_at"] = _utc_now()
-        _write_json_atomic(_job_path(job["job_id"]), job)
+        _write_json_object(_job_key(job["job_id"]), job, kind="oem-import-job")
+
+
+@contextmanager
+def _materialized_source(job: dict[str, Any]):
+    key = str(job.get("source_object_key") or "").strip()
+    if not key:
+        raise RuntimeError("source object key missing")
+    name = _safe_filename(job.get("original_filename") or "upload.xlsx")
+    with tempfile.TemporaryDirectory(prefix="source-", dir=str(TMP_DIR)) as work:
+        path = Path(work) / name
+        result = backup_object_store.download_file_verified(key, path)
+        expected = str(job.get("source_sha256") or "").strip()
+        if expected and result["sha256"] != expected:
+            raise RuntimeError("source object SHA-256 does not match job")
+        yield path
 
 
 def _require_admin(token: str | None) -> None:
@@ -662,12 +690,11 @@ def _backup_database(job_id: str) -> tuple[str, str]:
     return str(result["uri"]), str(result["sha256"])
 
 
-def _apply(job: dict[str, Any], dry: dict[str, Any]) -> dict[str, Any]:
+def _apply(job: dict[str, Any], dry: dict[str, Any], source_path: Path) -> dict[str, Any]:
     profile_key = job["profile_key"]
     profile = PROFILES[profile_key]
     if not dry.get("apply_allowed", False):
         raise RuntimeError("dry-run blocks apply: " + str(dry.get("apply_blocked_reason") or "unknown"))
-    source_path = Path(job["source_path"])
     if _sha256(source_path) != dry["source_sha256"]:
         raise RuntimeError("source file changed after dry-run")
 
@@ -1030,11 +1057,13 @@ def _run_dry_job(job_id: str) -> None:
         job = _load_job(job_id)
         job["status"] = "dry_running"
         _save_job(job)
-        report = _build_dry_run(Path(job["source_path"]), job["profile_key"])
+        with _materialized_source(job) as source_path:
+            report = _build_dry_run(source_path, job["profile_key"])
         report["job_id"] = job_id
-        _write_json_atomic(_report_path(job_id, "dryrun"), report)
+        report_key = _report_key(job_id, "dryrun")
+        _write_json_object(report_key, report, kind="oem-import-dryrun")
         job["status"] = "dry_run_complete"
-        job["dry_run_report"] = str(_report_path(job_id, "dryrun"))
+        job["dry_run_report_key"] = report_key
         _save_job(job)
         log.warning("OEM_IMPORT_DRYRUN %s", json.dumps(report, ensure_ascii=False, separators=(",", ":")))
     except Exception as exc:
@@ -1051,17 +1080,19 @@ def _run_dry_job(job_id: str) -> None:
 def _run_apply_job(job_id: str) -> None:
     try:
         job = _load_job(job_id)
-        dry_path = Path(job.get("dry_run_report") or "")
-        if not dry_path.exists():
-            raise RuntimeError("dry-run report missing")
-        dry = json.loads(dry_path.read_text(encoding="utf-8"))
+        report_key = str(job.get("dry_run_report_key") or "").strip()
+        if not report_key:
+            raise RuntimeError("dry-run report key missing")
+        dry = _read_json_object(report_key)
         job["status"] = "applying"
         _save_job(job)
-        report = _apply(job, dry)
+        with _materialized_source(job) as source_path:
+            report = _apply(job, dry, source_path)
         report["job_id"] = job_id
-        _write_json_atomic(_report_path(job_id, "apply"), report)
+        apply_key = _report_key(job_id, "apply")
+        _write_json_object(apply_key, report, kind="oem-import-apply")
         job["status"] = "applied"
-        job["apply_report"] = str(_report_path(job_id, "apply"))
+        job["apply_report_key"] = apply_key
         _save_job(job)
         log.warning("OEM_IMPORT_APPLY %s", json.dumps(report, ensure_ascii=False, separators=(",", ":")))
     except Exception as exc:
@@ -1079,7 +1110,7 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
     return {
         k: v
         for k, v in job.items()
-        if k not in {"source_path"}
+        if k not in {"source_path", "source_object_key"}
     }
 
 
@@ -1157,25 +1188,36 @@ async def upload_source(
     if not name.lower().endswith(".xlsx"):
         raise HTTPException(status_code=400, detail="only .xlsx is accepted")
     job_id = f"{profile_key.lower()}-{uuid.uuid4().hex[:10]}"
-    dest = SOURCE_DIR / f"{job_id}__{name}"
     total = 0
-    with dest.open("wb") as out:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_UPLOAD_BYTES:
-                out.close()
-                dest.unlink(missing_ok=True)
-                raise HTTPException(status_code=413, detail="file too large")
-            out.write(chunk)
+    source_key = _source_key(job_id, name)
+    with tempfile.TemporaryDirectory(prefix="upload-", dir=str(TMP_DIR)) as work:
+        dest = Path(work) / name
+        with dest.open("wb") as out:
+            while True:
+                chunk = await file.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status_code=413, detail="file too large")
+                out.write(chunk)
+        stored = backup_object_store.upload_file_verified(
+            dest,
+            source_key,
+            metadata={
+                "kind": "oem-import-source",
+                "job-id": job_id,
+                "original-filename": name,
+            },
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
     job = {
         "job_id": job_id,
         "profile_key": profile_key,
         "original_filename": name,
-        "source_path": str(dest),
-        "source_sha256": _sha256(dest),
+        "source_object_key": source_key,
+        "source_uri": stored["uri"],
+        "source_sha256": stored["sha256"],
         "source_size_bytes": total,
         "status": "queued_dry_run",
         "created_at": _utc_now(),
@@ -1191,9 +1233,9 @@ def list_jobs(
 ) -> dict[str, Any]:
     _require_admin(x_extremizer_admin_token)
     jobs: list[dict[str, Any]] = []
-    for p in sorted(JOB_DIR.glob("*.json"), key=lambda x: x.stat().st_mtime, reverse=True)[:50]:
+    for item in backup_object_store.list_objects(f"{ARTIFACT_PREFIX}/jobs/", limit=50):
         try:
-            jobs.append(_public_job(json.loads(p.read_text(encoding="utf-8"))))
+            jobs.append(_public_job(_read_json_object(item["key"])))
         except Exception:
             continue
     return {"jobs": jobs}
@@ -1210,10 +1252,17 @@ def get_job(
     except KeyError:
         raise HTTPException(status_code=404, detail="job not found")
     payload: dict[str, Any] = {"job": _public_job(job)}
-    for key, mode in (("dry_run", "dryrun"), ("apply", "apply")):
-        p = _report_path(job_id, mode)
-        if p.exists():
-            payload[key] = json.loads(p.read_text(encoding="utf-8"))
+    for key, object_field in (
+        ("dry_run", "dry_run_report_key"),
+        ("apply", "apply_report_key"),
+    ):
+        object_key = str(job.get(object_field) or "").strip()
+        if not object_key:
+            continue
+        try:
+            payload[key] = _read_json_object(object_key)
+        except FileNotFoundError:
+            continue
     return payload
 
 

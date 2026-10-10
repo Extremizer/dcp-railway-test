@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -43,6 +43,7 @@ import supplier_admin_auth
 import admin_order_service
 import admin_order_apply_service
 import admin_order_web
+import backup_object_store
 import oem_import_maintenance
 try:
     import oem_reference_service
@@ -1377,16 +1378,25 @@ def vk_maintenance_backup(req: VKBackupRequest) -> dict[str, Any]:
     }
     raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
     digest = hashlib.sha256(raw).hexdigest()
-    backup_dir = Path(os.getenv("VK_BACKUP_DIR", "/data/vk_backups"))
-    backup_dir.mkdir(parents=True, exist_ok=True)
-    path = backup_dir / f"vk_extremizer_wall_backup_{backup_id}.json"
-    path.write_bytes(raw)
+    object_key = f"runtime-artifacts/vk-backups/vk_extremizer_wall_backup_{backup_id}.json"
+    stored = backup_object_store.put_bytes_verified(
+        raw,
+        object_key,
+        metadata={
+            "kind": "vk-wall-backup",
+            "backup-id": backup_id,
+        },
+        content_type="application/json; charset=utf-8",
+    )
+    if stored["sha256"] != digest:
+        raise RuntimeError("VK backup object-store SHA-256 mismatch")
     return {
         "ok": True,
         "backup_id": backup_id,
         "count": len(posts),
         "bytes": len(raw),
         "sha256": digest,
+        "storage_uri": stored["uri"],
         "download_url": f"/vk-maintenance/backup/{backup_id}",
     }
 
@@ -1395,10 +1405,17 @@ def vk_maintenance_backup(req: VKBackupRequest) -> dict[str, Any]:
 def vk_maintenance_backup_download(backup_id: str):
     if len(backup_id) != 32 or any(ch not in "0123456789abcdef" for ch in backup_id):
         raise HTTPException(status_code=400, detail="Invalid backup id")
-    path = Path(os.getenv("VK_BACKUP_DIR", "/data/vk_backups")) / f"vk_extremizer_wall_backup_{backup_id}.json"
-    if not path.exists():
+    filename = f"vk_extremizer_wall_backup_{backup_id}.json"
+    object_key = f"runtime-artifacts/vk-backups/{filename}"
+    try:
+        raw = backup_object_store.read_bytes_verified(object_key)
+    except FileNotFoundError:
         raise HTTPException(status_code=404, detail="Backup not found")
-    return FileResponse(path, media_type="application/json", filename=path.name)
+    return Response(
+        content=raw,
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.post("/vk-maintenance/api")
