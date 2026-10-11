@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 import os
 import sqlite3
@@ -202,4 +202,3 @@ class WarehousePartnerWebPoint10Tests(unittest.TestCase):
 
 if __name__=="__main__":
     unittest.main(verbosity=2)
-
