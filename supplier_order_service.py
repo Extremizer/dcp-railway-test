@@ -77,6 +77,9 @@ class SupplierOrderService:
         )
         return x
 
+    def list_orders(self, statuses=None):
+        return repo.list_summary(self.db_file, statuses)
+
     def list_work_queue(self):
         return repo.pending_summary(self.db_file)
 
@@ -363,6 +366,189 @@ class SupplierOrderService:
             c.commit()
         return self.get(supplier_order_id)
 
+    def deliver_supplier_order(
+        self,
+        supplier_order_id,
+        *,
+        actor_type="admin",
+        actor_id=None,
+        source="supplier_admin",
+        client_sender=None,
+    ):
+        supplier_shortages.init(self.db_file)
+        fulfillment_slices.init(self.db_file)
+        changed=False
+
+        with sqlite3.connect(self.db_file, timeout=30) as c:
+            c.row_factory=sqlite3.Row
+            c.execute("BEGIN IMMEDIATE")
+            order=c.execute(
+                """SELECT id,client_order_id,warehouse_id,status,
+                          carrier,tracking_number
+                   FROM supplier_orders
+                   WHERE id=?""",
+                (supplier_order_id,),
+            ).fetchone()
+            if not order:
+                raise KeyError("supplier order not found")
+
+            if order["status"]=="delivered":
+                dangling=c.execute(
+                    """SELECT COUNT(*)
+                       FROM warehouse_stock_reservations r
+                       WHERE r.order_item_id IN (
+                         SELECT DISTINCT order_item_id
+                         FROM fulfillment_slices
+                         WHERE supplier_order_id=? AND route=?
+                           AND status!=?
+                       )
+                         AND r.warehouse_id=?
+                         AND r.status IN ('hold','reserved','committed')""",
+                    (
+                        supplier_order_id,
+                        fulfillment_slices.ROUTE_RF,
+                        fulfillment_slices.RF_CANCELLED,
+                        int(order["warehouse_id"]),
+                    ),
+                ).fetchone()[0]
+                bad_slices=c.execute(
+                    """SELECT COUNT(*)
+                       FROM fulfillment_slices
+                       WHERE supplier_order_id=? AND route=?
+                         AND status NOT IN (?,?)""",
+                    (
+                        supplier_order_id,
+                        fulfillment_slices.ROUTE_RF,
+                        fulfillment_slices.RF_DELIVERED,
+                        fulfillment_slices.RF_CANCELLED,
+                    ),
+                ).fetchone()[0]
+                if int(dangling or 0) or int(bad_slices or 0):
+                    raise ValueError(
+                        "delivered supplier order has inconsistent fulfillment state"
+                    )
+                c.rollback()
+                return self.get(supplier_order_id)
+
+            if order["status"]!="shipped":
+                raise ValueError(
+                    "supplier order is not ready for delivery"
+                )
+
+            unresolved=c.execute(
+                """SELECT COUNT(*)
+                   FROM supplier_shortages
+                   WHERE supplier_order_id=?
+                     AND status IN (
+                       'open','waiting_customer','usa_quote_requested',
+                       'price_pending','quoted'
+                     )""",
+                (supplier_order_id,),
+            ).fetchone()[0]
+            if int(unresolved or 0):
+                raise ValueError(
+                    "⚠️ Есть недопоставка — ожидается решение клиента"
+                )
+
+            active=c.execute(
+                """SELECT id,order_item_id,status,issue
+                   FROM fulfillment_slices
+                   WHERE supplier_order_id=? AND route=? AND status!=?
+                   ORDER BY id""",
+                (
+                    supplier_order_id,
+                    fulfillment_slices.ROUTE_RF,
+                    fulfillment_slices.RF_CANCELLED,
+                ),
+            ).fetchall()
+            if not active:
+                raise ValueError(
+                    "supplier order has no active RF fulfillment"
+                )
+
+            order_item_ids=sorted(
+                {int(x["order_item_id"]) for x in active}
+            )
+            reservations=[]
+            for order_item_id in order_item_ids:
+                rows=c.execute(
+                    """SELECT *
+                       FROM warehouse_stock_reservations
+                       WHERE order_item_id=? AND warehouse_id=?
+                       ORDER BY id""",
+                    (order_item_id,int(order["warehouse_id"])),
+                ).fetchall()
+                current=[
+                    x for x in rows
+                    if x["status"] in {
+                        "reserved","committed","absorbed"
+                    }
+                ]
+                if len(current)==1:
+                    reservation=current[0]
+                elif len(current)>1:
+                    raise ValueError(
+                        "multiple active RF reservations for delivered item "
+                        f"{order_item_id}"
+                    )
+                elif rows:
+                    reservation=rows[-1]
+                else:
+                    raise ValueError(
+                        "RF reservation missing for delivered item "
+                        f"{order_item_id}"
+                    )
+                reservations.append(reservation)
+
+            details={
+                "supplier_order_id":int(supplier_order_id),
+                "carrier":order["carrier"],
+                "tracking_number":order["tracking_number"],
+            }
+            fulfillment_slices.deliver_supplier_order_conn(
+                c,
+                supplier_order_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                source=source,
+                details=details,
+            )
+            for reservation in reservations:
+                stock_engine.finalize_delivered_reservation_in_transaction(
+                    c,int(reservation["id"])
+                )
+
+            repo.transition(
+                self.db_file,
+                supplier_order_id,
+                "delivered",
+                source,
+                conn=c,
+            )
+            c.commit()
+            changed=True
+
+        order=self.get(supplier_order_id)
+        if changed:
+            try:
+                receipt=supplier_customer_notify.notify_delivered(
+                    self,order,client_sender
+                )
+                repo.add_event(
+                    self.db_file,
+                    supplier_order_id,
+                    "client_delivered_notified",
+                    details=str(receipt),
+                )
+            except Exception as exc:
+                repo.add_event(
+                    self.db_file,
+                    supplier_order_id,
+                    "client_delivered_notify_failed",
+                    details=str(exc),
+                )
+        return self.get(supplier_order_id)
+
     def change_status(
         self,
         supplier_order_id,
@@ -399,13 +585,12 @@ class SupplierOrderService:
                 "supplier order may become shipped only through tracking"
             )
         if status == "delivered":
-            guard = supplier_shortages.lifecycle_state(
-                self.db_file, supplier_order_id
+            return self.deliver_supplier_order(
+                supplier_order_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                source=source,
             )
-            if guard["blocked"]:
-                raise ValueError(
-                    "⚠️ Есть недопоставка — ожидается решение клиента"
-                )
         repo.transition(
             self.db_file, supplier_order_id, status, details
         )

@@ -206,12 +206,24 @@ def init_warehouse_db(db_file: Path | str = DEFAULT_DB) -> None:
                 expires_at TEXT,
                 confirmed_at TEXT,
                 committed_at TEXT,
+                fulfilled_at TEXT,
                 released_at TEXT,
                 absorbed_at TEXT,
                 notes TEXT,
                 FOREIGN KEY (warehouse_id) REFERENCES warehouses(id)
             )
         """)
+        reservation_columns={
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(warehouse_stock_reservations)"
+            )
+        }
+        if "fulfilled_at" not in reservation_columns:
+            conn.execute(
+                "ALTER TABLE warehouse_stock_reservations "
+                "ADD COLUMN fulfilled_at TEXT"
+            )
         conn.execute("""
             CREATE TABLE IF NOT EXISTS warehouse_stock_reservation_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -257,10 +269,12 @@ def init_warehouse_db(db_file: Path | str = DEFAULT_DB) -> None:
             ON warehouse_stock_reservations(order_id, order_item_id)
         """)
         conn.execute("""
-            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_active_item_reservation
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_live_item_reservation_v2
             ON warehouse_stock_reservations(order_item_id)
             WHERE order_item_id IS NOT NULL
-              AND status IN ('hold', 'reserved', 'committed', 'absorbed')
+              AND status IN (
+                'hold','reserved','committed','fulfilled','absorbed'
+              )
         """)
         conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_stock_reservation_events
@@ -1341,7 +1355,7 @@ def _absorb_committed_after_snapshot(
         for oem in (oems or [])
         if str(oem or "").strip()
     })
-    params: list[Any] = [warehouse_id, observed_at]
+    params: list[Any] = [warehouse_id, observed_at, observed_at]
     oem_clause = ""
     if normalized:
         placeholders = ",".join("?" for _ in normalized)
@@ -1351,12 +1365,22 @@ def _absorb_committed_after_snapshot(
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         f"""
-        SELECT id, quantity
+        SELECT id, quantity, status
         FROM warehouse_stock_reservations
         WHERE warehouse_id = ?
-          AND status = 'committed'
-          AND committed_at IS NOT NULL
-          AND committed_at <= ?
+          AND (
+            (
+              status = 'committed'
+              AND committed_at IS NOT NULL
+              AND committed_at <= ?
+            )
+            OR
+            (
+              status = 'fulfilled'
+              AND fulfilled_at IS NOT NULL
+              AND fulfilled_at <= ?
+            )
+          )
           {oem_clause}
         """,
         params,
@@ -1386,7 +1410,10 @@ def _absorb_committed_after_snapshot(
                 int(row["id"]),
                 float(row["quantity"]),
                 now,
-                _json({"snapshot_observed_at": observed_at}),
+                _json({
+                    "snapshot_observed_at": observed_at,
+                    "previous_status": row["status"],
+                }),
             ),
         )
     return len(rows)

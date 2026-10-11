@@ -21,7 +21,7 @@ def _filter_status(name):
 
 def render_queue(service,filter_name="all"):
     statuses=_filter_status(filter_name)
-    rows=service.list_work_queue()
+    rows=service.list_orders()
     if statuses is not None: rows=[x for x in rows if x["status"] in statuses]
     groups={}
     for x in rows:
@@ -55,8 +55,13 @@ def render_card(order):
         tracking=f'''<div class="tracking"><h3>Отправка клиенту</h3><input id="carrier" placeholder="Перевозчик, например СДЭК"><input id="tracking" placeholder="Трек-номер"><button class="primary track" data-id="{order["id"]}">🚚 Сохранить трек и отметить отправленным</button></div>'''
     elif order.get("tracking_number"):
         shipped_at=_dt(order.get("shipped_at"))
-        when=f'<small>Отправлено: {_e(shipped_at)}</small>' if shipped_at else ""
-        tracking=f'<div class="tracking done">🚚 {_e(order.get("carrier"))}: <b>{_e(order["tracking_number"])}</b>{when}</div>'
+        delivered_at=_dt(order.get("delivered_at"))
+        parts=[]
+        if shipped_at:
+            parts.append(f'<small>Отправлено: {_e(shipped_at)}</small>')
+        if delivered_at:
+            parts.append(f'<small>Доставлено: {_e(delivered_at)}</small>')
+        tracking=f'<div class="tracking done">🚚 {_e(order.get("carrier"))}: <b>{_e(order["tracking_number"])}</b>{"".join(parts)}</div>'
     return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{_e(order["client_order_id"])}</title><link rel="stylesheet" href="/static/supplier-admin.css"></head><body><main>
       <a class="back" href="/admin/supplier-orders">← Заказы поставщикам</a>
       <section class="card"><div class="wh-head"><h1>{_e(order["public_name"])}</h1><span>{_e(label)}</span></div>

@@ -22,10 +22,10 @@ jobs:
         run: pip install fastapi httpx python-multipart
       - name: Compile
         run: |
-          python -m py_compile             stock_engine.py             fulfillment_slices.py             supplier_orders.py             supplier_shortages.py             supplier_order_service.py             supplier_delivery.py             supplier_api.py             supplier_telegram_admin.py             supplier_telegram_handlers.py             extremizer_bot.py             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py
+          python -m py_compile             stock_engine.py             fulfillment_slices.py             supplier_orders.py             supplier_shortages.py             supplier_order_service.py             supplier_delivery.py             supplier_api.py             supplier_telegram_admin.py             supplier_telegram_handlers.py             extremizer_bot.py             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py             test_supplier_delivered_point8.py
       - name: Supplier fulfillment regression
         run: |
-          python -B -m unittest -v             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py
+          python -B -m unittest -v             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py             test_supplier_delivered_point8.py
       - name: WEB ADMIN 2 compatibility
         run: python -B run_web_admin_2_apply_regression.py
       - name: Checkout callback compatibility

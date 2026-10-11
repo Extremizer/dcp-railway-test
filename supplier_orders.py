@@ -16,7 +16,7 @@ STATUS_LABELS = {
     "confirmed":"👍 Подтверждён складом",
     "assembled":"📦 Собран",
     "shipped":"🚚 Отправлен клиенту",
-    "delivered":"✅ Доставлен",
+    "delivered":"✅ Доставлено",
     "cancelled":"❌ Закрыт без отгрузки",
 }
 ALLOWED = {

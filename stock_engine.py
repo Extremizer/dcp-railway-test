@@ -243,17 +243,23 @@ def _reservation_blocks(
     if status == "reserved":
         return True
 
-    if status != "committed":
+    if status not in {"committed", "fulfilled"}:
         return False
 
     if sync_mode == "manual":
         return True
 
-    committed_at = _parse_dt(row["committed_at"])
-    if committed_at is None or snapshot_observed_at is None:
+    effective_at = _parse_dt(
+        row["fulfilled_at"] if status == "fulfilled"
+        else row["committed_at"]
+    )
+    if effective_at is None or snapshot_observed_at is None:
         return True
 
-    return committed_at > snapshot_observed_at
+    # Equality is intentionally still blocking: lifecycle timestamps are
+    # second-granularity, so a snapshot created earlier in the same second
+    # must not be mistaken for a post-reservation/post-delivery snapshot.
+    return effective_at >= snapshot_observed_at
 
 
 def _blocking_quantity(
@@ -271,7 +277,7 @@ def _blocking_quantity(
         FROM warehouse_stock_reservations
         WHERE warehouse_id = ?
           AND oem = ?
-          AND status IN ('hold', 'reserved', 'committed')
+          AND status IN ('hold', 'reserved', 'committed', 'fulfilled')
         ORDER BY created_at, id
         """,
         (warehouse_id, oem.strip()),
@@ -772,6 +778,74 @@ def reconcile_supplier_confirmation_in_transaction(
     }
 
 
+def finalize_delivered_reservation_in_transaction(
+    conn: sqlite3.Connection,
+    reservation_id: int,
+) -> dict[str, Any]:
+    """Close an RF reservation after physical delivery to the client.
+
+    committed/reserved become fulfilled. Fulfilled is terminal for the order
+    but still blocks stale manual stock until an authoritative source snapshot
+    absorbs it. Already absorbed rows stay untouched.
+    """
+    row = conn.execute(
+        """
+        SELECT status, quantity, fulfilled_at, absorbed_at
+        FROM warehouse_stock_reservations
+        WHERE id = ?
+        """,
+        (reservation_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("warehouse reservation not found")
+
+    status = str(row[0])
+    quantity = float(row[1] or 0)
+    if status == "absorbed":
+        return {
+            "reservation_id": reservation_id,
+            "status": "absorbed",
+            "quantity": quantity,
+            "changed": False,
+        }
+    if status == "fulfilled":
+        return {
+            "reservation_id": reservation_id,
+            "status": "fulfilled",
+            "quantity": quantity,
+            "changed": False,
+        }
+    if status not in {"reserved", "committed"}:
+        raise ValueError(
+            f"reservation is not deliverable: {status}"
+        )
+
+    now = _now()
+    conn.execute(
+        """
+        UPDATE warehouse_stock_reservations
+        SET status = 'fulfilled',
+            expires_at = NULL,
+            fulfilled_at = COALESCE(fulfilled_at, ?)
+        WHERE id = ?
+        """,
+        (now, reservation_id),
+    )
+    _log_event(
+        conn,
+        reservation_id,
+        "fulfilled_delivered",
+        quantity,
+        {"previous_status": status},
+    )
+    return {
+        "reservation_id": reservation_id,
+        "status": "fulfilled",
+        "quantity": quantity,
+        "changed": True,
+    }
+
+
 def commit_reservation(
     reservation_id: int,
     db_file: Path | str = DEFAULT_DB,
@@ -870,7 +944,7 @@ def reconcile_snapshot(
         if _warehouse_sync_mode(conn, warehouse_id) != "snapshot_absorbs_committed":
             return 0
 
-        params: list[Any] = [warehouse_id, observed_at]
+        params: list[Any] = [warehouse_id, observed_at, observed_at]
         oem_clause = ""
         normalized = [str(x).strip() for x in (oems or []) if str(x).strip()]
         if normalized:
@@ -881,12 +955,22 @@ def reconcile_snapshot(
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"""
-            SELECT id, quantity
+            SELECT id, quantity, status
             FROM warehouse_stock_reservations
             WHERE warehouse_id = ?
-              AND status = 'committed'
-              AND committed_at IS NOT NULL
-              AND committed_at <= ?
+              AND (
+                (
+                  status = 'committed'
+                  AND committed_at IS NOT NULL
+                  AND committed_at <= ?
+                )
+                OR
+                (
+                  status = 'fulfilled'
+                  AND fulfilled_at IS NOT NULL
+                  AND fulfilled_at <= ?
+                )
+              )
               {oem_clause}
             """,
             params,

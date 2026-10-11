@@ -32,6 +32,7 @@ def card_screen(service,sid):
     if x.get("tracking_number"):
         lines+=["",f"🚚 {escape(x.get('carrier') or '')}: <code>{escape(x['tracking_number'])}</code>"]
         if x.get("shipped_at"): lines.append(f"Отправлено: {escape(x['shipped_at'])}")
+        if x.get("delivered_at"): lines.append(f"Доставлено: {escape(x['delivered_at'])}")
     kb=[[InlineKeyboardButton(f"⚠️ {i['oem']} — проблема",callback_data=f"admin:supplierproblem:{sid}:{i['id']}")] for i in x["items"]]
     nxt=NEXT.get(x["status"])
     if nxt: kb.append([InlineKeyboardButton(nxt[1],callback_data=f"admin:supplierstatus:{sid}:{nxt[0]}")])

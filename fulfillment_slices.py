@@ -278,6 +278,49 @@ def ship_supplier_order_conn(
     return changed
 
 
+def deliver_supplier_order_conn(
+    conn,
+    supplier_order_id,
+    *,
+    actor_type="admin",
+    actor_id=None,
+    source="supplier_admin",
+    details=None,
+):
+    """Move all active RF slices from shipped-to-client to delivered."""
+    conn.row_factory=sqlite3.Row
+    rows=conn.execute(
+        """SELECT * FROM fulfillment_slices
+           WHERE supplier_order_id=? AND route=? AND status!=?
+           ORDER BY id""",
+        (supplier_order_id,ROUTE_RF,RF_CANCELLED),
+    ).fetchall()
+    if not rows:
+        raise ValueError("supplier order has no active RF fulfillment")
+    for row in rows:
+        if row["issue"]:
+            raise ValueError("RF fulfillment slice has unresolved issue")
+        if row["status"] not in {RF_SHIPPED_TO_CLIENT,RF_DELIVERED}:
+            raise ValueError(
+                f"RF slice is not ready for delivery: {row['status']}"
+            )
+
+    changed=0
+    for row in rows:
+        if _change(
+            conn,
+            row,
+            status=RF_DELIVERED,
+            event_type="delivered_to_client",
+            actor_type=actor_type,
+            actor_id=actor_id,
+            source=source,
+            details=details,
+        ):
+            changed+=1
+    return changed
+
+
 def split_shortage_conn(conn,supplier_order_id,supplier_order_item_id,confirmed_qty,*,
                         actor_type="admin",actor_id=None,source="supplier_admin"):
     conn.row_factory=sqlite3.Row

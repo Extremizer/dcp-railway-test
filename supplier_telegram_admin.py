@@ -32,6 +32,7 @@ def card_text(service,supplier_order_id):
     if x.get("tracking_number"):
         lines.append(f"🚚 {x.get('carrier')}: <code>{x['tracking_number']}</code>")
         if x.get("shipped_at"): lines.append(f"Отправлено: {x['shipped_at']}")
+        if x.get("delivered_at"): lines.append(f"Доставлено: {x['delivered_at']}")
     return "\n".join(lines)
 
 def handle_action(service,supplier_order_id,action,*,admin_user_id=None,carrier=None,tracking=None):
