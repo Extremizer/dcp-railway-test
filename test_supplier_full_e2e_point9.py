@@ -18,7 +18,7 @@ from _client_checkout_callback_adapter_regression import (
 )
 from client_checkout_callback_adapter import execute_prepared_checkout
 from client_finance_adapter import ClientFinanceAdapter
-from common_finance_contract import PaymentRoute, default_client_payment_route
+from common_finance_contract import FulfillmentRoute, PaymentRoute, default_client_payment_route
 import fulfillment_slices as fs
 from oemixibot_finance import FinanceEngine
 import stock_engine
@@ -94,6 +94,7 @@ class SupplierFullE2EPoint9Tests(unittest.TestCase):
             "datetime":datetime,
             "nullcontext":nullcontext,
             "PaymentRoute":PaymentRoute,
+            "FulfillmentRoute":FulfillmentRoute,
             "default_client_payment_route":default_client_payment_route,
             "ORDERS_DB_FILE":self.db,
             "stock_engine":stock_engine,

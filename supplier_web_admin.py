@@ -28,7 +28,7 @@ def render_queue(service,filter_name="all"):
         g=groups.setdefault(x["public_name"],[])
         g.append(x)
     tabs="".join(f'<a class="tab {"active" if k==filter_name else ""}" href="/admin/supplier-orders?filter={k}">{v}</a>' for k,v in FILTERS)
-    out=[f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Заказы поставщикам</title><link rel="stylesheet" href="/static/supplier-admin.css"></head><body><main><header><h1>📦 Заказы поставщикам</h1><nav>{tabs}<a class="tab" href="/admin/supplier-channels">⚙️ Каналы складов</a></nav></header>''']
+    out=[f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Заказы поставщикам</title><link rel="stylesheet" href="/static/supplier-admin.css"></head><body><main><header><h1>📦 Заказы поставщикам</h1><nav>{tabs}<a class="tab" href="/admin/warehouse-settlements">💱 Мои расчёты со складами</a><a class="tab" href="/admin/supplier-channels">⚙️ Каналы складов</a></nav></header>''']
     out.append(f'<div class="counter">Найдено: <b>{len(rows)}</b></div>')
     for wh,shipments in groups.items():
         lines=sum(int(x["item_lines"]) for x in shipments)

@@ -17,7 +17,7 @@ from client_order_finance_bridge import (
     load_order_line_finance_snapshots,
     post_persisted_order_charge,
 )
-from common_finance_contract import PaymentRoute, default_client_payment_route
+from common_finance_contract import FulfillmentRoute, PaymentRoute, default_client_payment_route
 from oemixibot_finance import FinanceEngine
 
 
@@ -96,6 +96,7 @@ def create_schema(db_path):
                 reference_weight_source TEXT,
                 offer_source TEXT NOT NULL DEFAULT 'usa',
                 payment_route TEXT NOT NULL DEFAULT 'extremizer_balance',
+                fulfillment_route TEXT NOT NULL DEFAULT 'through_extremizer',
                 warehouse_id INTEGER,
                 warehouse_public_name TEXT,
                 price_snapshot_rub REAL,
@@ -168,6 +169,7 @@ def run():
             "datetime": datetime,
             "nullcontext": nullcontext,
             "PaymentRoute": PaymentRoute,
+            "FulfillmentRoute": FulfillmentRoute,
             "default_client_payment_route": default_client_payment_route,
             "ORDERS_DB_FILE": db_path,
             "USD_RUB_RATE": 100.0,

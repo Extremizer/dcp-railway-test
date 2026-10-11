@@ -40,6 +40,8 @@ import supplier_web_admin
 import supplier_channels
 import supplier_channel_web
 import supplier_admin_auth
+import warehouse_partner_settlements
+import warehouse_partner_web
 import admin_order_service
 import admin_order_apply_service
 import admin_order_web
@@ -71,6 +73,9 @@ app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 # Supplier Orders uses the exact same persistent orders DB as Telegram.
 supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
+# Schema-only migration for the independent partner-settlement ledger.
+# No settlement rows or financial events are created automatically.
+warehouse_partner_settlements.init(core.ORDERS_DB_FILE)
 app.include_router(supplier_api.build_supplier_router(supplier_order_service))
 app.include_router(oem_import_maintenance.router)
 
@@ -80,6 +85,29 @@ def _safe_admin_next(value: str | None) -> str:
     if not value.startswith("/admin") or value.startswith("//"):
         return "/admin/supplier-orders"
     return value
+
+
+def _require_scoped_admin_form(
+    request: Request,
+    *,
+    scope: str,
+    subject: str,
+    csrf_token: str,
+):
+    session_cookie = request.cookies.get(
+        supplier_admin_auth.WEB_ADMIN_COOKIE
+    )
+    try:
+        supplier_admin_auth.require_web_admin_access(
+            session_cookie=session_cookie
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+    if not supplier_admin_auth.verify_scoped_admin_csrf_token(
+        session_cookie, scope, str(subject), csrf_token
+    ):
+        raise HTTPException(status_code=403, detail="invalid CSRF token")
+    return True
 
 
 def _admin_page_login_redirect(request: Request):
@@ -281,6 +309,163 @@ def supplier_channel_save(
         )
     except ValueError as exc:
         raise HTTPException(409, str(exc))
+
+@app.get("/admin/warehouse-settlements", response_class=HTMLResponse)
+def warehouse_settlements_page(request: Request):
+    redirect = _admin_page_login_redirect(request)
+    if redirect:
+        return redirect
+    session_cookie = request.cookies.get(
+        supplier_admin_auth.WEB_ADMIN_COOKIE
+    )
+    return warehouse_partner_web.render(
+        core.ORDERS_DB_FILE, session_cookie
+    )
+
+
+@app.post("/admin/warehouse-settlements/sync")
+def warehouse_settlements_sync(
+    request: Request,
+    csrf_token: str = Form(...),
+):
+    _require_scoped_admin_form(
+        request,
+        scope="warehouse-settlements-sync",
+        subject="all",
+        csrf_token=csrf_token,
+    )
+    warehouse_partner_settlements.sync_pending_from_orders(
+        core.ORDERS_DB_FILE, actor="web_admin"
+    )
+    return RedirectResponse(
+        "/admin/warehouse-settlements", status_code=303
+    )
+
+
+@app.post("/admin/warehouse-settlements/{settlement_id}/terms")
+def warehouse_settlement_terms(
+    request: Request,
+    settlement_id: int,
+    csrf_token: str = Form(...),
+    mode: str = Form(...),
+    partner_amount_rub: str = Form(default=""),
+    terms_source: str = Form(...),
+    notes: str = Form(default=""),
+):
+    _require_scoped_admin_form(
+        request,
+        scope="warehouse-settlement-terms",
+        subject=str(settlement_id),
+        csrf_token=csrf_token,
+    )
+    amount = (
+        None
+        if not str(partner_amount_rub or "").strip()
+        else int(str(partner_amount_rub).strip())
+    )
+    try:
+        warehouse_partner_settlements.set_terms(
+            core.ORDERS_DB_FILE,
+            settlement_id,
+            mode=mode,
+            partner_amount_rub=amount,
+            terms_source=terms_source,
+            notes=notes or None,
+            actor="web_admin",
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return RedirectResponse(
+        "/admin/warehouse-settlements", status_code=303
+    )
+
+
+@app.post("/admin/warehouse-settlements/{settlement_id}/accrue")
+def warehouse_settlement_accrue(
+    request: Request,
+    settlement_id: int,
+    csrf_token: str = Form(...),
+):
+    _require_scoped_admin_form(
+        request,
+        scope="warehouse-settlement-accrue",
+        subject=str(settlement_id),
+        csrf_token=csrf_token,
+    )
+    try:
+        warehouse_partner_settlements.accrue(
+            core.ORDERS_DB_FILE,
+            settlement_id,
+            actor="web_admin",
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return RedirectResponse(
+        "/admin/warehouse-settlements", status_code=303
+    )
+
+
+@app.post("/admin/warehouse-settlements/{settlement_id}/payment")
+def warehouse_settlement_payment(
+    request: Request,
+    settlement_id: int,
+    csrf_token: str = Form(...),
+    direction: str = Form(...),
+    amount_rub: int = Form(...),
+    payment_ref: str = Form(...),
+):
+    _require_scoped_admin_form(
+        request,
+        scope="warehouse-settlement-payment",
+        subject=str(settlement_id),
+        csrf_token=csrf_token,
+    )
+    try:
+        warehouse_partner_settlements.record_payment(
+            core.ORDERS_DB_FILE,
+            settlement_id,
+            direction=direction,
+            amount_rub=amount_rub,
+            payment_ref=payment_ref,
+            actor="web_admin",
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return RedirectResponse(
+        "/admin/warehouse-settlements", status_code=303
+    )
+
+
+@app.post("/admin/warehouse-settlements/{settlement_id}/adjustment")
+def warehouse_settlement_adjustment(
+    request: Request,
+    settlement_id: int,
+    csrf_token: str = Form(...),
+    signed_amount_rub: int = Form(...),
+    reason: str = Form(...),
+    reference_id: str = Form(...),
+):
+    _require_scoped_admin_form(
+        request,
+        scope="warehouse-settlement-adjustment",
+        subject=str(settlement_id),
+        csrf_token=csrf_token,
+    )
+    try:
+        warehouse_partner_settlements.record_adjustment(
+            core.ORDERS_DB_FILE,
+            settlement_id,
+            signed_amount_rub=signed_amount_rub,
+            reason=reason,
+            reference_id=reference_id,
+            actor="web_admin",
+        )
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return RedirectResponse(
+        "/admin/warehouse-settlements", status_code=303
+    )
+
 
 @app.get("/admin/supplier-orders/{supplier_order_id}", response_class=HTMLResponse)
 def supplier_admin_card(request: Request, supplier_order_id: int):
