@@ -23,6 +23,7 @@ from pathlib import Path
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from probnik_welcome import welcome_new_members
 
 import dealercostparts_manufacturer_finder_v6_6 as finder
 import warehouse_stock_service
@@ -860,6 +861,7 @@ def build_application(token: str | None = None) -> Application:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pricebutton", price_button))
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome_new_members))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, oem_message))
     return app
 
