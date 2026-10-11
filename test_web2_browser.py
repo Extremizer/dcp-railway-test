@@ -148,6 +148,28 @@ class Web2BrowserTests(unittest.TestCase):
                  ("705402449", "warehouse", 3, 1)])
             browser.close()
 
+
+    def test_desktop_and_mobile_layout_cart_accessibility(self):
+        for width, height in [(1440, 900), (768, 1024), (390, 844), (320, 700)]:
+            with self.subTest(viewport=width), mock_server() as (base, _), sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                page = browser.new_page(viewport={"width": width, "height": height})
+                page.goto(base + "/web2")
+                page.locator("#oemInput").fill("417300574")
+                page.locator("#searchForm button").click()
+                page.locator("#product").wait_for(state="visible")
+                self.assertTrue(page.locator("#customerPrice").is_visible())
+                self.assertTrue(page.locator('button[data-offer-key="warehouse:1"]').is_visible())
+                self.assertFalse(page.evaluate(
+                    "document.documentElement.scrollWidth > window.innerWidth + 1"))
+                page.locator('button[data-offer-key="warehouse:1"]').click()
+                self.assertTrue(page.locator("#cartPanel").evaluate(
+                    "(el) => el.classList.contains('open')"))
+                self.assertTrue(page.locator("#telegramButton").is_visible())
+                self.assertFalse(page.evaluate(
+                    "document.documentElement.scrollWidth > window.innerWidth + 1"))
+                browser.close()
+
     def test_msrp_hidden_when_below_customer_price(self):
         with mock_server() as (base, _), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
