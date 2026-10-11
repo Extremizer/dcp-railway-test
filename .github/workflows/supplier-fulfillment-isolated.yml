@@ -25,11 +25,14 @@ jobs:
 
       - name: Compile
         run: |
-          python -m py_compile             stock_engine.py             fulfillment_slices.py             supplier_orders.py             supplier_shortages.py             supplier_order_service.py             supplier_delivery.py             supplier_api.py             supplier_telegram_admin.py             supplier_telegram_handlers.py             supplier_admin_auth.py             supplier_web_admin.py             warehouse_partner_settlements.py             warehouse_partner_web.py             web_app.py             extremizer_bot.py             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py             test_supplier_delivered_point8.py             test_supplier_full_e2e_point9.py             test_warehouse_partner_settlements_point10.py             test_partner_routes_checkout_point10.py             test_warehouse_partner_web_point10.py             _prod_finance_switch_regression.py
+          python -m py_compile             stock_engine.py             fulfillment_slices.py             supplier_orders.py             supplier_shortages.py             supplier_order_service.py             supplier_delivery.py             supplier_api.py             supplier_telegram_admin.py             supplier_telegram_handlers.py             supplier_admin_auth.py             supplier_web_admin.py             warehouse_partner_settlements.py             warehouse_partner_web.py             web_app.py             extremizer_bot.py             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py             test_supplier_delivered_point8.py             test_supplier_full_e2e_point9.py             test_stock_snapshot_absorption_strict_ordering.py             test_warehouse_partner_settlements_point10.py             test_partner_routes_checkout_point10.py             test_warehouse_partner_web_point10.py             _prod_finance_switch_regression.py
 
       - name: Supplier fulfillment regression
         run: |
           python -B -m unittest -v             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py             test_supplier_delivered_point8.py             test_supplier_full_e2e_point9.py
+
+      - name: Strict stock snapshot absorption regression
+        run: python -B -m unittest -v test_stock_snapshot_absorption_strict_ordering.py
 
       - name: Partner settlement regression
         run: |

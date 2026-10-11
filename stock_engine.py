@@ -1023,13 +1023,13 @@ def reconcile_snapshot(
                 (
                   status = 'committed'
                   AND committed_at IS NOT NULL
-                  AND committed_at <= ?
+                  AND committed_at < ?
                 )
                 OR
                 (
                   status = 'fulfilled'
                   AND fulfilled_at IS NOT NULL
-                  AND fulfilled_at <= ?
+                  AND fulfilled_at < ?
                 )
               )
               {oem_clause}

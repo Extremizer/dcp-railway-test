@@ -304,6 +304,14 @@ class SupplierDeliveredPoint8Tests(unittest.TestCase):
             self.wid,"snapshot_absorbs_committed",db_file=self.db
         )
         self.reserve_send_ship()
+        # Make the lifecycle event deterministically older than the next
+        # authoritative snapshot. Equal-second snapshots must NOT absorb.
+        with sqlite3.connect(self.db) as c:
+            c.execute(
+                """UPDATE warehouse_stock_reservations
+                   SET committed_at='2000-01-01T00:00:00+00:00'
+                   WHERE order_item_id=1"""
+            )
         # Authoritative snapshot after shipment absorbs the committed row.
         warehouse_store.record_source_stock(
             self.wid,"OEM-1","in_stock",8,"website",
@@ -331,6 +339,15 @@ class SupplierDeliveredPoint8Tests(unittest.TestCase):
             self.wid,"OEM-1",self.db
         )
         self.assertEqual(before["available_quantity"],8)
+
+        # Same rule for fulfilled: the absorbing snapshot must be strictly
+        # later than fulfilled_at, not merely equal at second granularity.
+        with sqlite3.connect(self.db) as c:
+            c.execute(
+                """UPDATE warehouse_stock_reservations
+                   SET fulfilled_at='2000-01-01T00:00:00+00:00'
+                   WHERE order_item_id=1"""
+            )
 
         warehouse_store.record_source_stock(
             self.wid,"OEM-1","in_stock",8,"website",
