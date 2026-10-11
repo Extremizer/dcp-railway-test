@@ -331,6 +331,7 @@ td small{{display:block;color:#667085;margin-top:3px}}
   <div class="nav">
     <a href="/admin">🧾 Клиентские заказы</a>
     <a href="/admin/supplier-orders">📦 Supplier Orders</a>
+    <a href="/admin/warehouse-settlements">💱 Мои расчёты со складами</a>
     <a href="/admin/supplier-channels">⚙️ Каналы складов</a>
   </div>
 
@@ -490,6 +491,7 @@ h1{{margin:0 0 6px}}
   <div class="nav">
     <a href="/admin">🧾 Клиентские заказы</a>
     <a href="/admin/supplier-orders">📦 Supplier Orders</a>
+    <a href="/admin/warehouse-settlements">💱 Мои расчёты со складами</a>
     <a href="/admin/supplier-channels">⚙️ Каналы складов</a>
   </div>
 

@@ -41,7 +41,6 @@ def whatsapp_sender(destination,text):
  return "whatsapp:"+str(msgs[0].get("id","accepted"))
 
 def custom_sender(destination,text):
- # Universal webhook: destination is an HTTPS endpoint controlled/configured by admin.
  if not str(destination).lower().startswith("https://"):raise RuntimeError("Custom channel requires HTTPS webhook URL")
  secret=os.getenv("SUPPLIER_CUSTOM_WEBHOOK_TOKEN","").strip()
  headers={"Content-Type":"application/json","User-Agent":"Extremizer-SupplierOrders/1.0"}
@@ -61,9 +60,26 @@ def send_one(service,supplier_order_id,senders=None):
  if not cfg:raise ValueError("Канал связи для склада не настроен")
  sender=(senders or DEFAULT_SENDERS).get(cfg["channel"])
  if sender is None:raise ValueError(f"Канал {cfg['channel']} не поддерживается")
- # External provider must accept first. Only then business status may change.
- receipt=sender(cfg["recipient"],format_message(order))
- return service.change_status(supplier_order_id,"sent",f"channel={cfg['channel']}; receipt={receipt}")
+
+ # Preflight + durable in-flight guard happens before the provider call.
+ attempt_id=service.begin_send_attempt(supplier_order_id,cfg["channel"])
+ try:
+  receipt=sender(cfg["recipient"],format_message(order))
+ except Exception as exc:
+  service.fail_send_attempt(attempt_id,exc)
+  raise
+
+ # Provider acceptance is persisted before the business-state transaction.
+ # If local finalization then fails, the unresolved accepted attempt blocks a
+ # blind retry and prevents a duplicate supplier message.
+ try:
+  service.accept_send_receipt(attempt_id,receipt)
+  return service.finalize_send_attempt(supplier_order_id,attempt_id)
+ except Exception as exc:
+  raise RuntimeError(
+   f"Supplier delivery was accepted but local finalization failed; "
+   f"attempt {attempt_id} requires reconciliation"
+  ) from exc
 
 def send_batch(service,ids,senders=None):
  results=[]

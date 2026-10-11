@@ -46,3 +46,14 @@ def notify_shortage(service,x,public_name,sender=None):
  with urllib.request.urlopen(req,timeout=15) as r:data=json.loads(r.read())
  if not data.get("ok"):raise RuntimeError("client shortage notification failed")
  return str(data["result"]["message_id"])
+
+def delivered_text(order):
+ return (
+  f"✅ Заказ {order['client_order_id']} со склада "
+  f"{order['public_name']} доставлен."
+ )
+
+def notify_delivered(service,order,sender=None):
+ chat=client_chat_id(service.db_file,order["client_order_id"])
+ if chat is None:raise RuntimeError("client Telegram ID is missing")
+ return (sender or telegram)(chat,delivered_text(order))

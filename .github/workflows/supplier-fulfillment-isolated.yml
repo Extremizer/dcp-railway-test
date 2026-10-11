@@ -1,0 +1,57 @@
+name: Supplier Fulfillment Isolated Regression
+
+on:
+  push:
+    branches: [supplier-warehouse-send-atomic-20261011]
+  pull_request:
+    branches: [probnik-runtime-20261005]
+
+permissions:
+  contents: read
+
+jobs:
+  supplier-fulfillment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install regression dependencies
+        run: pip install -r requirements.txt httpx
+
+      - name: Compile
+        run: |
+          python -m py_compile             stock_engine.py             fulfillment_slices.py             supplier_orders.py             supplier_shortages.py             supplier_order_service.py             supplier_delivery.py             supplier_api.py             supplier_telegram_admin.py             supplier_telegram_handlers.py             supplier_admin_auth.py             supplier_web_admin.py             warehouse_partner_settlements.py             warehouse_partner_web.py             web_app.py             extremizer_bot.py             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py             test_supplier_delivered_point8.py             test_supplier_full_e2e_point9.py             test_stock_snapshot_absorption_strict_ordering.py             test_warehouse_partner_settlements_point10.py             test_partner_routes_checkout_point10.py             test_warehouse_partner_web_point10.py             _prod_finance_switch_regression.py
+
+      - name: Supplier fulfillment regression
+        run: |
+          python -B -m unittest -v             test_supplier_send_atomic_point5.py             test_supplier_confirm_assembly_point6.py             test_supplier_shipping_point7.py             test_supplier_delivered_point8.py             test_supplier_full_e2e_point9.py
+
+      - name: Strict stock snapshot absorption regression
+        run: python -B -m unittest -v test_stock_snapshot_absorption_strict_ordering.py
+
+      - name: Partner settlement regression
+        run: |
+          python -B -m unittest -v             test_warehouse_partner_settlements_point10.py             test_partner_routes_checkout_point10.py
+
+      - name: Partner settlement WEB regression
+        run: python -B -m unittest -v test_warehouse_partner_web_point10.py
+
+      - name: Shared checkout route compatibility
+        run: |
+          python -B _save_order_shared_tx_regression.py
+          python -B _client_checkout_orchestrator_regression.py
+          python -B _atomic_client_finance_regression.py
+
+      - name: WEB ADMIN 2 compatibility
+        run: python -B run_web_admin_2_apply_regression.py
+
+      - name: Checkout callback compatibility
+        run: python -B _client_checkout_callback_adapter_regression.py
+
+      - name: Finance switch compatibility
+        run: python -B _prod_finance_switch_regression.py

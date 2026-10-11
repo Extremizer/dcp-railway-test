@@ -2,25 +2,33 @@
 # -*- coding: utf-8 -*-
 """Full WEB ADMIN UI for Supplier Orders. Business rules stay in service."""
 from __future__ import annotations
+from datetime import datetime
 from html import escape
 from supplier_orders import STATUS_LABELS
 
 FILTERS=(("all","Все"),("need_send","Нужно отправить"),("working","В работе"),("shipped","Отправлено"),("delivered","Доставлено"))
 
 def _e(v): return escape(str(v or ""))
+def _dt(v):
+    if not v:
+        return ""
+    try:
+        return datetime.fromisoformat(str(v)).strftime("%d.%m.%Y %H:%M")
+    except (TypeError,ValueError):
+        return str(v)
 def _filter_status(name):
     return {"need_send":{"not_sent"},"working":{"sent","confirmed","assembled"},"shipped":{"shipped"},"delivered":{"delivered"}}.get(name)
 
 def render_queue(service,filter_name="all"):
     statuses=_filter_status(filter_name)
-    rows=service.list_work_queue()
+    rows=service.list_orders()
     if statuses is not None: rows=[x for x in rows if x["status"] in statuses]
     groups={}
     for x in rows:
         g=groups.setdefault(x["public_name"],[])
         g.append(x)
     tabs="".join(f'<a class="tab {"active" if k==filter_name else ""}" href="/admin/supplier-orders?filter={k}">{v}</a>' for k,v in FILTERS)
-    out=[f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Заказы поставщикам</title><link rel="stylesheet" href="/static/supplier-admin.css"></head><body><main><header><h1>📦 Заказы поставщикам</h1><nav>{tabs}<a class="tab" href="/admin/supplier-channels">⚙️ Каналы складов</a></nav></header>''']
+    out=[f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Заказы поставщикам</title><link rel="stylesheet" href="/static/supplier-admin.css"></head><body><main><header><h1>📦 Заказы поставщикам</h1><nav>{tabs}<a class="tab" href="/admin/warehouse-settlements">💱 Мои расчёты со складами</a><a class="tab" href="/admin/supplier-channels">⚙️ Каналы складов</a></nav></header>''']
     out.append(f'<div class="counter">Найдено: <b>{len(rows)}</b></div>')
     for wh,shipments in groups.items():
         lines=sum(int(x["item_lines"]) for x in shipments)
@@ -46,7 +54,14 @@ def render_card(order):
     if order["status"]=="assembled":
         tracking=f'''<div class="tracking"><h3>Отправка клиенту</h3><input id="carrier" placeholder="Перевозчик, например СДЭК"><input id="tracking" placeholder="Трек-номер"><button class="primary track" data-id="{order["id"]}">🚚 Сохранить трек и отметить отправленным</button></div>'''
     elif order.get("tracking_number"):
-        tracking=f'<div class="tracking done">🚚 {_e(order.get("carrier"))}: <b>{_e(order["tracking_number"])}</b></div>'
+        shipped_at=_dt(order.get("shipped_at"))
+        delivered_at=_dt(order.get("delivered_at"))
+        parts=[]
+        if shipped_at:
+            parts.append(f'<small>Отправлено: {_e(shipped_at)}</small>')
+        if delivered_at:
+            parts.append(f'<small>Доставлено: {_e(delivered_at)}</small>')
+        tracking=f'<div class="tracking done">🚚 {_e(order.get("carrier"))}: <b>{_e(order["tracking_number"])}</b>{"".join(parts)}</div>'
     return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{_e(order["client_order_id"])}</title><link rel="stylesheet" href="/static/supplier-admin.css"></head><body><main>
       <a class="back" href="/admin/supplier-orders">← Заказы поставщикам</a>
       <section class="card"><div class="wh-head"><h1>{_e(order["public_name"])}</h1><span>{_e(label)}</span></div>

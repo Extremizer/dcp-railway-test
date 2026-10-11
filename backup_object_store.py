@@ -10,6 +10,7 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 
 ENV_ENDPOINT = "EXTREMIZER_BACKUP_S3_ENDPOINT"
@@ -169,3 +170,190 @@ def backup_sqlite_to_bucket(
             "integrity_check": integrity,
             "roundtrip_sha256": remote_sha,
         }
+
+
+def _validated_object_key(object_key: str) -> str:
+    key = str(object_key or "").strip().lstrip("/")
+    if not key or key.endswith("/") or ".." in Path(key).parts:
+        raise ValueError("invalid object key")
+    return key
+
+
+def _normalized_metadata(metadata: dict[str, str] | None, *, sha256: str) -> dict[str, str]:
+    result = {"sha256": sha256}
+    for k, v in (metadata or {}).items():
+        key_name = str(k).strip().lower().replace("_", "-")
+        value = str(v).strip()
+        if key_name and value:
+            result[key_name] = value
+    return result
+
+
+def put_bytes_verified(
+    payload: bytes,
+    object_key: str,
+    *,
+    metadata: dict[str, str] | None = None,
+    content_type: str | None = None,
+) -> dict[str, Any]:
+    """Persist bytes and require size + metadata SHA + full round-trip SHA."""
+    data = bytes(payload)
+    key = _validated_object_key(object_key)
+    bucket = _required(ENV_BUCKET)
+    sha = hashlib.sha256(data).hexdigest()
+    meta = _normalized_metadata(metadata, sha256=sha)
+    kwargs: dict[str, Any] = {
+        "Bucket": bucket,
+        "Key": key,
+        "Body": data,
+        "Metadata": meta,
+    }
+    if content_type:
+        kwargs["ContentType"] = str(content_type)
+    s3 = _make_s3_client()
+    s3.put_object(**kwargs)
+
+    head = s3.head_object(Bucket=bucket, Key=key)
+    if int(head.get("ContentLength", -1)) != len(data):
+        raise RuntimeError("object size verification failed")
+    if (head.get("Metadata") or {}).get("sha256") != sha:
+        raise RuntimeError("object metadata SHA-256 verification failed")
+
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"]
+    remote_sha = _stream_sha256(body)
+    if remote_sha != sha:
+        raise RuntimeError(
+            f"object round-trip SHA-256 mismatch: local={sha} remote={remote_sha}"
+        )
+    return {
+        "bucket": bucket,
+        "key": key,
+        "uri": f"s3://{bucket}/{key}",
+        "size_bytes": len(data),
+        "sha256": sha,
+        "roundtrip_sha256": remote_sha,
+    }
+
+
+def upload_file_verified(
+    src_path: str | Path,
+    object_key: str,
+    *,
+    metadata: dict[str, str] | None = None,
+    content_type: str | None = None,
+) -> dict[str, Any]:
+    """Upload an ordinary file and verify a complete object-store round trip."""
+    src = Path(src_path)
+    if not src.is_file():
+        raise FileNotFoundError(src)
+    key = _validated_object_key(object_key)
+    bucket = _required(ENV_BUCKET)
+    size = src.stat().st_size
+    sha = sha256_file(src)
+    meta = _normalized_metadata(metadata, sha256=sha)
+    extra: dict[str, Any] = {"Metadata": meta}
+    if content_type:
+        extra["ContentType"] = str(content_type)
+
+    s3 = _make_s3_client()
+    s3.upload_file(str(src), bucket, key, ExtraArgs=extra)
+    head = s3.head_object(Bucket=bucket, Key=key)
+    if int(head.get("ContentLength", -1)) != size:
+        raise RuntimeError("object size verification failed")
+    if (head.get("Metadata") or {}).get("sha256") != sha:
+        raise RuntimeError("object metadata SHA-256 verification failed")
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"]
+    remote_sha = _stream_sha256(body)
+    if remote_sha != sha:
+        raise RuntimeError(
+            f"object round-trip SHA-256 mismatch: local={sha} remote={remote_sha}"
+        )
+    return {
+        "bucket": bucket,
+        "key": key,
+        "uri": f"s3://{bucket}/{key}",
+        "size_bytes": size,
+        "sha256": sha,
+        "roundtrip_sha256": remote_sha,
+    }
+
+
+def read_bytes_verified(object_key: str) -> bytes:
+    """Read an object and require the body to match SHA-256 metadata."""
+    key = _validated_object_key(object_key)
+    bucket = _required(ENV_BUCKET)
+    s3 = _make_s3_client()
+    try:
+        head = s3.head_object(Bucket=bucket, Key=key)
+        expected_size = int(head.get("ContentLength", -1))
+        expected_sha = str((head.get("Metadata") or {}).get("sha256") or "").strip()
+        response = s3.get_object(Bucket=bucket, Key=key)
+    except ClientError as exc:
+        code = str((exc.response.get("Error") or {}).get("Code") or "")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            raise FileNotFoundError(key) from exc
+        raise
+    data = response["Body"].read()
+    if expected_size >= 0 and len(data) != expected_size:
+        raise RuntimeError("object read size verification failed")
+    actual_sha = hashlib.sha256(data).hexdigest()
+    if not expected_sha:
+        raise RuntimeError("object is missing required SHA-256 metadata")
+    if actual_sha != expected_sha:
+        raise RuntimeError(
+            f"object read SHA-256 mismatch: expected={expected_sha} actual={actual_sha}"
+        )
+    return data
+
+
+def download_file_verified(object_key: str, destination: str | Path) -> dict[str, Any]:
+    """Materialize a verified object into a caller-provided temporary path."""
+    key = _validated_object_key(object_key)
+    dst = Path(destination)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    data = read_bytes_verified(key)
+    dst.write_bytes(data)
+    return {
+        "key": key,
+        "path": str(dst),
+        "size_bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    }
+
+
+def list_objects(prefix: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    """List newest objects under a prefix."""
+    clean_prefix = str(prefix or "").strip().lstrip("/")
+    if ".." in Path(clean_prefix or ".").parts:
+        raise ValueError("invalid object prefix")
+    bucket = _required(ENV_BUCKET)
+    s3 = _make_s3_client()
+    rows: list[dict[str, Any]] = []
+    token: str | None = None
+    wanted = max(1, int(limit))
+    while len(rows) < wanted:
+        kwargs: dict[str, Any] = {
+            "Bucket": bucket,
+            "Prefix": clean_prefix,
+            "MaxKeys": min(1000, wanted - len(rows)),
+        }
+        if token:
+            kwargs["ContinuationToken"] = token
+        page = s3.list_objects_v2(**kwargs)
+        for item in page.get("Contents") or []:
+            rows.append(
+                {
+                    "key": str(item.get("Key") or ""),
+                    "size_bytes": int(item.get("Size") or 0),
+                    "last_modified": item.get("LastModified"),
+                }
+            )
+            if len(rows) >= wanted:
+                break
+        if not page.get("IsTruncated") or len(rows) >= wanted:
+            break
+        token = str(page.get("NextContinuationToken") or "")
+        if not token:
+            break
+    rows.sort(key=lambda x: x.get("last_modified") or 0, reverse=True)
+    return rows[:wanted]

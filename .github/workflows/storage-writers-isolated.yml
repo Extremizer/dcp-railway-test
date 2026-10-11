@@ -1,0 +1,24 @@
+name: Storage Writers Isolated Regression
+on:
+  pull_request:
+    branches: [probnik-runtime-20261005]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  storage-writers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated storage dependencies
+        run: python -m pip install 'boto3>=1.35,<2' 'fastapi>=0.115,<1' 'python-multipart>=0.0.9,<1' 'openpyxl>=3.1,<4'
+      - name: Existing verified SQLite backup regression
+        run: python -B _storage_backup_writer_regression.py
+      - name: OEM object writer orchestration regression
+        run: python -B _storage_stage2_writers_regression.py
+      - name: Real XLSX and SQLite, migration, fail-safe object regression
+        run: python -B -m unittest -v test_storage_stage2_integration.py

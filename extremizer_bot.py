@@ -33,7 +33,7 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from html import escape
 from pathlib import Path
 
-from common_finance_contract import PaymentRoute, default_client_payment_route
+from common_finance_contract import FulfillmentRoute, PaymentRoute, default_client_payment_route
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import RetryAfter
 from telegram.constants import ParseMode
@@ -366,6 +366,7 @@ def init_orders_db() -> None:
             ("reference_weight_source", "TEXT"),
             ("offer_source", "TEXT NOT NULL DEFAULT 'usa'"),
             ("payment_route", "TEXT NOT NULL DEFAULT 'extremizer_balance'"),
+            ("fulfillment_route", "TEXT NOT NULL DEFAULT 'through_extremizer'"),
             ("warehouse_id", "INTEGER"),
             ("warehouse_public_name", "TEXT"),
             ("price_snapshot_rub", "REAL"),
@@ -1700,8 +1701,16 @@ def save_order_to_history(
         order_item_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(order_items)").fetchall()
         }
-        if "payment_route" not in order_item_columns:
-            raise RuntimeError("orders schema is not initialized for payment_route")
+        missing_route_columns = {
+            column
+            for column in ("payment_route", "fulfillment_route")
+            if column not in order_item_columns
+        }
+        if missing_route_columns:
+            raise RuntimeError(
+                "orders schema is not initialized for "
+                + ", ".join(sorted(missing_route_columns))
+            )
     origin = "web" if str(origin or "").strip().lower() == "web" else "telegram"
 
     total_usd = 0.0
@@ -1750,6 +1759,14 @@ def save_order_to_history(
             PaymentRoute(requested_payment_route).value
             if requested_payment_route
             else default_client_payment_route(offer_source).value
+        )
+        requested_fulfillment_route = str(
+            item.get("fulfillment_route") or ""
+        ).strip().lower()
+        fulfillment_route = (
+            FulfillmentRoute(requested_fulfillment_route).value
+            if requested_fulfillment_route
+            else FulfillmentRoute.THROUGH_EXTREMIZER.value
         )
         if customer_unit_rub is None:
             auto_pricing_complete = False
@@ -1812,6 +1829,7 @@ def save_order_to_history(
                 reference_weight_source,
                 offer_source,
                 payment_route,
+                fulfillment_route,
                 item.get("warehouse_id"),
                 item.get("warehouse_public_name"),
                 item.get("price_snapshot_rub"),
@@ -1934,6 +1952,7 @@ def save_order_to_history(
                     reference_weight_source,
                     offer_source,
                     payment_route,
+                    fulfillment_route,
                     warehouse_id,
                     warehouse_public_name,
                     price_snapshot_rub,
@@ -1997,6 +2016,7 @@ def save_order_to_history(
                         reference_weight_source,
                         offer_source,
                         payment_route,
+                        fulfillment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -2004,7 +2024,7 @@ def save_order_to_history(
                         selected_delivery_tariff,
                         delivery_selected_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item_order_id,
@@ -2028,6 +2048,7 @@ def save_order_to_history(
                         reference_weight_source,
                         offer_source,
                         payment_route,
+                        fulfillment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -2667,14 +2688,11 @@ def format_client_offer_card(result: dict) -> str:
 
     oem = _client_stock_oem(result)
     manufacturer = escape(str(result.get("manufacturer") or "—"))
-    lines = [f"🔎 <b>{escape(oem)}</b>", "", f"<b>{manufacturer}</b>"]
-
-    # A PARTIAL identity may come from warehouse/OEM-reference data.  Warehouse
-    # descriptions are supplier metadata and must never become a customer title.
-    if status == "FOUND":
-        clean_name = _client_safe_item_name(result.get("name"))
-        if clean_name and clean_name != "—":
-            lines.append(f"<i>{escape(clean_name)}</i>")
+    lines = [
+        f"🔎 <b>OEM:</b> <b>{escape(oem)} ({manufacturer})</b>",
+        "",
+        "🇺🇸 <b>склад США:</b>",
+    ]
 
     customer_price = customer_rub_price_from_dp(
         result.get("_dealer_price_usd"),
@@ -2682,17 +2700,16 @@ def format_client_offer_card(result: dict) -> str:
     )
     rrp_rub = customer_rub_price(result.get("price"))
 
-    lines.append("")
     if customer_price is not None:
         customer_price_text = format_rub(customer_price).replace(" ₽", "* ₽")
-        lines.append(f"🇺🇸 <b>склад США— {customer_price_text}</b>")
+        lines.append(f"Ваша цена — <b>{customer_price_text}</b>")
         if rrp_rub is not None and rrp_rub > customer_price:
-            lines.append(f"РРЦ: {format_rub(rrp_rub)}")
+            lines.append(f"РРЦ — <b>{format_rub(rrp_rub)}</b>")
             benefit_pct = (rrp_rub - customer_price) / rrp_rub * 100
-            lines.append(f"<b>Выгода:</b> {benefit_pct:.1f}%")
-        lines.append("* - в цену не входит стоимость доставки из штатов 🚚")
+            lines.append(f"Ваша выгода — <b>{benefit_pct:.1f}%</b>")
+        lines += ["", "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"]
     else:
-        lines.append("🇺🇸 <b>склад США— цена уточняется</b>")
+        lines.append("Цена сейчас недоступна. Попробуйте повторить запрос позже.")
 
     offers = []
     for row in warehouse_stock_service.client_stock_summary(oem, db_file=ORDERS_DB_FILE):
@@ -2704,17 +2721,17 @@ def format_client_offer_card(result: dict) -> str:
         offers.append(row)
 
     if offers:
-        lines += ["", "🇷🇺 <b>В НАЛИЧИИ В РФ</b>", ""]
+        lines += ["", "🇷🇺 <b>Наличие в РФ:</b>"]
         for row in offers:
             qty = float(row["available_quantity"])
             price = row.get("price_rub")
             warehouse = escape(str(row.get("public_name") or "склад"))
             if price is not None:
                 lines.append(
-                    f"<b>{warehouse} — {format_rub(float(price))} • {qty:g} шт.</b>"
+                    f"• <b>{warehouse}</b> — <b>{format_rub(float(price))}</b> (<b>{qty:g} шт.</b>)"
                 )
             else:
-                lines.append(f"<b>{warehouse} — {qty:g} шт. • цена уточняется</b>")
+                lines.append(f"• <b>{warehouse}</b> — (<b>{qty:g} шт.</b>)")
 
     return "\n".join(lines)
 
@@ -8608,7 +8625,15 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             owner=supplier_customer_notify.client_chat_id(ORDERS_DB_FILE,x["client_order_id"])
             if not update.effective_user or owner!=update.effective_user.id:
                 await query.answer("Это решение относится к другому заказу.",show_alert=True); return
-            x=supplier_shortages.decide_usa_quote(ORDERS_DB_FILE,sid,action=="accept")
+            from supplier_order_service import SupplierOrderService
+            svc=SupplierOrderService(ORDERS_DB_FILE)
+            x=svc.decide_usa_shortage_quote(
+                sid,
+                action=="accept",
+                actor_type="client",
+                actor_id=update.effective_user.id,
+                source="telegram_client",
+            )
         except Exception:
             log.exception("Could not apply USA shortage quote decision"); await query.answer("Не удалось сохранить решение.",show_alert=True); return
         await query.answer(); await query.edit_message_reply_markup(reply_markup=None)
@@ -8628,7 +8653,13 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             owner=supplier_customer_notify.client_chat_id(ORDERS_DB_FILE,x["client_order_id"])
             if not update.effective_user or owner!=update.effective_user.id:
                 await query.answer("Это решение относится к другому заказу.",show_alert=True); return
-            x=svc.decide_shortage(sid,decision)
+            x=svc.decide_shortage(
+                sid,
+                decision,
+                actor_type="client",
+                actor_id=update.effective_user.id,
+                source="telegram_client",
+            )
         except Exception:
             log.exception("Could not apply shortage decision")
             await query.answer("Не удалось сохранить решение. Попробуй позже.",show_alert=True); return
