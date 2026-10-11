@@ -1,0 +1,24 @@
+name: Bulk Customs Core Isolated Regression
+on:
+  pull_request:
+    branches: [probnik-runtime-20261005]
+permissions:
+  contents: read
+jobs:
+  bulk-customs-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Compile isolated modules and tests
+        run: >-
+          python -m py_compile bulk_order_contract.py bulk_order_parser.py
+          bulk_customs_schema.py customs_completeness.py test_bulk_order_parser.py
+          test_bulk_customs_schema.py test_customs_completeness.py
+      - name: Isolated standard library regression
+        run: >-
+          python -B -m unittest -v test_bulk_order_parser.py
+          test_bulk_customs_schema.py test_customs_completeness.py
