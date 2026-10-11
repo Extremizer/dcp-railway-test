@@ -444,6 +444,67 @@ def reserve_stock(
 
     with sqlite3.connect(db_file, timeout=30) as conn:
         conn.execute("BEGIN IMMEDIATE")
+
+        # Idempotent post-checkout recovery: if this exact order item already
+        # owns a live/historical fulfillment reservation, return it instead of
+        # attempting a second INSERT and tripping the unique guard.
+        if order_item_id is not None:
+            conn.row_factory = sqlite3.Row
+            existing_rows = conn.execute(
+                """
+                SELECT *
+                FROM warehouse_stock_reservations
+                WHERE order_item_id = ?
+                  AND status IN (
+                    'hold','reserved','committed','fulfilled','absorbed'
+                  )
+                ORDER BY id
+                """,
+                (int(order_item_id),),
+            ).fetchall()
+            if len(existing_rows) > 1:
+                conn.rollback()
+                raise RuntimeError(
+                    "multiple live reservations for one order item"
+                )
+            if existing_rows:
+                existing = existing_rows[0]
+                same = (
+                    int(existing["warehouse_id"]) == int(warehouse_id)
+                    and str(existing["oem"] or "").strip() == str(oem or "").strip()
+                    and abs(
+                        float(existing["quantity"] or 0.0) - float(quantity)
+                    ) < 1e-9
+                    and (
+                        order_id is None
+                        or existing["order_id"] is None
+                        or str(existing["order_id"]) == str(order_id)
+                    )
+                )
+                if same and existing["status"] in {
+                    "reserved","committed","fulfilled","absorbed"
+                }:
+                    reservation_id = int(existing["id"])
+                    existing_status = str(existing["status"])
+                    conn.rollback()
+                    current = get_available_stock(
+                        warehouse_id, oem, db_file
+                    )
+                    return {
+                        "ok": True,
+                        "reservation_id": reservation_id,
+                        "available_quantity": current["available_quantity"],
+                        "idempotent": True,
+                        "existing_status": existing_status,
+                    }
+                conn.rollback()
+                return {
+                    "ok": False,
+                    "reason": "reservation_conflict",
+                    "reservation_id": int(existing["id"]),
+                    "existing_status": str(existing["status"]),
+                }
+
         if not _warehouse_is_active(conn, warehouse_id):
             conn.rollback()
             return {
