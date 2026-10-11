@@ -394,7 +394,11 @@ class SupplierOrderService:
                 source=source,
             )
 
-        if status in ("shipped", "delivered"):
+        if status == "shipped":
+            raise ValueError(
+                "supplier order may become shipped only through tracking"
+            )
+        if status == "delivered":
             guard = supplier_shortages.lifecycle_state(
                 self.db_file, supplier_order_id
             )
@@ -737,17 +741,76 @@ class SupplierOrderService:
         carrier,
         tracking_number,
         client_sender=None,
+        *,
+        actor_type="admin",
+        actor_id=None,
+        source="supplier_admin",
     ):
-        repo.set_tracking(
-            self.db_file,
-            supplier_order_id,
-            carrier,
-            tracking_number,
-        )
-        order = self.get(supplier_order_id)
+        carrier=str(carrier or "").strip()
+        tracking_number=str(tracking_number or "").strip()
+        if not carrier or not tracking_number:
+            raise ValueError("carrier and tracking number required")
+
+        changed=False
+        with sqlite3.connect(self.db_file, timeout=30) as c:
+            c.row_factory=sqlite3.Row
+            c.execute("BEGIN IMMEDIATE")
+            row=c.execute(
+                """SELECT status,carrier,tracking_number
+                   FROM supplier_orders WHERE id=?""",
+                (supplier_order_id,),
+            ).fetchone()
+            if not row:
+                raise KeyError("supplier order not found")
+
+            existing_carrier=str(row["carrier"] or "").strip()
+            existing_tracking=str(row["tracking_number"] or "").strip()
+            if row["status"] in {"shipped","delivered"}:
+                if (
+                    existing_carrier==carrier
+                    and existing_tracking==tracking_number
+                ):
+                    c.rollback()
+                    return self.get(supplier_order_id)
+                raise ValueError(
+                    "supplier order already has another shipment tracking"
+                )
+            if row["status"]!="assembled":
+                raise ValueError(
+                    "tracking may be set only for assembled supplier order"
+                )
+
+            details={
+                "carrier":carrier,
+                "tracking_number":tracking_number,
+            }
+            fulfillment_slices.ship_supplier_order_conn(
+                c,
+                supplier_order_id,
+                actor_type=actor_type,
+                actor_id=actor_id,
+                source=source,
+                details=details,
+            )
+            result=repo.set_tracking_and_ship_conn(
+                c,
+                supplier_order_id,
+                carrier,
+                tracking_number,
+                details=f"{carrier} {tracking_number}",
+            )
+            changed=bool(result["changed"])
+            c.commit()
+
+        order=self.get(supplier_order_id)
+        if not changed:
+            return order
+
+        # Client notification is intentionally after the local shipment commit.
+        # A notification failure must never roll physical logistics backwards.
         try:
-            receipt = supplier_customer_notify.notify(
-                self, order, client_sender
+            receipt=supplier_customer_notify.notify(
+                self,order,client_sender
             )
             repo.add_event(
                 self.db_file,

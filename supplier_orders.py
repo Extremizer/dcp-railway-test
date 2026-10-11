@@ -197,19 +197,83 @@ def add_event(db_file,supplier_order_id,event_type,details=None):
         c.execute("""INSERT INTO supplier_order_events(supplier_order_id,event_type,details,created_at)
           VALUES(?,?,?,?)""",(supplier_order_id,event_type,details,_now()))
 
-def set_tracking(db_file, supplier_order_id, carrier, tracking_number):
-    carrier=(carrier or "").strip(); tracking_number=(tracking_number or "").strip()
+def set_tracking_and_ship_conn(
+    c,
+    supplier_order_id,
+    carrier,
+    tracking_number,
+    *,
+    details=None,
+):
+    """Persist carrier/tracking and mark shipped in the caller transaction."""
+    carrier=(carrier or "").strip()
+    tracking_number=(tracking_number or "").strip()
     if not carrier or not tracking_number:
         raise ValueError("carrier and tracking number required")
-    with sqlite3.connect(db_file) as c:
-        row=c.execute("SELECT status FROM supplier_orders WHERE id=?",(supplier_order_id,)).fetchone()
-        if not row:
-            raise KeyError("supplier order not found")
-        if row[0]!="assembled":
-            raise ValueError("tracking may be set only for assembled supplier order")
-        c.execute("UPDATE supplier_orders SET carrier=?,tracking_number=?,updated_at=? WHERE id=?",
-                  (carrier,tracking_number,_now(),supplier_order_id))
-    transition(db_file,supplier_order_id,"shipped",f"{carrier} {tracking_number}")
+
+    row=c.execute(
+        """SELECT status,carrier,tracking_number,shipped_at
+           FROM supplier_orders WHERE id=?""",
+        (supplier_order_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("supplier order not found")
+    status=str(row[0])
+    existing_carrier=str(row[1] or "").strip()
+    existing_tracking=str(row[2] or "").strip()
+
+    if status in {"shipped","delivered"}:
+        if existing_carrier==carrier and existing_tracking==tracking_number:
+            return {
+                "changed":False,
+                "status":status,
+                "carrier":existing_carrier,
+                "tracking_number":existing_tracking,
+                "shipped_at":row[3],
+            }
+        raise ValueError("supplier order already has another shipment tracking")
+
+    if status!="assembled":
+        raise ValueError("tracking may be set only for assembled supplier order")
+
+    # Recover safely from any historical partial tracking write only if the
+    # operator supplies exactly the same values. Never silently overwrite them.
+    if existing_carrier or existing_tracking:
+        if existing_carrier!=carrier or existing_tracking!=tracking_number:
+            raise ValueError("assembled supplier order already has another tracking")
+
+    now=_now()
+    c.execute(
+        """UPDATE supplier_orders
+           SET carrier=?,tracking_number=?,updated_at=?
+           WHERE id=?""",
+        (carrier,tracking_number,now,supplier_order_id),
+    )
+    transition(
+        None,
+        supplier_order_id,
+        "shipped",
+        details or f"{carrier} {tracking_number}",
+        conn=c,
+    )
+    row=c.execute(
+        """SELECT status,carrier,tracking_number,shipped_at
+           FROM supplier_orders WHERE id=?""",
+        (supplier_order_id,),
+    ).fetchone()
+    return {
+        "changed":True,
+        "status":row[0],
+        "carrier":row[1],
+        "tracking_number":row[2],
+        "shipped_at":row[3],
+    }
+
+
+def set_tracking(db_file, supplier_order_id, carrier, tracking_number):
+    raise ValueError(
+        "use SupplierOrderService.add_tracking so fulfillment stays atomic"
+    )
 
 def list_summary(db_file, statuses=None):
     statuses=list(statuses or [])

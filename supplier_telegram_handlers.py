@@ -29,7 +29,9 @@ def queue_screen(service):
 def card_screen(service,sid):
     x=service.get(sid); lines=[f"📦 <b>{escape(x['public_name'])}</b>",f"Запрос: <code>{escape(x['client_order_id'])}</code>",STATUS_LABELS.get(x["status"],x["status"]),"",f"<b>Получатель:</b> {escape(x.get('recipient_name') or '—')}",f"<b>Телефон:</b> {escape(x.get('recipient_phone') or '—')}",f"<b>Город:</b> {escape(x.get('recipient_city') or '—')}","", "<b>Позиции:</b>"]
     lines += [f"• <code>{escape(i['oem'])}</code> × {_qty(i['quantity'])}" for i in x["items"]]
-    if x.get("tracking_number"): lines+=["",f"🚚 {escape(x.get('carrier') or '')}: <code>{escape(x['tracking_number'])}</code>"]
+    if x.get("tracking_number"):
+        lines+=["",f"🚚 {escape(x.get('carrier') or '')}: <code>{escape(x['tracking_number'])}</code>"]
+        if x.get("shipped_at"): lines.append(f"Отправлено: {escape(x['shipped_at'])}")
     kb=[[InlineKeyboardButton(f"⚠️ {i['oem']} — проблема",callback_data=f"admin:supplierproblem:{sid}:{i['id']}")] for i in x["items"]]
     nxt=NEXT.get(x["status"])
     if nxt: kb.append([InlineKeyboardButton(nxt[1],callback_data=f"admin:supplierstatus:{sid}:{nxt[0]}")])
@@ -87,5 +89,13 @@ async def handle_tracking_text(update,context,service,raw_text):
     parts=raw_text.strip().split(maxsplit=1)
     if len(parts)!=2:
         await update.effective_message.reply_text("⚠️ Формат: <code>СДЭК 123456789</code>",parse_mode=ParseMode.HTML); return True
-    service.add_tracking(int(sid),parts[0],parts[1]); context.user_data.pop("supplier_tracking_order_id",None)
+    service.add_tracking(
+        int(sid),
+        parts[0],
+        parts[1],
+        actor_type="admin",
+        actor_id=(update.effective_user.id if update.effective_user else None),
+        source="telegram_admin",
+    )
+    context.user_data.pop("supplier_tracking_order_id",None)
     text,kb=card_screen(service,int(sid)); await update.effective_message.reply_text(text,parse_mode=ParseMode.HTML,reply_markup=kb); return True

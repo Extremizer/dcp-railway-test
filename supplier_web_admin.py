@@ -2,12 +2,20 @@
 # -*- coding: utf-8 -*-
 """Full WEB ADMIN UI for Supplier Orders. Business rules stay in service."""
 from __future__ import annotations
+from datetime import datetime
 from html import escape
 from supplier_orders import STATUS_LABELS
 
 FILTERS=(("all","Все"),("need_send","Нужно отправить"),("working","В работе"),("shipped","Отправлено"),("delivered","Доставлено"))
 
 def _e(v): return escape(str(v or ""))
+def _dt(v):
+    if not v:
+        return ""
+    try:
+        return datetime.fromisoformat(str(v)).strftime("%d.%m.%Y %H:%M")
+    except (TypeError,ValueError):
+        return str(v)
 def _filter_status(name):
     return {"need_send":{"not_sent"},"working":{"sent","confirmed","assembled"},"shipped":{"shipped"},"delivered":{"delivered"}}.get(name)
 
@@ -46,7 +54,9 @@ def render_card(order):
     if order["status"]=="assembled":
         tracking=f'''<div class="tracking"><h3>Отправка клиенту</h3><input id="carrier" placeholder="Перевозчик, например СДЭК"><input id="tracking" placeholder="Трек-номер"><button class="primary track" data-id="{order["id"]}">🚚 Сохранить трек и отметить отправленным</button></div>'''
     elif order.get("tracking_number"):
-        tracking=f'<div class="tracking done">🚚 {_e(order.get("carrier"))}: <b>{_e(order["tracking_number"])}</b></div>'
+        shipped_at=_dt(order.get("shipped_at"))
+        when=f'<small>Отправлено: {_e(shipped_at)}</small>' if shipped_at else ""
+        tracking=f'<div class="tracking done">🚚 {_e(order.get("carrier"))}: <b>{_e(order["tracking_number"])}</b>{when}</div>'
     return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>{_e(order["client_order_id"])}</title><link rel="stylesheet" href="/static/supplier-admin.css"></head><body><main>
       <a class="back" href="/admin/supplier-orders">← Заказы поставщикам</a>
       <section class="card"><div class="wh-head"><h1>{_e(order["public_name"])}</h1><span>{_e(label)}</span></div>

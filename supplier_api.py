@@ -64,6 +64,12 @@ def build_supplier_router(service):
         except (ValueError,KeyError) as e:raise HTTPException(409,str(e))
     @r.post("/{supplier_order_id}/tracking")
     def tracking(supplier_order_id:int,body:TrackingIn,admin=Depends(_web_admin)):
-        try:return service.add_tracking(supplier_order_id,body.carrier,body.tracking_number)
+        try:return service.add_tracking(
+            supplier_order_id,
+            body.carrier,
+            body.tracking_number,
+            actor_type="admin",
+            source="web_admin",
+        )
         except (ValueError,KeyError) as e:raise HTTPException(409,str(e))
     return r
