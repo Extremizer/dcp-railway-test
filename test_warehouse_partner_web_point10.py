@@ -18,7 +18,10 @@ _backup_stub.backup_sqlite_to_bucket=lambda *a,**k: {
 sys.modules.setdefault("backup_object_store",_backup_stub)
 
 TMP_ROOT=Path(tempfile.mkdtemp(prefix="warehouse_partner_web_p10_"))
+RAILWAY_DATA=TMP_ROOT/"railway-data"
+RAILWAY_DATA.mkdir(parents=True,exist_ok=True)
 DB=TMP_ROOT/"orders.db"
+os.environ["RAILWAY_VOLUME_MOUNT_PATH"]=str(RAILWAY_DATA)
 os.environ["EXTREMIZER_ORDERS_DB_FILE"]=str(DB)
 os.environ["EXTREMIZER_WEB_ADMIN_TOKEN"]="point10-test-admin-token"
 
