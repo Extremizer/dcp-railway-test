@@ -629,13 +629,53 @@ def confirm_hold(
         return True
 
 
+def commit_reservation_in_transaction(
+    conn: sqlite3.Connection,
+    reservation_id: int,
+) -> bool:
+    """Commit one hold/reservation inside the caller-owned transaction.
+
+    No commit/rollback is performed here. This is used when a business event
+    such as successful supplier delivery must stay atomic with the stock state.
+    """
+    now = _now()
+    row = conn.execute(
+        """
+        SELECT status, quantity, expires_at
+        FROM warehouse_stock_reservations
+        WHERE id = ?
+        """,
+        (reservation_id,),
+    ).fetchone()
+    if not row or row[0] not in {"reserved", "hold"}:
+        return False
+
+    if row[0] == "hold":
+        expires = _parse_dt(row[2])
+        if expires is not None and expires <= _now_dt():
+            return False
+
+    conn.execute(
+        """
+        UPDATE warehouse_stock_reservations
+        SET status = 'committed',
+            expires_at = NULL,
+            committed_at = ?
+        WHERE id = ?
+        """,
+        (now, reservation_id),
+    )
+    _log_event(conn, reservation_id, "committed", float(row[1]))
+    return True
+
+
 def commit_reservation(
     reservation_id: int,
     db_file: Path | str = DEFAULT_DB,
 ) -> bool:
     warehouse_store.init_warehouse_db(db_file)
-    now = _now()
     with sqlite3.connect(db_file) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             """
             SELECT status, quantity, expires_at
@@ -650,6 +690,7 @@ def commit_reservation(
         if row[0] == "hold":
             expires = _parse_dt(row[2])
             if expires is not None and expires <= _now_dt():
+                now = _now()
                 conn.execute(
                     """
                     UPDATE warehouse_stock_reservations
@@ -667,19 +708,10 @@ def commit_reservation(
                 conn.commit()
                 return False
 
-        conn.execute(
-            """
-            UPDATE warehouse_stock_reservations
-            SET status = 'committed',
-                expires_at = NULL,
-                committed_at = ?
-            WHERE id = ?
-            """,
-            (now, reservation_id),
-        )
-        _log_event(conn, reservation_id, "committed", float(row[1]))
-        conn.commit()
-        return True
+        ok = commit_reservation_in_transaction(conn, reservation_id)
+        if ok:
+            conn.commit()
+        return ok
 
 
 def release_reservation(

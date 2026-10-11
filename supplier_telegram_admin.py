@@ -4,6 +4,7 @@
 from __future__ import annotations
 from supplier_orders import STATUS_LABELS
 import supplier_admin_auth
+import supplier_delivery
 
 NEXT = {
  "not_sent":("sent","📤 Отправлен складу"),
@@ -42,5 +43,7 @@ def handle_action(service,supplier_order_id,action,*,admin_user_id=None,carrier=
             raise ValueError("tracking required before shipped")
         target=NEXT.get(current)
         if not target: raise ValueError("no next Telegram action")
+        if target[0]=="sent":
+            return supplier_delivery.send_one(service,supplier_order_id)
         return service.change_status(supplier_order_id,target[0],"telegram_admin")
     raise ValueError("unknown Telegram supplier action")
