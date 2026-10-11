@@ -4,6 +4,7 @@ import unittest
 
 
 APPROVED = "* - в цену не входит стоимость доставки из штатов 🚚"
+APPROVED_CARD = "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"
 
 
 class ClientDeliveryTextUnifiedTests(unittest.TestCase):
@@ -12,7 +13,7 @@ class ClientDeliveryTextUnifiedTests(unittest.TestCase):
 
         card_start = source.index("def format_client_offer_card")
         card_end = source.index("\ndef format_result", card_start)
-        self.assertIn(APPROVED, source[card_start:card_end])
+        self.assertIn(APPROVED_CARD, source[card_start:card_end])
 
         intro_start = source.index("def format_customer_delivery_intro")
         intro_end = source.index("\ndef format_customer_delivery_details", intro_start)
@@ -30,6 +31,9 @@ class ClientDeliveryTextUnifiedTests(unittest.TestCase):
 
     def test_probnik_has_no_legacy_delivery_phrases(self):
         source = Path(__file__).with_name("probnik_app.py").read_text(encoding="utf-8")
+        card_start = source.index("def _compose(")
+        card_end = source.index("\ndef _price_link_payload", card_start)
+        self.assertIn(APPROVED_CARD, source[card_start:card_end])
         self.assertIn("в цену не входит стоимость доставки из штатов", source)
         self.assertNotIn("Доставка в РФ оплачивается отдельно", source)
         self.assertNotIn("Доставка из США не входит в стоимость товаров", source)

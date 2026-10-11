@@ -29,4 +29,4 @@ jobs:
 
       - name: DCP health regression
         run: |
-          python -m unittest -v test_dcp_health_core.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_procenka_delivery_text.py test_client_delivery_text_unified.py
+          python -m unittest -v test_dcp_health_core.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_procenka_delivery_text.py test_client_delivery_text_unified.py test_client_offer_card.py
