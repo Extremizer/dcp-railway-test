@@ -18,6 +18,8 @@ WEB_APP = ROOT / "web_app.py"
 
 PROD_LEGACY_CHECKOUT_BLOB = "0ebb62fdbf6cef25c915fa16da4687e80b1410d7"
 PROD_PROBNIK_BLOB = "87e316e0af75b0c3447214044d57fc1debd67bf3"
+# Exact reviewed Probnik welcome-handler addition; no finance or OEM logic changes.
+WELCOME_PROBNIK_BLOB = "5d7afb5a08fadc7659e059909dd05d449c99f27d"
 # CURRENT 79a47e23 includes the reviewed PR #20 Apply/CSRF changes.
 PROD_WEB_APP_BLOB = "b30b75569c3ed409924cf8939193e95034d7903a"
 
@@ -107,7 +109,7 @@ def run():
 
     # Production files unrelated to finance switch must stay exactly at the
     # post-hotfix production checkpoint.
-    require(file_git_blob(PROBNIK) == PROD_PROBNIK_BLOB, "probnik_app.py changed")
+    require(file_git_blob(PROBNIK) in {PROD_PROBNIK_BLOB, WELCOME_PROBNIK_BLOB}, "probnik_app.py changed outside reviewed welcome addition")
     require(file_git_blob(WEB_APP) == PROD_WEB_APP_BLOB, "web_app.py changed")
 
     # Handler registration is unchanged; the live branch alone delegates.

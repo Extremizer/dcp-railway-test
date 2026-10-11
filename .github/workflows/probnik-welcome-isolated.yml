@@ -1,0 +1,21 @@
+name: Probnik Welcome Isolated Regression
+on:
+  pull_request:
+    paths:
+      - 'probnik_welcome.py'
+      - 'probnik_app.py'
+      - 'test_probnik_welcome.py'
+      - '.github/workflows/probnik-welcome-isolated.yml'
+  workflow_dispatch:
+jobs:
+  isolated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile isolated files
+        run: python -m py_compile probnik_welcome.py probnik_app.py test_probnik_welcome.py
+      - name: Run isolated welcome regression
+        run: python -m unittest -v test_probnik_welcome
