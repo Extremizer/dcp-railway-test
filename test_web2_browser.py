@@ -50,7 +50,14 @@ def mock_server():
 
     @app.get("/api/v1/oem/{oem}")
     def search(oem: str):
-        return mock_card(msrp=25000 if oem == "NO-MSRP" else 35000)
+        card = mock_card(msrp=25000 if oem == "NO-MSRP" else 35000)
+        if oem == "705402449":
+            card.update(manufacturer="Can-Am", oem=oem, requested_oem=oem)
+            card["offers"] = [{"key": "warehouse:3", "source": "warehouse", "warehouse_id": 3,
+                "label": "Склад 3", "price_rub": 38700, "available_quantity": 6, "can_add": True}]
+            card["stock"]["warehouses"] = [{"warehouse_id": 3, "warehouse": "Склад 3",
+                "quantity": 6, "price_rub": 38700}]
+        return card
 
     @app.get("/api/v1/oem/{oem}/stock")
     def stock(oem: str):
@@ -103,6 +110,42 @@ class Web2BrowserTests(unittest.TestCase):
             page.wait_for_url("https://t.me/Extremizer_bot")
             self.assertEqual(handoffs[0]["items"][0]["offer_source"], "warehouse")
             self.assertEqual(handoffs[0]["items"][0]["warehouse_id"], 1)
+            browser.close()
+
+
+    def test_multiple_oems_warehouses_totals_and_handoff(self):
+        with mock_server() as (base, handoffs), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto(base + "/web2")
+            page.locator("#oemInput").fill("417300574")
+            page.locator("#searchForm button").click()
+            page.locator("#product").wait_for(state="visible")
+            page.locator('button[data-offer-key="usa"]').click()
+            page.locator("#cartClose").click()
+            page.locator('button[data-offer-key="warehouse:1"]').click()
+            page.locator("#cartClose").click()
+            page.locator("#oemInput").fill("705402449")
+            page.locator("#searchForm button").click()
+            page.locator("#productOem").get_by_text("705402449").wait_for()
+            page.locator('button[data-offer-key="warehouse:3"]').click()
+            self.assertEqual(page.locator("#cartCount").inner_text(), "3")
+            self.assertIn("102", page.locator("#cartTotal").inner_text())
+            page.locator('[data-plus="2"]').click()
+            self.assertEqual(page.locator("#cartCount").inner_text(), "4")
+            self.assertIn("141", page.locator("#cartTotal").inner_text())
+            page.locator('[data-minus="2"]').click()
+            page.locator('[data-remove="0"]').click()
+            self.assertEqual(page.locator("#cartCount").inner_text(), "2")
+            self.assertIn("73", page.locator("#cartTotal").inner_text())
+            page.route("https://t.me/**", lambda route: route.fulfill(status=200, body="mock"))
+            page.locator("#telegramButton").click()
+            page.wait_for_url("https://t.me/Extremizer_bot")
+            self.assertEqual(
+                [(x["oem"], x["offer_source"], x["warehouse_id"], x["qty"])
+                 for x in handoffs[0]["items"]],
+                [("417300574", "warehouse", 1, 1),
+                 ("705402449", "warehouse", 3, 1)])
             browser.close()
 
     def test_msrp_hidden_when_below_customer_price(self):
