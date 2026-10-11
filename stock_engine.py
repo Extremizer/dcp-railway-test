@@ -669,6 +669,109 @@ def commit_reservation_in_transaction(
     return True
 
 
+def reconcile_supplier_confirmation_in_transaction(
+    conn: sqlite3.Connection,
+    reservation_id: int,
+    confirmed_quantity: float,
+) -> dict[str, Any]:
+    """Reconcile a sent RF reservation with the quantity the warehouse confirmed.
+
+    For a still-blocking reservation the blocked quantity is reduced to the
+    confirmed quantity. Zero confirmation releases it. Absorbed rows are
+    historical/non-blocking and are never re-opened or added back to stock.
+    """
+    confirmed = float(confirmed_quantity)
+    if confirmed < 0:
+        raise ValueError("confirmed quantity must not be negative")
+    row = conn.execute(
+        """
+        SELECT status, quantity
+        FROM warehouse_stock_reservations
+        WHERE id = ?
+        """,
+        (reservation_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("warehouse reservation not found")
+    status = str(row[0])
+    old_qty = float(row[1] or 0)
+    if confirmed > old_qty + 1e-9:
+        raise ValueError("confirmed quantity exceeds reserved quantity")
+
+    now = _now()
+    if status == "absorbed":
+        _log_event(
+            conn,
+            reservation_id,
+            "supplier_quantity_confirmed_after_absorption",
+            confirmed,
+            {"previous_quantity": old_qty, "confirmed_quantity": confirmed},
+        )
+        return {
+            "reservation_id": reservation_id,
+            "status": status,
+            "previous_quantity": old_qty,
+            "confirmed_quantity": confirmed,
+            "blocking_quantity": 0.0,
+        }
+
+    if status not in {"reserved", "committed"}:
+        raise ValueError(
+            f"reservation is not reconcilable after supplier confirmation: {status}"
+        )
+
+    if confirmed <= 0:
+        conn.execute(
+            """
+            UPDATE warehouse_stock_reservations
+            SET status = 'released', released_at = ?
+            WHERE id = ?
+            """,
+            (now, reservation_id),
+        )
+        _log_event(
+            conn,
+            reservation_id,
+            "released_after_supplier_zero_confirmation",
+            0.0,
+            {"previous_quantity": old_qty},
+        )
+        return {
+            "reservation_id": reservation_id,
+            "status": "released",
+            "previous_quantity": old_qty,
+            "confirmed_quantity": 0.0,
+            "blocking_quantity": 0.0,
+        }
+
+    next_status = "committed"
+    conn.execute(
+        """
+        UPDATE warehouse_stock_reservations
+        SET quantity = ?,
+            status = 'committed',
+            expires_at = NULL,
+            committed_at = COALESCE(committed_at, ?)
+        WHERE id = ?
+        """,
+        (confirmed, now, reservation_id),
+    )
+    _log_event(
+        conn,
+        reservation_id,
+        "supplier_quantity_confirmed",
+        confirmed,
+        {"previous_quantity": old_qty, "confirmed_quantity": confirmed},
+    )
+    return {
+        "reservation_id": reservation_id,
+        "status": next_status,
+        "previous_quantity": old_qty,
+        "confirmed_quantity": confirmed,
+        "blocking_quantity": confirmed,
+    }
+
+
 def commit_reservation(
     reservation_id: int,
     db_file: Path | str = DEFAULT_DB,

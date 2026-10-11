@@ -44,7 +44,16 @@ async def handle_callback(update,context,service,data):
         ids=[int(x) for x in data.rsplit(":",1)[1].split(",") if x]
         supplier_delivery.send_batch(service,ids); text,kb=queue_screen(service); await q.edit_message_text(text,parse_mode=ParseMode.HTML,reply_markup=kb); return
     if data.startswith("admin:supplierstatus:"):
-        _,_,sid,status=data.split(":",3); supplier_delivery.send_one(service,int(sid)) if status=="sent" else service.change_status(int(sid),status,"telegram_admin")
+        _,_,sid,status=data.split(":",3)
+        if status=="sent":
+            supplier_delivery.send_one(service,int(sid))
+        else:
+            service.change_status(
+                int(sid),status,"telegram_admin",
+                actor_type="admin",
+                actor_id=(update.effective_user.id if update.effective_user else None),
+                source="telegram_admin",
+            )
         text,kb=card_screen(service,int(sid)); await q.edit_message_text(text,parse_mode=ParseMode.HTML,reply_markup=kb); return
     if data.startswith("admin:supplierproblem:"):
         _,_,sid,item_id=data.split(":",3); sid=int(sid); item_id=int(item_id); order=service.get(sid); item=next(i for i in order["items"] if int(i["id"])==item_id)
@@ -62,7 +71,13 @@ async def handle_tracking_text(update,context,service,raw_text):
         try:q=float(raw_text.strip().replace(",","."))
         except ValueError:
             await update.effective_message.reply_text("⚠️ Введи только количество числом."); return True
-        try:x=service.report_item_problem(problem["sid"],problem["item_id"],q)
+        try:
+            x=service.report_item_problem(
+                problem["sid"],problem["item_id"],q,
+                actor_type="admin",
+                actor_id=(update.effective_user.id if update.effective_user else None),
+                source="telegram_admin",
+            )
         except ValueError as e:
             await update.effective_message.reply_text("⚠️ "+str(e)); return True
         context.user_data.pop("supplier_problem",None)

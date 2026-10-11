@@ -45,5 +45,5 @@ def handle_action(service,supplier_order_id,action,*,admin_user_id=None,carrier=
         if not target: raise ValueError("no next Telegram action")
         if target[0]=="sent":
             return supplier_delivery.send_one(service,supplier_order_id)
-        return service.change_status(supplier_order_id,target[0],"telegram_admin")
+        return service.change_status(supplier_order_id,target[0],"telegram_admin",actor_type="admin",actor_id=admin_user_id,source="telegram_admin")
     raise ValueError("unknown Telegram supplier action")

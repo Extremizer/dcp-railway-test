@@ -56,11 +56,11 @@ def build_supplier_router(service):
         except (ValueError,RuntimeError,KeyError) as e:raise HTTPException(409,str(e))
     @r.post("/{supplier_order_id}/status")
     def status(supplier_order_id:int,body:StatusIn,admin=Depends(_web_admin)):
-        try:return service.change_status(supplier_order_id,body.status,body.details)
+        try:return service.change_status(supplier_order_id,body.status,body.details,actor_type="admin",source="web_admin")
         except (ValueError,KeyError) as e:raise HTTPException(409,str(e))
     @r.post("/{supplier_order_id}/problem")
     def problem(supplier_order_id:int,body:ProblemIn,admin=Depends(_web_admin)):
-        try:return service.report_item_problem(supplier_order_id,body.item_id,body.confirmed_qty)
+        try:return service.report_item_problem(supplier_order_id,body.item_id,body.confirmed_qty,actor_type="admin",source="web_admin")
         except (ValueError,KeyError) as e:raise HTTPException(409,str(e))
     @r.post("/{supplier_order_id}/tracking")
     def tracking(supplier_order_id:int,body:TrackingIn,admin=Depends(_web_admin)):

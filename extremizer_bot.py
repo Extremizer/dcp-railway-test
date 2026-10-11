@@ -8608,7 +8608,15 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             owner=supplier_customer_notify.client_chat_id(ORDERS_DB_FILE,x["client_order_id"])
             if not update.effective_user or owner!=update.effective_user.id:
                 await query.answer("Это решение относится к другому заказу.",show_alert=True); return
-            x=supplier_shortages.decide_usa_quote(ORDERS_DB_FILE,sid,action=="accept")
+            from supplier_order_service import SupplierOrderService
+            svc=SupplierOrderService(ORDERS_DB_FILE)
+            x=svc.decide_usa_shortage_quote(
+                sid,
+                action=="accept",
+                actor_type="client",
+                actor_id=update.effective_user.id,
+                source="telegram_client",
+            )
         except Exception:
             log.exception("Could not apply USA shortage quote decision"); await query.answer("Не удалось сохранить решение.",show_alert=True); return
         await query.answer(); await query.edit_message_reply_markup(reply_markup=None)
@@ -8628,7 +8636,13 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             owner=supplier_customer_notify.client_chat_id(ORDERS_DB_FILE,x["client_order_id"])
             if not update.effective_user or owner!=update.effective_user.id:
                 await query.answer("Это решение относится к другому заказу.",show_alert=True); return
-            x=svc.decide_shortage(sid,decision)
+            x=svc.decide_shortage(
+                sid,
+                decision,
+                actor_type="client",
+                actor_id=update.effective_user.id,
+                source="telegram_client",
+            )
         except Exception:
             log.exception("Could not apply shortage decision")
             await query.answer("Не удалось сохранить решение. Попробуй позже.",show_alert=True); return

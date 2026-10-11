@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime
 
-STATUSES = ("not_sent","sent","confirmed","assembled","shipped","delivered")
+STATUSES = ("not_sent","sent","confirmed","assembled","shipped","delivered","cancelled")
 STATUS_LABELS = {
     "not_sent":"🟡 Не отправлен",
     "sent":"📤 Отправлен складу",
@@ -17,11 +17,12 @@ STATUS_LABELS = {
     "assembled":"📦 Собран",
     "shipped":"🚚 Отправлен клиенту",
     "delivered":"✅ Доставлен",
+    "cancelled":"❌ Закрыт без отгрузки",
 }
 ALLOWED = {
-    "not_sent":{"sent"},
-    "sent":{"confirmed"},
-    "confirmed":{"assembled"},
+    "not_sent":{"sent","cancelled"},
+    "sent":{"confirmed","cancelled"},
+    "confirmed":{"assembled","cancelled"},
     "assembled":{"shipped"},
     "shipped":{"delivered"},
     "delivered":set(),
@@ -41,7 +42,7 @@ def init_supplier_orders_db(db_file):
           delivery_method TEXT, delivery_address TEXT, pickup_point TEXT,
           carrier TEXT, tracking_number TEXT,
           sent_at TEXT, confirmed_at TEXT, assembled_at TEXT,
-          shipped_at TEXT, delivered_at TEXT,
+          shipped_at TEXT, delivered_at TEXT, cancelled_at TEXT,
           created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
           UNIQUE(client_order_id, warehouse_id),
           FOREIGN KEY(warehouse_id) REFERENCES warehouses(id))""")
@@ -69,6 +70,9 @@ def init_supplier_orders_db(db_file):
           accepted_at TEXT,
           finished_at TEXT,
           FOREIGN KEY(supplier_order_id) REFERENCES supplier_orders(id))""")
+        columns={row[1] for row in c.execute("PRAGMA table_info(supplier_orders)")}
+        if "cancelled_at" not in columns:
+            c.execute("ALTER TABLE supplier_orders ADD COLUMN cancelled_at TEXT")
         c.execute("CREATE INDEX IF NOT EXISTS idx_supplier_orders_status_wh ON supplier_orders(status,warehouse_id)")
         c.execute("CREATE INDEX IF NOT EXISTS idx_supplier_orders_client ON supplier_orders(client_order_id)")
         c.execute("""CREATE UNIQUE INDEX IF NOT EXISTS idx_supplier_delivery_attempt_active
@@ -110,7 +114,8 @@ def _transition_conn(c, supplier_order_id, new_status, details=None):
     if new_status not in ALLOWED.get(old,set()):
         raise ValueError(f"invalid supplier transition {old} -> {new_status}")
     col={"sent":"sent_at","confirmed":"confirmed_at","assembled":"assembled_at",
-         "shipped":"shipped_at","delivered":"delivered_at"}[new_status]
+         "shipped":"shipped_at","delivered":"delivered_at",
+         "cancelled":"cancelled_at"}[new_status]
     c.execute(f"UPDATE supplier_orders SET status=?, {col}=?, updated_at=? WHERE id=?",
               (new_status,now,now,supplier_order_id))
     c.execute("""INSERT INTO supplier_order_events(
