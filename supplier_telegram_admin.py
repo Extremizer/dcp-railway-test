@@ -4,6 +4,7 @@
 from __future__ import annotations
 from supplier_orders import STATUS_LABELS
 import supplier_admin_auth
+import supplier_delivery
 
 NEXT = {
  "not_sent":("sent","📤 Отправлен складу"),
@@ -28,19 +29,31 @@ def card_text(service,supplier_order_id):
     lines += [f"<code>{i['oem']}</code> × {i['quantity']:g}" for i in x["items"]]
     lines += ["",f"Получатель: {x.get('recipient_name') or '—'}",f"Телефон: {x.get('recipient_phone') or '—'}",
               f"Город: {x.get('recipient_city') or '—'}"]
-    if x.get("tracking_number"): lines.append(f"🚚 {x.get('carrier')}: <code>{x['tracking_number']}</code>")
+    if x.get("tracking_number"):
+        lines.append(f"🚚 {x.get('carrier')}: <code>{x['tracking_number']}</code>")
+        if x.get("shipped_at"): lines.append(f"Отправлено: {x['shipped_at']}")
+        if x.get("delivered_at"): lines.append(f"Доставлено: {x['delivered_at']}")
     return "\n".join(lines)
 
 def handle_action(service,supplier_order_id,action,*,admin_user_id=None,carrier=None,tracking=None):
     """Thin handler target: auth + delegation, no duplicated business rules."""
     supplier_admin_auth.require_telegram_admin(admin_user_id)
     if action=="tracking":
-        return service.add_tracking(supplier_order_id,carrier,tracking)
+        return service.add_tracking(
+            supplier_order_id,
+            carrier,
+            tracking,
+            actor_type="admin",
+            actor_id=admin_user_id,
+            source="telegram_admin",
+        )
     if action=="next":
         current=service.get(supplier_order_id)["status"]
         if current=="assembled":
             raise ValueError("tracking required before shipped")
         target=NEXT.get(current)
         if not target: raise ValueError("no next Telegram action")
-        return service.change_status(supplier_order_id,target[0],"telegram_admin")
+        if target[0]=="sent":
+            return supplier_delivery.send_one(service,supplier_order_id)
+        return service.change_status(supplier_order_id,target[0],"telegram_admin",actor_type="admin",actor_id=admin_user_id,source="telegram_admin")
     raise ValueError("unknown Telegram supplier action")

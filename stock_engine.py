@@ -243,17 +243,23 @@ def _reservation_blocks(
     if status == "reserved":
         return True
 
-    if status != "committed":
+    if status not in {"committed", "fulfilled"}:
         return False
 
     if sync_mode == "manual":
         return True
 
-    committed_at = _parse_dt(row["committed_at"])
-    if committed_at is None or snapshot_observed_at is None:
+    effective_at = _parse_dt(
+        row["fulfilled_at"] if status == "fulfilled"
+        else row["committed_at"]
+    )
+    if effective_at is None or snapshot_observed_at is None:
         return True
 
-    return committed_at > snapshot_observed_at
+    # Equality is intentionally still blocking: lifecycle timestamps are
+    # second-granularity, so a snapshot created earlier in the same second
+    # must not be mistaken for a post-reservation/post-delivery snapshot.
+    return effective_at >= snapshot_observed_at
 
 
 def _blocking_quantity(
@@ -271,7 +277,7 @@ def _blocking_quantity(
         FROM warehouse_stock_reservations
         WHERE warehouse_id = ?
           AND oem = ?
-          AND status IN ('hold', 'reserved', 'committed')
+          AND status IN ('hold', 'reserved', 'committed', 'fulfilled')
         ORDER BY created_at, id
         """,
         (warehouse_id, oem.strip()),
@@ -438,6 +444,67 @@ def reserve_stock(
 
     with sqlite3.connect(db_file, timeout=30) as conn:
         conn.execute("BEGIN IMMEDIATE")
+
+        # Idempotent post-checkout recovery: if this exact order item already
+        # owns a live/historical fulfillment reservation, return it instead of
+        # attempting a second INSERT and tripping the unique guard.
+        if order_item_id is not None:
+            conn.row_factory = sqlite3.Row
+            existing_rows = conn.execute(
+                """
+                SELECT *
+                FROM warehouse_stock_reservations
+                WHERE order_item_id = ?
+                  AND status IN (
+                    'hold','reserved','committed','fulfilled','absorbed'
+                  )
+                ORDER BY id
+                """,
+                (int(order_item_id),),
+            ).fetchall()
+            if len(existing_rows) > 1:
+                conn.rollback()
+                raise RuntimeError(
+                    "multiple live reservations for one order item"
+                )
+            if existing_rows:
+                existing = existing_rows[0]
+                same = (
+                    int(existing["warehouse_id"]) == int(warehouse_id)
+                    and str(existing["oem"] or "").strip() == str(oem or "").strip()
+                    and abs(
+                        float(existing["quantity"] or 0.0) - float(quantity)
+                    ) < 1e-9
+                    and (
+                        order_id is None
+                        or existing["order_id"] is None
+                        or str(existing["order_id"]) == str(order_id)
+                    )
+                )
+                if same and existing["status"] in {
+                    "reserved","committed","fulfilled","absorbed"
+                }:
+                    reservation_id = int(existing["id"])
+                    existing_status = str(existing["status"])
+                    conn.rollback()
+                    current = get_available_stock(
+                        warehouse_id, oem, db_file
+                    )
+                    return {
+                        "ok": True,
+                        "reservation_id": reservation_id,
+                        "available_quantity": current["available_quantity"],
+                        "idempotent": True,
+                        "existing_status": existing_status,
+                    }
+                conn.rollback()
+                return {
+                    "ok": False,
+                    "reason": "reservation_conflict",
+                    "reservation_id": int(existing["id"]),
+                    "existing_status": str(existing["status"]),
+                }
+
         if not _warehouse_is_active(conn, warehouse_id):
             conn.rollback()
             return {
@@ -629,13 +696,224 @@ def confirm_hold(
         return True
 
 
+def commit_reservation_in_transaction(
+    conn: sqlite3.Connection,
+    reservation_id: int,
+) -> bool:
+    """Commit one hold/reservation inside the caller-owned transaction.
+
+    No commit/rollback is performed here. This is used when a business event
+    such as successful supplier delivery must stay atomic with the stock state.
+    """
+    now = _now()
+    row = conn.execute(
+        """
+        SELECT status, quantity, expires_at
+        FROM warehouse_stock_reservations
+        WHERE id = ?
+        """,
+        (reservation_id,),
+    ).fetchone()
+    if not row or row[0] not in {"reserved", "hold"}:
+        return False
+
+    if row[0] == "hold":
+        expires = _parse_dt(row[2])
+        if expires is not None and expires <= _now_dt():
+            return False
+
+    conn.execute(
+        """
+        UPDATE warehouse_stock_reservations
+        SET status = 'committed',
+            expires_at = NULL,
+            committed_at = ?
+        WHERE id = ?
+        """,
+        (now, reservation_id),
+    )
+    _log_event(conn, reservation_id, "committed", float(row[1]))
+    return True
+
+
+def reconcile_supplier_confirmation_in_transaction(
+    conn: sqlite3.Connection,
+    reservation_id: int,
+    confirmed_quantity: float,
+) -> dict[str, Any]:
+    """Reconcile a sent RF reservation with the quantity the warehouse confirmed.
+
+    For a still-blocking reservation the blocked quantity is reduced to the
+    confirmed quantity. Zero confirmation releases it. Absorbed rows are
+    historical/non-blocking and are never re-opened or added back to stock.
+    """
+    confirmed = float(confirmed_quantity)
+    if confirmed < 0:
+        raise ValueError("confirmed quantity must not be negative")
+    row = conn.execute(
+        """
+        SELECT status, quantity
+        FROM warehouse_stock_reservations
+        WHERE id = ?
+        """,
+        (reservation_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("warehouse reservation not found")
+    status = str(row[0])
+    old_qty = float(row[1] or 0)
+    if confirmed > old_qty + 1e-9:
+        raise ValueError("confirmed quantity exceeds reserved quantity")
+
+    now = _now()
+    if status == "absorbed":
+        _log_event(
+            conn,
+            reservation_id,
+            "supplier_quantity_confirmed_after_absorption",
+            confirmed,
+            {"previous_quantity": old_qty, "confirmed_quantity": confirmed},
+        )
+        return {
+            "reservation_id": reservation_id,
+            "status": status,
+            "previous_quantity": old_qty,
+            "confirmed_quantity": confirmed,
+            "blocking_quantity": 0.0,
+        }
+
+    if status not in {"reserved", "committed"}:
+        raise ValueError(
+            f"reservation is not reconcilable after supplier confirmation: {status}"
+        )
+
+    if confirmed <= 0:
+        conn.execute(
+            """
+            UPDATE warehouse_stock_reservations
+            SET status = 'released', released_at = ?
+            WHERE id = ?
+            """,
+            (now, reservation_id),
+        )
+        _log_event(
+            conn,
+            reservation_id,
+            "released_after_supplier_zero_confirmation",
+            0.0,
+            {"previous_quantity": old_qty},
+        )
+        return {
+            "reservation_id": reservation_id,
+            "status": "released",
+            "previous_quantity": old_qty,
+            "confirmed_quantity": 0.0,
+            "blocking_quantity": 0.0,
+        }
+
+    next_status = "committed"
+    conn.execute(
+        """
+        UPDATE warehouse_stock_reservations
+        SET quantity = ?,
+            status = 'committed',
+            expires_at = NULL,
+            committed_at = COALESCE(committed_at, ?)
+        WHERE id = ?
+        """,
+        (confirmed, now, reservation_id),
+    )
+    _log_event(
+        conn,
+        reservation_id,
+        "supplier_quantity_confirmed",
+        confirmed,
+        {"previous_quantity": old_qty, "confirmed_quantity": confirmed},
+    )
+    return {
+        "reservation_id": reservation_id,
+        "status": next_status,
+        "previous_quantity": old_qty,
+        "confirmed_quantity": confirmed,
+        "blocking_quantity": confirmed,
+    }
+
+
+def finalize_delivered_reservation_in_transaction(
+    conn: sqlite3.Connection,
+    reservation_id: int,
+) -> dict[str, Any]:
+    """Close an RF reservation after physical delivery to the client.
+
+    committed/reserved become fulfilled. Fulfilled is terminal for the order
+    but still blocks stale manual stock until an authoritative source snapshot
+    absorbs it. Already absorbed rows stay untouched.
+    """
+    row = conn.execute(
+        """
+        SELECT status, quantity, fulfilled_at, absorbed_at
+        FROM warehouse_stock_reservations
+        WHERE id = ?
+        """,
+        (reservation_id,),
+    ).fetchone()
+    if not row:
+        raise KeyError("warehouse reservation not found")
+
+    status = str(row[0])
+    quantity = float(row[1] or 0)
+    if status == "absorbed":
+        return {
+            "reservation_id": reservation_id,
+            "status": "absorbed",
+            "quantity": quantity,
+            "changed": False,
+        }
+    if status == "fulfilled":
+        return {
+            "reservation_id": reservation_id,
+            "status": "fulfilled",
+            "quantity": quantity,
+            "changed": False,
+        }
+    if status not in {"reserved", "committed"}:
+        raise ValueError(
+            f"reservation is not deliverable: {status}"
+        )
+
+    now = _now()
+    conn.execute(
+        """
+        UPDATE warehouse_stock_reservations
+        SET status = 'fulfilled',
+            expires_at = NULL,
+            fulfilled_at = COALESCE(fulfilled_at, ?)
+        WHERE id = ?
+        """,
+        (now, reservation_id),
+    )
+    _log_event(
+        conn,
+        reservation_id,
+        "fulfilled_delivered",
+        quantity,
+        {"previous_status": status},
+    )
+    return {
+        "reservation_id": reservation_id,
+        "status": "fulfilled",
+        "quantity": quantity,
+        "changed": True,
+    }
+
+
 def commit_reservation(
     reservation_id: int,
     db_file: Path | str = DEFAULT_DB,
 ) -> bool:
     warehouse_store.init_warehouse_db(db_file)
-    now = _now()
     with sqlite3.connect(db_file) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
             """
             SELECT status, quantity, expires_at
@@ -650,6 +928,7 @@ def commit_reservation(
         if row[0] == "hold":
             expires = _parse_dt(row[2])
             if expires is not None and expires <= _now_dt():
+                now = _now()
                 conn.execute(
                     """
                     UPDATE warehouse_stock_reservations
@@ -667,19 +946,10 @@ def commit_reservation(
                 conn.commit()
                 return False
 
-        conn.execute(
-            """
-            UPDATE warehouse_stock_reservations
-            SET status = 'committed',
-                expires_at = NULL,
-                committed_at = ?
-            WHERE id = ?
-            """,
-            (now, reservation_id),
-        )
-        _log_event(conn, reservation_id, "committed", float(row[1]))
-        conn.commit()
-        return True
+        ok = commit_reservation_in_transaction(conn, reservation_id)
+        if ok:
+            conn.commit()
+        return ok
 
 
 def release_reservation(
@@ -735,7 +1005,7 @@ def reconcile_snapshot(
         if _warehouse_sync_mode(conn, warehouse_id) != "snapshot_absorbs_committed":
             return 0
 
-        params: list[Any] = [warehouse_id, observed_at]
+        params: list[Any] = [warehouse_id, observed_at, observed_at]
         oem_clause = ""
         normalized = [str(x).strip() for x in (oems or []) if str(x).strip()]
         if normalized:
@@ -746,12 +1016,22 @@ def reconcile_snapshot(
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             f"""
-            SELECT id, quantity
+            SELECT id, quantity, status
             FROM warehouse_stock_reservations
             WHERE warehouse_id = ?
-              AND status = 'committed'
-              AND committed_at IS NOT NULL
-              AND committed_at <= ?
+              AND (
+                (
+                  status = 'committed'
+                  AND committed_at IS NOT NULL
+                  AND committed_at < ?
+                )
+                OR
+                (
+                  status = 'fulfilled'
+                  AND fulfilled_at IS NOT NULL
+                  AND fulfilled_at < ?
+                )
+              )
               {oem_clause}
             """,
             params,

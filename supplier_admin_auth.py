@@ -150,3 +150,48 @@ def verify_apply_csrf_token(session_cookie: str, order_id: str, token: str) -> b
     except PermissionError:
         return False
     return hmac.compare_digest(str(token), expected)
+
+def issue_scoped_admin_csrf_token(
+    session_cookie: str,
+    scope: str,
+    subject: str,
+) -> str:
+    """Bind a stateless CSRF token to admin session + action scope + subject."""
+    if not verify_web_admin_session(session_cookie):
+        raise PermissionError("invalid WEB admin session")
+    scope = str(scope or "").strip()
+    subject = str(subject or "").strip()
+    if not scope or not subject:
+        raise ValueError("csrf scope and subject required")
+    payload = (
+        "admin-action-v1\0"
+        + str(session_cookie)
+        + "\0"
+        + scope
+        + "\0"
+        + subject
+    ).encode("utf-8")
+    return hmac.new(
+        _web_admin_session_key(), payload, hashlib.sha256
+    ).hexdigest()
+
+
+def verify_scoped_admin_csrf_token(
+    session_cookie: str,
+    scope: str,
+    subject: str,
+    token: str,
+) -> bool:
+    if (
+        not isinstance(token, str)
+        or len(token) != 64
+        or any(c not in "0123456789abcdef" for c in token)
+    ):
+        return False
+    try:
+        expected = issue_scoped_admin_csrf_token(
+            session_cookie, scope, subject
+        )
+    except (PermissionError, ValueError):
+        return False
+    return hmac.compare_digest(token, expected)

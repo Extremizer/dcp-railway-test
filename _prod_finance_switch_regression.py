@@ -16,15 +16,19 @@ ROOT = Path(__file__).resolve().parent
 BOT = ROOT / "extremizer_bot.py"
 PROBNIK = ROOT / "probnik_app.py"
 WEB_APP = ROOT / "web_app.py"
+ENGINE = ROOT / "oemixibot_finance.py"
+CLIENT_FINANCE = ROOT / "client_finance_adapter.py"
+PARTNER_SETTLEMENTS = ROOT / "warehouse_partner_settlements.py"
 
 PROD_LEGACY_CHECKOUT_BLOB = "0ebb62fdbf6cef25c915fa16da4687e80b1410d7"
 PROD_PROBNIK_BLOB = "87e316e0af75b0c3447214044d57fc1debd67bf3"
-# Derived from that same verified baseline after excluding ONLY the _compose
-# body. Its signature and every other byte (pricing/cache/live/access/startup)
-# stay pinned. PR #25 changes presentation; it does not rebaseline finance.
+# PR #25 guard: every Probnik byte outside _compose remains pinned to the
+# original verified RC1 checkpoint. UI-only _compose changes are allowed.
 PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB = "b4b2dd134c45619ccb13168eedca61cf278f69be"
-# CURRENT 79a47e23 includes the reviewed PR #20 Apply/CSRF changes.
-PROD_WEB_APP_BLOB = "b30b75569c3ed409924cf8939193e95034d7903a"
+
+# PR #28 guards: exact reviewed WEB ADMIN candidate and proven FinanceEngine.
+POINT10_WEB_APP_BLOB = "c6c7ae46b313220c44e4ee726948f65543c287c7"
+PROVEN_ENGINE_SHA256 = "17546efcea563f0f3e1942947f085e31ed6d88a9ee6401e2c18147171f57d863"
 
 SWITCH_PREFIX = """    if data == "checkout_confirm":
         return await _shadow_checkout_confirm(
@@ -129,10 +133,18 @@ async def adapter_order_regression():
 def run():
     source = BOT.read_text(encoding="utf-8")
 
-    # Only the reviewed customer-card body is allowed to change. All non-UI
-    # Probnik bytes and the complete WEB file retain the original checkpoint.
+    # Combined #25 + #28 release guards. Probnik may differ only inside the
+    # approved _compose UI body; WEB ADMIN and FinanceEngine remain exact.
     require_probnik_non_ui_unchanged(PROBNIK.read_text(encoding="utf-8"))
-    require(file_git_blob(WEB_APP) == PROD_WEB_APP_BLOB, "web_app.py changed")
+    require(
+        file_git_blob(WEB_APP) == POINT10_WEB_APP_BLOB,
+        "web_app.py differs from approved Point 10 candidate",
+    )
+    require(
+        hashlib.sha256(ENGINE.read_bytes()).hexdigest()
+        == PROVEN_ENGINE_SHA256,
+        "FinanceEngine SHA changed",
+    )
 
     # Handler registration is unchanged; the live branch alone delegates.
     require(
@@ -189,8 +201,19 @@ def run():
     save_end = source.index("\n\nMANUFACTURERS = [", save_start)
     save = source[save_start:save_end]
     require("conn: sqlite3.Connection | None = None" in save, "shared conn missing")
-    require("PaymentRoute(requested_payment_route).value" in save, "route validation missing")
+    require(
+        "PaymentRoute(requested_payment_route).value" in save,
+        "payment route validation missing",
+    )
     require("payment_route," in save, "payment route snapshot missing")
+    require(
+        "FulfillmentRoute(requested_fulfillment_route).value" in save,
+        "fulfillment route validation missing",
+    )
+    require(
+        "fulfillment_route," in save,
+        "fulfillment route snapshot missing",
+    )
 
     init_start = source.index("def init_orders_db() -> None:")
     init_end = source.index("\ndef ", init_start + 20)
@@ -199,6 +222,26 @@ def run():
         '("payment_route", "TEXT NOT NULL DEFAULT \'extremizer_balance\'")'
         in init,
         "payment_route migration missing",
+    )
+    require(
+        '("fulfillment_route", "TEXT NOT NULL DEFAULT \'through_extremizer\'")'
+        in init,
+        "fulfillment_route migration missing",
+    )
+
+    client_finance_source = CLIENT_FINANCE.read_text(encoding="utf-8")
+    require(
+        "requires_client_wallet_charge(line.payment_route)"
+        in client_finance_source,
+        "direct_partner exclusion from client charge changed",
+    )
+    require(
+        "warehouse_partner_settlements" not in client_finance_source,
+        "partner settlement leaked into ClientFinanceAdapter",
+    )
+    require(
+        PARTNER_SETTLEMENTS.exists(),
+        "independent warehouse partner settlement module missing",
     )
 
     require(
@@ -216,9 +259,11 @@ def run():
     print("PASS production finance switch port regression")
     print("legacy production checkout body: byte-identical")
     print("probnik_app.py outside _compose body: byte-identical to original checkpoint")
-    print("web_app.py: byte-identical")
+    print("web_app.py: exact Point 10 candidate blob")
+    print("FinanceEngine SHA256:", PROVEN_ENGINE_SHA256)
     print("pricing analytics preserved after core commit")
-    print("shared transaction + payment_route migration present")
+    print("shared transaction + payment_route + fulfillment_route present")
+    print("partner settlement ledger independent from ClientFinanceAdapter")
 
 
 if __name__ == "__main__":

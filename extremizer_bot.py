@@ -33,7 +33,7 @@ from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from html import escape
 from pathlib import Path
 
-from common_finance_contract import PaymentRoute, default_client_payment_route
+from common_finance_contract import FulfillmentRoute, PaymentRoute, default_client_payment_route
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import RetryAfter
 from telegram.constants import ParseMode
@@ -366,6 +366,7 @@ def init_orders_db() -> None:
             ("reference_weight_source", "TEXT"),
             ("offer_source", "TEXT NOT NULL DEFAULT 'usa'"),
             ("payment_route", "TEXT NOT NULL DEFAULT 'extremizer_balance'"),
+            ("fulfillment_route", "TEXT NOT NULL DEFAULT 'through_extremizer'"),
             ("warehouse_id", "INTEGER"),
             ("warehouse_public_name", "TEXT"),
             ("price_snapshot_rub", "REAL"),
@@ -1700,8 +1701,16 @@ def save_order_to_history(
         order_item_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(order_items)").fetchall()
         }
-        if "payment_route" not in order_item_columns:
-            raise RuntimeError("orders schema is not initialized for payment_route")
+        missing_route_columns = {
+            column
+            for column in ("payment_route", "fulfillment_route")
+            if column not in order_item_columns
+        }
+        if missing_route_columns:
+            raise RuntimeError(
+                "orders schema is not initialized for "
+                + ", ".join(sorted(missing_route_columns))
+            )
     origin = "web" if str(origin or "").strip().lower() == "web" else "telegram"
 
     total_usd = 0.0
@@ -1750,6 +1759,14 @@ def save_order_to_history(
             PaymentRoute(requested_payment_route).value
             if requested_payment_route
             else default_client_payment_route(offer_source).value
+        )
+        requested_fulfillment_route = str(
+            item.get("fulfillment_route") or ""
+        ).strip().lower()
+        fulfillment_route = (
+            FulfillmentRoute(requested_fulfillment_route).value
+            if requested_fulfillment_route
+            else FulfillmentRoute.THROUGH_EXTREMIZER.value
         )
         if customer_unit_rub is None:
             auto_pricing_complete = False
@@ -1812,6 +1829,7 @@ def save_order_to_history(
                 reference_weight_source,
                 offer_source,
                 payment_route,
+                fulfillment_route,
                 item.get("warehouse_id"),
                 item.get("warehouse_public_name"),
                 item.get("price_snapshot_rub"),
@@ -1934,6 +1952,7 @@ def save_order_to_history(
                     reference_weight_source,
                     offer_source,
                     payment_route,
+                    fulfillment_route,
                     warehouse_id,
                     warehouse_public_name,
                     price_snapshot_rub,
@@ -1997,6 +2016,7 @@ def save_order_to_history(
                         reference_weight_source,
                         offer_source,
                         payment_route,
+                        fulfillment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -2004,7 +2024,7 @@ def save_order_to_history(
                         selected_delivery_tariff,
                         delivery_selected_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item_order_id,
@@ -2028,6 +2048,7 @@ def save_order_to_history(
                         reference_weight_source,
                         offer_source,
                         payment_route,
+                        fulfillment_route,
                         warehouse_id,
                         warehouse_public_name,
                         price_snapshot_rub,
@@ -8604,7 +8625,15 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             owner=supplier_customer_notify.client_chat_id(ORDERS_DB_FILE,x["client_order_id"])
             if not update.effective_user or owner!=update.effective_user.id:
                 await query.answer("Это решение относится к другому заказу.",show_alert=True); return
-            x=supplier_shortages.decide_usa_quote(ORDERS_DB_FILE,sid,action=="accept")
+            from supplier_order_service import SupplierOrderService
+            svc=SupplierOrderService(ORDERS_DB_FILE)
+            x=svc.decide_usa_shortage_quote(
+                sid,
+                action=="accept",
+                actor_type="client",
+                actor_id=update.effective_user.id,
+                source="telegram_client",
+            )
         except Exception:
             log.exception("Could not apply USA shortage quote decision"); await query.answer("Не удалось сохранить решение.",show_alert=True); return
         await query.answer(); await query.edit_message_reply_markup(reply_markup=None)
@@ -8624,7 +8653,13 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             owner=supplier_customer_notify.client_chat_id(ORDERS_DB_FILE,x["client_order_id"])
             if not update.effective_user or owner!=update.effective_user.id:
                 await query.answer("Это решение относится к другому заказу.",show_alert=True); return
-            x=svc.decide_shortage(sid,decision)
+            x=svc.decide_shortage(
+                sid,
+                decision,
+                actor_type="client",
+                actor_id=update.effective_user.id,
+                source="telegram_client",
+            )
         except Exception:
             log.exception("Could not apply shortage decision")
             await query.answer("Не удалось сохранить решение. Попробуй позже.",show_alert=True); return

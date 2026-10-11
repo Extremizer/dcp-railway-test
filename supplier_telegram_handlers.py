@@ -29,7 +29,10 @@ def queue_screen(service):
 def card_screen(service,sid):
     x=service.get(sid); lines=[f"📦 <b>{escape(x['public_name'])}</b>",f"Запрос: <code>{escape(x['client_order_id'])}</code>",STATUS_LABELS.get(x["status"],x["status"]),"",f"<b>Получатель:</b> {escape(x.get('recipient_name') or '—')}",f"<b>Телефон:</b> {escape(x.get('recipient_phone') or '—')}",f"<b>Город:</b> {escape(x.get('recipient_city') or '—')}","", "<b>Позиции:</b>"]
     lines += [f"• <code>{escape(i['oem'])}</code> × {_qty(i['quantity'])}" for i in x["items"]]
-    if x.get("tracking_number"): lines+=["",f"🚚 {escape(x.get('carrier') or '')}: <code>{escape(x['tracking_number'])}</code>"]
+    if x.get("tracking_number"):
+        lines+=["",f"🚚 {escape(x.get('carrier') or '')}: <code>{escape(x['tracking_number'])}</code>"]
+        if x.get("shipped_at"): lines.append(f"Отправлено: {escape(x['shipped_at'])}")
+        if x.get("delivered_at"): lines.append(f"Доставлено: {escape(x['delivered_at'])}")
     kb=[[InlineKeyboardButton(f"⚠️ {i['oem']} — проблема",callback_data=f"admin:supplierproblem:{sid}:{i['id']}")] for i in x["items"]]
     nxt=NEXT.get(x["status"])
     if nxt: kb.append([InlineKeyboardButton(nxt[1],callback_data=f"admin:supplierstatus:{sid}:{nxt[0]}")])
@@ -44,7 +47,16 @@ async def handle_callback(update,context,service,data):
         ids=[int(x) for x in data.rsplit(":",1)[1].split(",") if x]
         supplier_delivery.send_batch(service,ids); text,kb=queue_screen(service); await q.edit_message_text(text,parse_mode=ParseMode.HTML,reply_markup=kb); return
     if data.startswith("admin:supplierstatus:"):
-        _,_,sid,status=data.split(":",3); supplier_delivery.send_one(service,int(sid)) if status=="sent" else service.change_status(int(sid),status,"telegram_admin")
+        _,_,sid,status=data.split(":",3)
+        if status=="sent":
+            supplier_delivery.send_one(service,int(sid))
+        else:
+            service.change_status(
+                int(sid),status,"telegram_admin",
+                actor_type="admin",
+                actor_id=(update.effective_user.id if update.effective_user else None),
+                source="telegram_admin",
+            )
         text,kb=card_screen(service,int(sid)); await q.edit_message_text(text,parse_mode=ParseMode.HTML,reply_markup=kb); return
     if data.startswith("admin:supplierproblem:"):
         _,_,sid,item_id=data.split(":",3); sid=int(sid); item_id=int(item_id); order=service.get(sid); item=next(i for i in order["items"] if int(i["id"])==item_id)
@@ -62,7 +74,13 @@ async def handle_tracking_text(update,context,service,raw_text):
         try:q=float(raw_text.strip().replace(",","."))
         except ValueError:
             await update.effective_message.reply_text("⚠️ Введи только количество числом."); return True
-        try:x=service.report_item_problem(problem["sid"],problem["item_id"],q)
+        try:
+            x=service.report_item_problem(
+                problem["sid"],problem["item_id"],q,
+                actor_type="admin",
+                actor_id=(update.effective_user.id if update.effective_user else None),
+                source="telegram_admin",
+            )
         except ValueError as e:
             await update.effective_message.reply_text("⚠️ "+str(e)); return True
         context.user_data.pop("supplier_problem",None)
@@ -72,5 +90,13 @@ async def handle_tracking_text(update,context,service,raw_text):
     parts=raw_text.strip().split(maxsplit=1)
     if len(parts)!=2:
         await update.effective_message.reply_text("⚠️ Формат: <code>СДЭК 123456789</code>",parse_mode=ParseMode.HTML); return True
-    service.add_tracking(int(sid),parts[0],parts[1]); context.user_data.pop("supplier_tracking_order_id",None)
+    service.add_tracking(
+        int(sid),
+        parts[0],
+        parts[1],
+        actor_type="admin",
+        actor_id=(update.effective_user.id if update.effective_user else None),
+        source="telegram_admin",
+    )
+    context.user_data.pop("supplier_tracking_order_id",None)
     text,kb=card_screen(service,int(sid)); await update.effective_message.reply_text(text,parse_mode=ParseMode.HTML,reply_markup=kb); return True
