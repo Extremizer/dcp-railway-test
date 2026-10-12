@@ -33,6 +33,24 @@ class DealerPriceResult:
     http_status: int | None = None
     authorized: bool | None = None
     message: str | None = None
+    msrp_usd: float | None = None
+    msrp_source: str | None = None
+
+
+def _public_msrp_fields(node: str) -> str:
+    """Only explicit retail metadata on the exact matched item, never .dbl."""
+    return f"""msrp_text: {node}.getAttribute('data-retail')
+      ||{node}.querySelector('input[name="retail"]')?.value
+      ||{node}.querySelector('input[name="msrp"]')?.value
+      ||{node}.querySelector('[data-retail]')?.getAttribute('data-retail')||null,
+      msrp_source:'dcp_public_form_metadata',"""
+
+
+def _msrp_kwargs(data: dict) -> dict:
+    from client_offer_metadata import verified_msrp
+    value = verified_msrp(_money(data.get("msrp_text")), data.get("msrp_source"))
+    return {"msrp_usd": value,
+            "msrp_source": "dcp_public_form_metadata" if value is not None else None}
 
 def _parts_slug(manufacturer: str) -> tuple[str, str]:
     canonical = finder.manufacturer_alias(manufacturer)
@@ -46,8 +64,8 @@ def _parts_slug(manufacturer: str) -> tuple[str, str]:
 def _normalize_oem(oem: str) -> str:
     return finder.normalize_oem(oem)
 
-def _tabs() -> list[dict[str, Any]]:
-    with urllib.request.urlopen(CDP_HTTP + "/json", timeout=5) as response:
+def _tabs(*, timeout_seconds: float = 5) -> list[dict[str, Any]]:
+    with urllib.request.urlopen(CDP_HTTP + "/json", timeout=timeout_seconds) as response:
         return json.load(response)
 
 def _pick_authorized_dcp_tab() -> dict[str, Any]:
@@ -66,10 +84,10 @@ def _pick_authorized_dcp_tab() -> dict[str, Any]:
     usable.sort(key=lambda x: ("partsearch" not in str(x.get("url") or ""),))
     return usable[0]
 
-def _runtime_evaluate(tab: dict[str, Any], expression: str) -> Any:
+def _runtime_evaluate(tab: dict[str, Any], expression: str, *, timeout_seconds: float = 20) -> Any:
     ws = websocket.create_connection(
         str(tab["webSocketDebuggerUrl"]),
-        timeout=20,
+        timeout=timeout_seconds,
         suppress_origin=True,
     )
     try:
@@ -161,6 +179,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
             matched_sku:form.querySelector('input[name="sku"]')?.value||null,
             current_oem:current,
             name:form.querySelector('.c1a')?.textContent.trim()||null,
+            {_public_msrp_fields('form')}
             dealer_price_text:form.querySelector('.c2 .dbl')?.textContent.trim()
               ||form.querySelector('.dbl')?.textContent.trim()||null
           }};
@@ -181,6 +200,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                     matched_sku=live_data.get("matched_sku"),
                     current_oem=live_data.get("current_oem"),
                     name=live_data.get("name"),
+                    **_msrp_kwargs(live_data),
                     dealer_price_usd=live_price,
                     source=f"live_dom:#add_{normalized_oem} .c2 .dbl",
                     http_status=200,
@@ -219,6 +239,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
         matched_sku:form.querySelector('input[name="sku"]')?.value||null,
         current_oem:current,
         name:form.querySelector('.c1a')?.textContent.trim()||null,
+        {_public_msrp_fields('form')}
         dealer_price_text:form.querySelector('.c2 .dbl')?.textContent.trim()||null
       }};
     }})()"""
@@ -249,6 +270,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                     current_oem:form.querySelector('.itemnumnew')?.textContent.trim()
                       ||form.querySelector('.itemnum')?.textContent.trim()||null,
                     name:form.querySelector('.c1a')?.textContent.trim()||null,
+                    {_public_msrp_fields('form')}
                     dealer_price_text:form.querySelector('.c2 .dbl')?.textContent.trim()
                       ||form.querySelector('.dbl')?.textContent.trim()||null}};
                 }})()""")
@@ -260,6 +282,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                             matched_sku=probe.get("matched_sku"),
                             current_oem=probe.get("current_oem"),
                             name=probe.get("name"), dealer_price_usd=price,
+                            **_msrp_kwargs(probe),
                             source=f"live_dom_after_navigation:#add_{normalized_oem} .c2 .dbl",
                             http_status=200, authorized=True,
                         )
@@ -362,6 +385,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
             matched_sku:sku,
             current_oem:sku,
             name:name,
+            {_public_msrp_fields('exact')}
             dealer_price_text:price
           }};
         }})()"""
@@ -396,6 +420,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                 current_oem=accessories_data.get("current_oem"),
                 name=accessories_data.get("name"),
                 dealer_price_usd=accessories_price,
+                **_msrp_kwargs(accessories_data),
                 source="catalog_product:exact_sku_price",
                 http_status=accessories_data.get("http_status"),
                 authorized=True,
@@ -428,6 +453,7 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
         current_oem=data.get("current_oem"),
         name=data.get("name"),
         dealer_price_usd=price,
+        **_msrp_kwargs(data),
         source=f"server_html:#add_{normalized_oem} .c2 .dbl",
         http_status=data.get("http_status"),
         authorized=True,

@@ -28,6 +28,8 @@ PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB = "b4b2dd134c45619ccb13168eedca61cf278f69be"
 
 # PR #28 guards: exact reviewed WEB ADMIN candidate and proven FinanceEngine.
 POINT10_WEB_APP_BLOB = "c6c7ae46b313220c44e4ee726948f65543c287c7"
+# Preserve every approved #28 byte outside the additive DP result model/handler.
+POINT10_WEB_OUTSIDE_DP_RESULT_BLOB = "ef6f69f7c73d8fb0e25135d608a4061fc3ceaf38"
 PROVEN_ENGINE_SHA256 = "17546efcea563f0f3e1942947f085e31ed6d88a9ee6401e2c18147171f57d863"
 
 SWITCH_PREFIX = """    if data == "checkout_confirm":
@@ -74,6 +76,25 @@ def require_probnik_non_ui_unchanged(source: str):
         probnik_outside_compose_blob(source) == PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB,
         "probnik_app.py changed outside _compose body",
     )
+
+
+def web_outside_dp_result_blob(source: str) -> str:
+    retail_registration = ("from retail_sync import register_routes as _register_retail_routes\n"
+                           "_register_retail_routes(app, core, _require_dp_sync_signature)\n\n\n")
+    require(source.count(retail_registration) == 1, "exact signed Retail registration required")
+    source = source.replace(retail_registration, "", 1)
+    targets = [n for n in ast.parse(source).body
+               if getattr(n, "name", None) in {"DPSyncResultRequest", "dp_sync_result"}]
+    require(len(targets) == 2, "exact DP result model/handler required")
+    lines = source.splitlines(keepends=True)
+    for target in reversed(targets):
+        del lines[target.body[0].lineno - 1:target.end_lineno]
+    return git_blob_sha("".join(lines))
+
+
+def require_web_admin_unchanged(source: str):
+    require(web_outside_dp_result_blob(source) == POINT10_WEB_OUTSIDE_DP_RESULT_BLOB,
+            "web_app.py changed outside DP result model/handler")
 
 
 async def adapter_order_regression():
@@ -134,12 +155,9 @@ def run():
     source = BOT.read_text(encoding="utf-8")
 
     # Combined #25 + #28 release guards. Probnik may differ only inside the
-    # approved _compose UI body; WEB ADMIN and FinanceEngine remain exact.
+    # approved _compose UI body; all WEB ADMIN bytes and FinanceEngine remain exact.
     require_probnik_non_ui_unchanged(PROBNIK.read_text(encoding="utf-8"))
-    require(
-        file_git_blob(WEB_APP) == POINT10_WEB_APP_BLOB,
-        "web_app.py differs from approved Point 10 candidate",
-    )
+    require_web_admin_unchanged(WEB_APP.read_text(encoding="utf-8"))
     require(
         hashlib.sha256(ENGINE.read_bytes()).hexdigest()
         == PROVEN_ENGINE_SHA256,
@@ -259,7 +277,7 @@ def run():
     print("PASS production finance switch port regression")
     print("legacy production checkout body: byte-identical")
     print("probnik_app.py outside _compose body: byte-identical to original checkpoint")
-    print("web_app.py: exact Point 10 candidate blob")
+    print("web_app.py outside DP result model/handler and exact Retail registration: byte-identical to Point 10 candidate")
     print("FinanceEngine SHA256:", PROVEN_ENGINE_SHA256)
     print("pricing analytics preserved after core commit")
     print("shared transaction + payment_route + fulfillment_route present")

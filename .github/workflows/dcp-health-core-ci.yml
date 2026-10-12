@@ -27,6 +27,10 @@ jobs:
         run: |
           python -m py_compile             dp_live_health.py             dp_live_bridge.py             web_app.py             oemixibot_dcp_price.py             extremizer_bot.py             dp_sync_agent.py             test_dcp_health_core.py             test_procenka_dp_bridge.py             test_procenka_partial_parts_bridge.py             test_procenka_delivery_text.py             test_client_delivery_text_unified.py
 
+      - name: Install isolated host and source test dependencies
+        run: python -m pip install -r requirements.txt httpx
+
       - name: DCP health regression
         run: |
-          python -m unittest -v test_dcp_health_core.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_procenka_delivery_text.py test_client_delivery_text_unified.py test_client_offer_card.py
+          python -m unittest -v test_dcp_health_core.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_procenka_delivery_text.py test_client_delivery_text_unified.py test_client_offer_card.py test_client_offer_metadata.py test_wops_retail.py
+          python -B -m unittest -v test_web2_host_integration.py

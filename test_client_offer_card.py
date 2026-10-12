@@ -65,7 +65,8 @@ class ClientOfferCardTests(unittest.TestCase):
         self.probnik = load_functions(
             "probnik_app.py", ["_compose", "_format_rub", "_customer_price_rub"],
             {"escape": escape, "math": math, "PRICE_COEFFICIENT": 1.34,
-             "USD_RUB_RATE": 100.0},
+             "USD_RUB_RATE": 100.0, "ORDERS_DB": "unused.db",
+             "DP_MAX_AGE_HOURS": 168},
         )
 
     def cards(self, rrp=35000, dp=217.9, status="FOUND", manufacturer="Ski-Doo"):
