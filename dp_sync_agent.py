@@ -183,6 +183,8 @@ def _finish(request_id: str, result: dict) -> None:
         "request_id": request_id,
         "status": status,
         "dealer_price_usd": result.get("dealer_price_usd"),
+        "msrp_usd": result.get("msrp_usd"),
+        "msrp_source": result.get("msrp_source"),
         "source": result.get("source"),
         "current_oem": result.get("current_oem"),
         "name": result.get("name"),

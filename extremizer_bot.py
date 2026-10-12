@@ -2682,6 +2682,8 @@ def _client_safe_item_name(value) -> str:
 
 
 def format_client_offer_card(result: dict) -> str:
+    from client_offer_metadata import cached_rrp_rub, msrp_rub, reference_weight_lines as offer_weight_lines
+
     status = str(result.get("status") or "").upper()
     if status not in {"FOUND", "PARTIAL"}:
         return format_result(result)
@@ -2698,7 +2700,12 @@ def format_client_offer_card(result: dict) -> str:
         result.get("_dealer_price_usd"),
         rate=load_usd_rub_rate(),
     )
-    rrp_rub = customer_rub_price(result.get("price"))
+    rrp_rub = msrp_rub(result.get("price"), load_usd_rub_rate())
+    if rrp_rub is None:
+        rrp_rub = cached_rrp_rub(
+            ORDERS_DB_FILE, result.get("manufacturer"),
+            [oem, result.get("query_oem")], load_usd_rub_rate(),
+        )
 
     if customer_price is not None:
         customer_price_text = format_rub(customer_price).replace(" ₽", "* ₽")
@@ -2710,6 +2717,10 @@ def format_client_offer_card(result: dict) -> str:
         lines += ["", "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"]
     else:
         lines.append("Цена сейчас недоступна. Попробуйте повторить запрос позже.")
+
+    weight = offer_weight_lines(oem, result.get("query_oem"))
+    if weight:
+        lines.extend(["", *weight])
 
     offers = []
     for row in warehouse_stock_service.client_stock_summary(oem, db_file=ORDERS_DB_FILE):

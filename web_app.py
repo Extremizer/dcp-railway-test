@@ -516,6 +516,8 @@ class DPSyncResultRequest(BaseModel):
     request_id: str
     status: str
     dealer_price_usd: float | None = None
+    msrp_usd: float | None = None
+    msrp_source: str | None = None
     source: str | None = None
     current_oem: str | None = None
     name: str | None = None
@@ -957,6 +959,8 @@ def dp_sync_result(
     x_dp_sync_ts: str | None = Header(default=None),
     x_dp_sync_sig: str | None = Header(default=None),
 ) -> dict[str, Any]:
+    from client_offer_metadata import verified_msrp
+
     path = "/internal/dp-sync/result"
     _require_dp_sync_signature(path, x_dp_sync_ts, x_dp_sync_sig)
 
@@ -970,13 +974,15 @@ def dp_sync_result(
 
     with sqlite3.connect(core.ORDERS_DB_FILE) as conn:
         row = conn.execute(
-            """SELECT manufacturer,oem
+            """SELECT manufacturer,oem,status
                  FROM dp_live_requests
                 WHERE request_id=?""",
             (payload.request_id,),
         ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail={"code": "request_not_found"})
+    if row[2] not in {"pending", "claimed"}:
+        raise HTTPException(status_code=409, detail={"code": "request_already_finished"})
 
     requested_manufacturer = str(row[0] or "").strip()
     requested_oem = core.finder.normalize_oem(str(row[1] or "").strip())
@@ -1017,6 +1023,17 @@ def dp_sync_result(
                 verified_at,
             )
         source = verified_source
+        msrp = verified_msrp(payload.msrp_usd, payload.msrp_source)
+        if msrp is not None:
+            if not core.upsert_oem_catalog_cache(
+                {"status": "FOUND", "manufacturer": manufacturer,
+                 "item_sku": current_oem or requested_oem,
+                 "query_oem": requested_oem, "name": name, "catalog": "Parts"},
+                msrp, source_kind="verified_local_dcp_public_msrp",
+                source_ref=f"local_dcp_public_form:{manufacturer}:{current_oem or requested_oem}",
+                verified_at=verified_at,
+            ):
+                raise HTTPException(status_code=500, detail={"code": "msrp_cache_write_failed"})
         if requested_manufacturer == "__AUTO__":
             # Persist only identity verified by the trusted local DCP agent.
             with sqlite3.connect(core.ORDERS_DB_FILE) as conn:

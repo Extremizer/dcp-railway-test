@@ -4,12 +4,15 @@ Run in its own process: python -B -m unittest -v test_web2_host_integration.py
 Catalog/DP are seeded via real core helpers; routes/pricing/handoff are not mocked.
 """
 import importlib
+import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
 import socket
 import sqlite3
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -92,6 +95,75 @@ class Web2HostIntegrationTests(unittest.TestCase):
             self.assertEqual(items[0]["price_snapshot_rub"], 29200)
             self.assertEqual(items[0]["qty"], 2)
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0], 0)
+
+    def _dp_result(self, oem, *, msrp=50.95, source="dcp_public_form_metadata", signed=True):
+        self.host.dp_live_bridge.init(self.db)
+        request_id = "metadata-" + oem
+        with sqlite3.connect(self.db) as c:
+            c.execute("INSERT INTO dp_live_requests(request_id,manufacturer,oem,status,requested_at) "
+                      "VALUES(?,?,?,'claimed',?)", (request_id, "Arctic Cat", oem,
+                      self.host.dp_live_bridge._now()))
+        payload = {"request_id": request_id, "status": "FOUND", "dealer_price_usd": 30.05,
+                   "current_oem": oem, "name": "Synthetic metadata fixture",
+                   "source": "server_html:exact_row", "msrp_usd": msrp, "msrp_source": source}
+        path = "/internal/dp-sync/result"
+        timestamp = str(int(time.time()))
+        key = hashlib.sha256(b"extremizer-dp-sync-v1\0synthetic-metadata-token").digest()
+        signature = hmac.new(key, f"v1\n{path}\n{timestamp}".encode(), hashlib.sha256).hexdigest()
+        headers = {"X-DP-Sync-Ts": timestamp, "X-DP-Sync-Sig": signature} if signed else {}
+        with patch.dict(os.environ, {"OEMIXIBOT_TOKEN": "synthetic-metadata-token"}):
+            response = self.client.post(path, json=payload, headers=headers)
+        return response, payload, headers
+
+    def test_signed_dp_result_persists_explicit_msrp_without_business_writes(self):
+        from client_finance_schema import ensure_client_finance_schema
+        ensure_client_finance_schema(self.db)
+        tables = ("orders", "order_items", "finance_ledger", "warehouse_stock_reservations")
+        def business_rows():
+            with sqlite3.connect(self.db) as c:
+                return {t: c.execute(f'SELECT * FROM "{t}" ORDER BY rowid').fetchall() for t in tables}
+        before = business_rows()
+        response, _, _ = self._dp_result("2670-METADATA")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(business_rows(), before)
+        with sqlite3.connect(self.db) as c:
+            row = c.execute("SELECT msrp_usd,msrp_verified,source_kind FROM oem_catalog_cache "
+                            "WHERE manufacturer='Arctic Cat' AND current_oem='2670-METADATA'").fetchone()
+            self.assertEqual(row, (50.95, 1, "verified_local_dcp_public_msrp"))
+            self.assertEqual(c.execute("SELECT dealer_price_usd FROM dealer_price_cache WHERE "
+                                      "manufacturer='Arctic Cat' AND oem='2670-METADATA'").fetchone()[0], 30.05)
+
+    def test_missing_and_untrusted_msrp_preserve_successful_dp(self):
+        for oem, msrp, source in (("2670-MISSING", None, None),
+                                  ("2670-PRIVATE", 30.05, "server_html:.c2 .dbl")):
+            with self.subTest(oem=oem):
+                response, _, _ = self._dp_result(oem, msrp=msrp, source=source)
+                self.assertEqual(response.status_code, 200, response.text)
+                with sqlite3.connect(self.db) as c:
+                    self.assertEqual(c.execute("SELECT COUNT(*) FROM oem_catalog_cache "
+                                               "WHERE current_oem=?", (oem,)).fetchone()[0], 0)
+                    self.assertEqual(c.execute("SELECT dealer_price_usd FROM dealer_price_cache "
+                                               "WHERE oem=?", (oem,)).fetchone()[0], 30.05)
+
+    def test_unsigned_metadata_result_cannot_write_cache(self):
+        response, _, _ = self._dp_result("2670-UNSIGNED", signed=False)
+        self.assertEqual(response.status_code, 401)
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM oem_catalog_cache "
+                                       "WHERE current_oem='2670-UNSIGNED'").fetchone()[0], 0)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM dealer_price_cache "
+                                       "WHERE oem='2670-UNSIGNED'").fetchone()[0], 0)
+
+    def test_finished_request_replay_cannot_replace_verified_msrp(self):
+        response, payload, headers = self._dp_result("2670-REPLAY")
+        self.assertEqual(response.status_code, 200, response.text)
+        payload["msrp_usd"] = 999
+        with patch.dict(os.environ, {"OEMIXIBOT_TOKEN": "synthetic-metadata-token"}):
+            replay = self.client.post("/internal/dp-sync/result", json=payload, headers=headers)
+        self.assertEqual(replay.status_code, 409)
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("SELECT msrp_usd FROM oem_catalog_cache "
+                                       "WHERE current_oem='2670-REPLAY'").fetchone()[0], 50.95)
 
 
 if __name__ == "__main__":

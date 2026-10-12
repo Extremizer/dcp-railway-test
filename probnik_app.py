@@ -598,6 +598,8 @@ async def _stock_with_refresh(oem: str) -> list[dict]:
 
 
 def _compose(oem: str, info: dict, rows: list[dict]) -> str:
+    from client_offer_metadata import cached_rrp_rub, msrp_rub, reference_weight_lines
+
     manufacturer = escape(str(info.get("manufacturer") or "—"))
     lines = [
         f"🔎 <b>OEM:</b> <b>{escape(oem)} ({manufacturer})</b>",
@@ -607,6 +609,14 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
 
     customer_rub = info.get("customer_rub")
     rrp_rub = info.get("rrp_rub")
+    if info.get("msrp_usd") is not None:
+        rrp_rub = msrp_rub(info["msrp_usd"], USD_RUB_RATE)
+    if rrp_rub is None:
+        rrp_rub = cached_rrp_rub(
+            ORDERS_DB, info.get("manufacturer"),
+            [info.get("current_oem"), info.get("dp_oem"), oem], USD_RUB_RATE,
+            DP_MAX_AGE_HOURS,
+        )
     if customer_rub is not None:
         customer_price = _format_rub(customer_rub).replace(" ₽", "* ₽")
         lines.append(f"Ваша цена — <b>{customer_price}</b>")
@@ -621,6 +631,9 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
 
     if delivery_line:
         lines.extend(["", delivery_line])
+    weight = reference_weight_lines(info.get("dp_oem") or info.get("current_oem") or oem, oem)
+    if weight:
+        lines.extend(["", *weight])
     lines.extend(["", "🇷🇺 <b>Наличие в РФ:</b>"])
 
     positive = [
