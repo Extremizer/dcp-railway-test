@@ -77,7 +77,8 @@ class IndependentAgentTests(unittest.TestCase):
     def agent(self, requester):
         return load_functions("dp_sync_agent.py", ["run_retail_once"],
                               {"_request": requester, "time": SimpleNamespace(monotonic=lambda: 1000),
-                               "_LAST_RETAIL_POLL_MONO": 0, "_RETAIL_RETRY_AT": {}})
+                               "_LAST_RETAIL_POLL_MONO": 0, "_RETAIL_RETRY_AT": {},
+                               "_RETAIL_LAST_KEY": None})
 
     def test_cache_hit_enrichment_does_not_request_dcp_or_touch_its_health(self):
         calls = []
@@ -110,6 +111,20 @@ class IndependentAgentTests(unittest.TestCase):
     def test_old_server_or_wops_failure_cannot_set_dcp_health(self):
         agent = self.agent(lambda *a, **k: (_ for _ in ()).throw(RuntimeError("old server")))
         self.assertFalse(agent["run_retail_once"]())
+
+    def test_retry_expiration_does_not_restart_at_first_failed_identity(self):
+        def request(path, **kwargs):
+            return {"candidates": [{"manufacturer": "Arctic Cat", "oem": "2670-265"},
+                                   {"manufacturer": "Honda", "oem": "91303-PA9-004"}]}
+        agent = self.agent(request)
+        with patch.object(retail, "get_public_retail", return_value=None) as get:
+            agent["run_retail_once"]()
+            # Even if all cooldowns expire before the next cycle, visit the
+            # next identity instead of continually retrying the first one.
+            agent["time"] = SimpleNamespace(monotonic=lambda: 2000)
+            agent["run_retail_once"]()
+        self.assertEqual([c.args for c in get.call_args_list], [("Arctic Cat", "2670-265"),
+                                                               ("Honda", "91303-PA9-004")])
 
     def test_foreign_wops_cloudflare_tab_does_not_block_authorized_dcp(self):
         statuses = []

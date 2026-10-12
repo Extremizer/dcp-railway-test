@@ -49,7 +49,10 @@ verification time; Retail is not claimed to be independently certified factory
 MSRP. No paid pricebook or old import is required.
 
 The agent's independent idle Retail cycle runs at most every 30 seconds and
-throttles unsuccessful identities for 15 minutes. It reads signed
+throttles unsuccessful identities for 15 minutes. Candidate batches are visited
+in round-robin order, so expired negative retries do not continually restart at
+the first failed identity. Each batch is limited to the 100 most recent eligible
+DP cache entries. It reads signed
 `/internal/retail-sync/next` candidates: only already verified, fresh DCP cache
 entries of supported brands that have missing/stale RRP. No live-DP request is
 made for a cache hit and no customer request waits for WOPS. Successful Retail

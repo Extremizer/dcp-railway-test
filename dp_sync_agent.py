@@ -47,6 +47,7 @@ _DCP_CHECKED_AT = None
 _LAST_HEALTH_CHECK_MONO = 0.0
 _LAST_RETAIL_POLL_MONO = 0.0
 _RETAIL_RETRY_AT = {}
+_RETAIL_LAST_KEY = None
 
 _DCP_HEALTH_STATUSES = {
     "READY",
@@ -198,7 +199,7 @@ def _finish(request_id: str, result: dict) -> None:
 
 def run_retail_once() -> bool:
     """Enrich cache hits independently; no live-DP request or browser mutation."""
-    global _LAST_RETAIL_POLL_MONO
+    global _LAST_RETAIL_POLL_MONO, _RETAIL_LAST_KEY
     now = time.monotonic()
     if _LAST_RETAIL_POLL_MONO and now - _LAST_RETAIL_POLL_MONO < 30:
         return False
@@ -206,6 +207,10 @@ def run_retail_once() -> bool:
     try:
         from wops_retail import get_public_retail
         items = _request("/internal/retail-sync/next").get("candidates") or []
+        keys = [(item["manufacturer"], item["oem"]) for item in items]
+        if _RETAIL_LAST_KEY in keys:
+            start = keys.index(_RETAIL_LAST_KEY) + 1
+            items = items[start:] + items[:start]
         for item in items:
             key = (item["manufacturer"], item["oem"])
             if _RETAIL_RETRY_AT.get(key, 0) > now:
@@ -213,6 +218,7 @@ def run_retail_once() -> bool:
             # Negative results are throttled locally, without poisoning the
             # shared catalog/DP cache or starving other candidates.
             _RETAIL_RETRY_AT[key] = now + 900
+            _RETAIL_LAST_KEY = key
             quote = get_public_retail(*key)
             if quote is not None:
                 _request("/internal/retail-sync/result", method="POST", payload=quote)
