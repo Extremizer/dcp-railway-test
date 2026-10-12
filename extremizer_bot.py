@@ -2682,7 +2682,7 @@ def _client_safe_item_name(value) -> str:
 
 
 def format_client_offer_card(result: dict) -> str:
-    from client_offer_metadata import cached_rrp_rub, msrp_rub, reference_weight_lines as offer_weight_lines
+    from client_offer_metadata import cached_rrp_rub, msrp_rub, reference_weight_lines as offer_weight_lines, wops_rrp_override
 
     status = str(result.get("status") or "").upper()
     if status not in {"FOUND", "PARTIAL"}:
@@ -2706,6 +2706,11 @@ def format_client_offer_card(result: dict) -> str:
             ORDERS_DB_FILE, result.get("manufacturer"),
             [oem, result.get("query_oem")], load_usd_rub_rate(),
         )
+    has_wops, wops_rrp = wops_rrp_override(
+        ORDERS_DB_FILE, result.get("manufacturer"), [oem, result.get("query_oem")], load_usd_rub_rate(),
+    )
+    if has_wops:
+        rrp_rub = wops_rrp
 
     if customer_price is not None:
         customer_price_text = format_rub(customer_price).replace(" ₽", "* ₽")

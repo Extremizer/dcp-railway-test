@@ -99,6 +99,24 @@ class OfferMetadataTests(unittest.TestCase):
         self.assertEqual(metadata.msrp_rub(50.96, 105), 5400)
         self.assertIsNone(metadata.msrp_rub(float("nan"), 105))
 
+    def test_stale_wops_cannot_leak_from_legacy_precomputed_card_info(self):
+        self.seed_msrp(age=169)
+        with sqlite3.connect(self.orders) as c:
+            c.execute("ALTER TABLE oem_catalog_cache ADD COLUMN source_kind TEXT")
+            c.execute("UPDATE oem_catalog_cache SET source_kind='dealerorders_public_retail'")
+        cards = card_tests.ClientOfferCardTests(); cards.setUp()
+        cards.probnik.update(ORDERS_DB=self.orders, USD_RUB_RATE=105.0)
+        cards.procenka.update(ORDERS_DB_FILE=self.orders, load_usd_rub_rate=lambda: 105.0)
+        info = {"manufacturer": "Arctic Cat", "customer_rub": 4300, "msrp_usd": 50.95, "rrp_rub": 5350}
+        result = {"status": "FOUND", "oem": "2670-265", "manufacturer": "Arctic Cat",
+                  "_dealer_price_usd": 30.05, "price": 50.95}
+        a = cards.probnik["_compose"]("2670-265", info, cards.rows)
+        b = cards.procenka["format_client_offer_card"](result)
+        self.assertEqual(a, b)
+        self.assertNotIn("РРЦ", a)
+        self.assertNotIn("Ваша выгода", a)
+        self.assertIn("4 300* ₽", a)
+
 
 class AgentMetadataTests(unittest.TestCase):
     def test_exact_row_msrp_is_separate_from_dealer_price(self):

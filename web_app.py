@@ -1023,7 +1023,8 @@ def dp_sync_result(
                 verified_at,
             )
         source = verified_source
-        msrp = verified_msrp(payload.msrp_usd, payload.msrp_source)
+        msrp = (verified_msrp(payload.msrp_usd, payload.msrp_source)
+                if payload.msrp_source == "dcp_public_form_metadata" else None)
         if msrp is not None:
             if not core.upsert_oem_catalog_cache(
                 {"status": "FOUND", "manufacturer": manufacturer,
@@ -1078,6 +1079,10 @@ def dp_sync_result(
     if not ok:
         raise HTTPException(status_code=409, detail={"code": "request_already_finished"})
     return {"ok": True, "status": status}
+
+
+from retail_sync import register_routes as _register_retail_routes
+_register_retail_routes(app, core, _require_dp_sync_signature)
 
 
 def _weight_for_oem(oem: str) -> dict[str, Any] | None:

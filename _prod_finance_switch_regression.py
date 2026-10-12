@@ -79,6 +79,10 @@ def require_probnik_non_ui_unchanged(source: str):
 
 
 def web_outside_dp_result_blob(source: str) -> str:
+    retail_registration = ("from retail_sync import register_routes as _register_retail_routes\n"
+                           "_register_retail_routes(app, core, _require_dp_sync_signature)\n\n\n")
+    require(source.count(retail_registration) == 1, "exact signed Retail registration required")
+    source = source.replace(retail_registration, "", 1)
     targets = [n for n in ast.parse(source).body
                if getattr(n, "name", None) in {"DPSyncResultRequest", "dp_sync_result"}]
     require(len(targets) == 2, "exact DP result model/handler required")
@@ -273,7 +277,7 @@ def run():
     print("PASS production finance switch port regression")
     print("legacy production checkout body: byte-identical")
     print("probnik_app.py outside _compose body: byte-identical to original checkpoint")
-    print("web_app.py outside DP result model/handler: byte-identical to Point 10 candidate")
+    print("web_app.py outside DP result model/handler and exact Retail registration: byte-identical to Point 10 candidate")
     print("FinanceEngine SHA256:", PROVEN_ENGINE_SHA256)
     print("pricing analytics preserved after core commit")
     print("shared transaction + payment_route + fulfillment_route present")

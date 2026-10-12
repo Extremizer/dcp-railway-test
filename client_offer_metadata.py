@@ -9,7 +9,7 @@ import sqlite3
 
 def verified_msrp(value, source):
     """Accept explicit public retail metadata, never the dealer-price cell."""
-    if source != "dcp_public_form_metadata" or isinstance(value, bool):
+    if source not in {"dcp_public_form_metadata", "dealerorders_public_retail"} or isinstance(value, bool):
         return None
     if not isinstance(value, (int, float)):
         return None
@@ -65,6 +65,28 @@ def cached_rrp_rub(db_file, manufacturer, oems, rate, max_age_hours=168):
 
 def _kg(value):
     return format(Decimal(str(value)).normalize(), "f").replace(".", ",")
+
+
+def wops_rrp_override(db_file, manufacturer, oems, rate, max_age_hours=168):
+    """Prevent a stale WOPS value leaking through legacy precomputed card info."""
+    path = Path(db_file)
+    if not path.is_file():
+        return False, None
+    import oem_reference_service
+    keys = list(dict.fromkeys(oem_reference_service.normalize_oem(x) for x in oems if x))
+    if not keys or not manufacturer:
+        return False, None
+    try:
+        with sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True) as conn:
+            found = conn.execute(
+                "SELECT 1 FROM oem_catalog_cache WHERE manufacturer=? "
+                f"AND current_oem IN ({','.join('?' for _ in keys)}) "
+                "AND source_kind='dealerorders_public_retail' LIMIT 1",
+                (manufacturer, *keys),
+            ).fetchone()
+    except sqlite3.Error:
+        return False, None
+    return (True, cached_rrp_rub(path, manufacturer, keys, rate, max_age_hours)) if found else (False, None)
 
 
 def reference_weight_lines(current_oem, requested_oem=None):

@@ -598,7 +598,7 @@ async def _stock_with_refresh(oem: str) -> list[dict]:
 
 
 def _compose(oem: str, info: dict, rows: list[dict]) -> str:
-    from client_offer_metadata import cached_rrp_rub, msrp_rub, reference_weight_lines
+    from client_offer_metadata import cached_rrp_rub, msrp_rub, reference_weight_lines, wops_rrp_override
 
     manufacturer = escape(str(info.get("manufacturer") or "—"))
     lines = [
@@ -617,6 +617,12 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
             [info.get("current_oem"), info.get("dp_oem"), oem], USD_RUB_RATE,
             DP_MAX_AGE_HOURS,
         )
+    has_wops, wops_rrp = wops_rrp_override(
+        ORDERS_DB, info.get("manufacturer"),
+        [info.get("current_oem"), info.get("dp_oem"), oem], USD_RUB_RATE, DP_MAX_AGE_HOURS,
+    )
+    if has_wops:
+        rrp_rub = wops_rrp
     if customer_rub is not None:
         customer_price = _format_rub(customer_rub).replace(" ₽", "* ₽")
         lines.append(f"Ваша цена — <b>{customer_price}</b>")

@@ -45,6 +45,8 @@ _DCP_STATUS = "UNKNOWN"
 _DCP_DETAIL = "not_checked"
 _DCP_CHECKED_AT = None
 _LAST_HEALTH_CHECK_MONO = 0.0
+_LAST_RETAIL_POLL_MONO = 0.0
+_RETAIL_RETRY_AT = {}
 
 _DCP_HEALTH_STATUSES = {
     "READY",
@@ -194,6 +196,40 @@ def _finish(request_id: str, result: dict) -> None:
     _request("/internal/dp-sync/result", method="POST", payload=payload)
 
 
+def run_retail_once() -> bool:
+    """Enrich cache hits independently; no live-DP request or browser mutation."""
+    global _LAST_RETAIL_POLL_MONO
+    now = time.monotonic()
+    if _LAST_RETAIL_POLL_MONO and now - _LAST_RETAIL_POLL_MONO < 30:
+        return False
+    _LAST_RETAIL_POLL_MONO = now
+    try:
+        from wops_retail import get_public_retail
+        items = _request("/internal/retail-sync/next").get("candidates") or []
+        for item in items:
+            key = (item["manufacturer"], item["oem"])
+            if _RETAIL_RETRY_AT.get(key, 0) > now:
+                continue
+            # Negative results are throttled locally, without poisoning the
+            # shared catalog/DP cache or starving other candidates.
+            _RETAIL_RETRY_AT[key] = now + 900
+            quote = get_public_retail(*key)
+            if quote is not None:
+                _request("/internal/retail-sync/result", method="POST", payload=quote)
+                print("RETAIL_SYNC", *key, "FOUND", flush=True)
+                return True
+            return False
+    except Exception as exc:
+        # Includes safe 404 compatibility with an older server. This source
+        # never sets DCP health or changes a successful DCP result.
+        print("RETAIL_SYNC_UNAVAILABLE", type(exc).__name__, flush=True)
+    finally:
+        for key in list(_RETAIL_RETRY_AT):
+            if _RETAIL_RETRY_AT[key] <= now:
+                del _RETAIL_RETRY_AT[key]
+    return False
+
+
 def _agent_status_for_dcp(status: str) -> str:
     if status in {"CLOUDFLARE", "AUTH_REQUIRED"}:
         return "human_required"
@@ -258,6 +294,8 @@ def _preflight_dcp() -> str:
     for tab in pages:
         tab_url = str(tab.get("url") or "")
         tab_title = str(tab.get("title") or "")
+        if oemixibot_dcp_price.DCP_HOST not in tab_url:
+            continue
         marker_text = (tab_url + "\n" + tab_title).lower()
         if (
             "challenges.cloudflare.com" in marker_text
@@ -405,12 +443,11 @@ def main() -> int:
             if _health_check_due():
                 _preflight_dcp()
 
-            if _DCP_STATUS != "READY":
-                time.sleep(min(max(POLL_SECONDS, 1.0), 5.0))
-                continue
-
-            if not run_once():
-                _write_status("online", detail="idle")
+            did_dp_work = run_once() if _DCP_STATUS == "READY" else False
+            if not did_dp_work:
+                run_retail_once()
+                if _DCP_STATUS == "READY":
+                    _write_status("online", detail="idle")
                 time.sleep(POLL_SECONDS)
         except urllib.error.HTTPError as exc:
             _write_status("offline", detail=f"http_{exc.code}")

@@ -64,8 +64,8 @@ def _parts_slug(manufacturer: str) -> tuple[str, str]:
 def _normalize_oem(oem: str) -> str:
     return finder.normalize_oem(oem)
 
-def _tabs() -> list[dict[str, Any]]:
-    with urllib.request.urlopen(CDP_HTTP + "/json", timeout=5) as response:
+def _tabs(*, timeout_seconds: float = 5) -> list[dict[str, Any]]:
+    with urllib.request.urlopen(CDP_HTTP + "/json", timeout=timeout_seconds) as response:
         return json.load(response)
 
 def _pick_authorized_dcp_tab() -> dict[str, Any]:
@@ -84,10 +84,10 @@ def _pick_authorized_dcp_tab() -> dict[str, Any]:
     usable.sort(key=lambda x: ("partsearch" not in str(x.get("url") or ""),))
     return usable[0]
 
-def _runtime_evaluate(tab: dict[str, Any], expression: str) -> Any:
+def _runtime_evaluate(tab: dict[str, Any], expression: str, *, timeout_seconds: float = 20) -> Any:
     ws = websocket.create_connection(
         str(tab["webSocketDebuggerUrl"]),
-        timeout=20,
+        timeout=timeout_seconds,
         suppress_origin=True,
     )
     try:
