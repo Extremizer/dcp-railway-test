@@ -225,10 +225,10 @@ class DealerPrepaidTests(unittest.TestCase):
                 ('finance_receivable_terms', 'finance_due_date_audit',
                  'finance_aging_alert_state', 'finance_credit_limit_audit', 'dealers')}
         self.pay(40)
-        self.charge(1)
+        self.charge(1, 'new-order-1')
         self.assertEqual(self.engine.balance('dealer'), Decimal('-11'))
         self.pay(20, 'second')
-        self.charge(10)
+        self.charge(10, 'new-order-2')
         self.assertEqual(self.engine.balance('dealer'), Decimal('-1'))
         self.assertFalse(self.engine.dcp_procurement_ready('dealer')['ready'])
         with sqlite3.connect(self.path) as c:
