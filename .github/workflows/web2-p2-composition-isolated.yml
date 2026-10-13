@@ -1,0 +1,41 @@
+name: WEB2 + Internal P2 Composition Isolated
+
+on:
+  push:
+    branches:
+      - web2-ui-p2-composition-20261013
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p2-composition:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify Theme 1 P2 server files remain importable
+        run: |
+          python -B -m py_compile             warehouse_history_v14.py             warehouse_balance_v14.py             internal_order_core_v01.py             web2_finance_read_model_adapter.py             test_web2_p2_read_model_compatibility.py             test_web2_finance_role_ui.py
+          node --check web2/finance_role_preview.js
+
+      - name: Theme 1 P2 read and Internal Order regressions
+        run: |
+          python -B -m unittest -v             test_warehouse_history_v14.py             test_internal_order_core_v01.py
+
+      - name: Theme 2 P2 compatibility adapter regression
+        run: python -B -m unittest -v test_web2_p2_read_model_compatibility.py
+
+      - name: Install isolated browser dependency
+        run: |
+          python -m pip install "playwright>=1.50,<2"
+          python -m playwright install --with-deps chromium
+
+      - name: Theme 2 role consistency and safe-render browser regression
+        run: python -B -m unittest -v test_web2_finance_role_ui.py
