@@ -213,6 +213,21 @@ class BrowserTests(unittest.TestCase):
         self.assertNotIn("fetch(",self.producer["_runtime_evaluate"].call_args.args[1])
         self.producer["_pick_authorized_dcp_tab"].assert_not_called()
 
+    def test_unauthorized_open_dom_stops_without_fetch(self):
+        self.producer["_tabs"].return_value=[{"type":"page","url":"https://www.dealercostparts.com/oemparts/partsearch/arctic_cat?partsearch=2670-265"}]
+        self.producer["_runtime_evaluate"].return_value={"authorized":False,"found":False}
+        self.assertEqual(self.producer["get_dealer_price"]("Arctic Cat","2670-265").status,"AUTH_REQUIRED")
+        self.assertEqual(self.producer["_runtime_evaluate"].call_count,1)
+        self.producer["_pick_authorized_dcp_tab"].assert_not_called()
+
+    def test_accessories_auth_loss_stops_auto_discovery(self):
+        self.producer["_parts_slug"]=lambda m:("Ski-Doo","ski_doo")
+        self.producer["_runtime_evaluate"].side_effect=[{"authorized":True,"found":False}, {"authorized":False,"found":False}]
+        self.assertEqual(self.producer["get_dealer_price"]("Ski-Doo","779132").status,"AUTH_REQUIRED")
+        self.assertEqual(self.producer["_runtime_evaluate"].call_count,2)
+        expression=self.producer["_runtime_evaluate"].call_args.args[1]
+        self.assertLess(expression.index("if(!sa)"),expression.index("fetch(links[0]"))
+
     def test_host_spoof_and_oem_prefix_do_not_match_open_dom(self):
         self.producer["_tabs"].return_value = [
             {"type":"page","url":"https://wrong.example/oemparts/partsearch/arctic_cat?partsearch=2670-265&host=www.dealercostparts.com"},

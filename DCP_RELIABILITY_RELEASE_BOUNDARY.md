@@ -17,7 +17,7 @@ Known Parts lookup: zero DCP requests if the exact authorized DOM supplies DP; o
 
 ## Confirmed defects and isolated changes
 
-* `oemixibot_dcp_price.py`: remove challenged-fetch top-level navigation and its 15-second retry loop; return CLOUDFLARE immediately. Require a local health file; match the exact DCP origin/path/query; reject nonpositive/nonfinite prices. Existing authorized exact DOM remains the first lookup path.
+* `oemixibot_dcp_price.py`: remove challenged-fetch top-level navigation and its 15-second retry loop; return CLOUDFLARE immediately. Require a local health file; match the exact DCP origin/path/query; reject nonpositive/nonfinite prices. Existing authorized exact DOM remains the first lookup path. Auth loss on that DOM or Accessories returns AUTH_REQUIRED immediately; Accessories skips its detail GET after unauthorized search.
 * `dp_sync_agent.py`: evaluate challenge markers only on DCP-origin pages; latch blocking health before result delivery, so delivery failure cannot leave READY; pace cross-manufacturer AUTO lookups (default five seconds).
 * `dp_live_bridge.py`: canonical manufacturer/OEM key; transactional SELECT+INSERT; one global claimed request; minimum lookup-start gap (default five seconds); expire pending requests older than 30 seconds at admission/claim; reuse a verified result for five seconds; persist CF/AUTH circuit in the same transaction as its result. A circuit clears only on a strictly newer READY observation. Invalid DP or MSRP/Retail/RRP provenance cannot become FOUND.
 * `test_dcp_reliability.py`: mock producer, real disposable SQLite, concurrent broker consumers, cache-hit execution of actual client functions, blocked/READY recovery, long blockage, no navigation, failure-before-result delivery.
@@ -46,7 +46,7 @@ At 19:45:15Z one DCP tab showed authorized=true, challenged=false, cookies enabl
 
 ## Local validation
 
-58/58 DCP/card/startup tests; 23/23 dealer/runtime tests; five atomicity/checkout/finance script checks PASS. New reliability suite: 24 tests. All use mocks/disposable SQLite. FinanceEngine fingerprint remains `17546efcea563f0f3e1942947f085e31ed6d88a9ee6401e2c18147171f57d863`; approved non-UI client, checkout and WEB ADMIN guards pass unchanged.
+60/60 DCP/card/startup tests; 23/23 dealer/runtime tests; five atomicity/checkout/finance script checks PASS. New reliability suite: 26 tests. All use mocks/disposable SQLite. FinanceEngine fingerprint remains `17546efcea563f0f3e1942947f085e31ed6d88a9ee6401e2c18147171f57d863`; approved non-UI client, checkout and WEB ADMIN guards pass unchanged.
 
 GitHub CI must be reported for the exact candidate HEAD separately. Green CI does not authorize production.
 

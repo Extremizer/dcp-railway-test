@@ -187,6 +187,11 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                 authorized=live_data.get("authorized"),
                 message="Open DCP page is waiting for human verification.",
             )
+        if not live_data.get("authorized"):
+            return DealerPriceResult(
+                "AUTH_REQUIRED", canonical, normalized_oem, authorized=False,
+                message="Open DCP page no longer has an authorized session.",
+            )
         if live_data.get("authorized") and live_data.get("found"):
             live_price = _money(live_data.get("dealer_price_text"))
             if live_price is not None:
@@ -279,6 +284,8 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
 
           if(sr.status===403||cf(sb))
             return {{http_status:sr.status,authorized:sa,challenged:true,found:false}};
+          if(!sa)
+            return {{http_status:sr.status,authorized:false,challenged:false,found:false}};
 
           const links=[...new Set(
             [...sd.querySelectorAll('#CategoryItems a[href*="/oemcatalogs/p/"]')]
@@ -350,6 +357,13 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                 http_status=accessories_data.get("http_status"),
                 authorized=accessories_data.get("authorized"),
                 message="DCP Accessories search is waiting for human verification.",
+            )
+
+        if not accessories_data.get("authorized"):
+            return DealerPriceResult(
+                "AUTH_REQUIRED", canonical, normalized_oem,
+                http_status=accessories_data.get("http_status"), authorized=False,
+                message="DCP Accessories no longer has an authorized session.",
             )
 
         if accessories_data.get("authorized") and accessories_data.get("found"):
