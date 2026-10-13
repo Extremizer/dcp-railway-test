@@ -1,0 +1,57 @@
+name: Finance Contract v1.4 Isolated
+
+on:
+  push:
+    branches: [finance-contract-v14-20261013]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-v14:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install isolated runtime import dependencies
+        run: pip install 'python-telegram-bot>=22.8,<23' 'websocket-client>=1.9,<2' 'playwright>=1.50'
+
+      - name: Syntax and import smoke
+        run: |
+          python -B - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in Path('.').glob('*.py'):
+              ast.parse(path.read_text(encoding='utf-8-sig'), filename=str(path))
+          import warehouse_balance_v14
+          import client_wallet_info_v14
+          import acting_as_v14
+          import oemixibot_finance
+          import oemixibot_store
+          import client_finance_adapter
+          PY
+
+      - name: Contract v1.4 focused regressions
+        run: |
+          python -B -m unittest -v             test_warehouse_balance_v14.py             test_client_wallet_info_v14.py             test_dealer_debt_v14.py             test_oemixibot_debt_runtime_v14.py             test_acting_as_v14.py
+
+      - name: Existing dealer/OEMixi compatibility regressions
+        run: |
+          python -B -m unittest -v             test_dealer_prepaid_finance.py             test_oemixibot_prepaid_runtime.py
+
+      - name: Existing client RUB and order-core regressions
+        run: |
+          python -B _atomic_client_finance_regression.py
+          python -B _save_order_shared_tx_regression.py
+          python -B _client_checkout_orchestrator_regression.py
+          python -B _client_checkout_callback_adapter_regression.py
+          python -B _prod_finance_switch_regression.py
+
+      - name: Existing warehouse partner settlement regression
+        run: python -B -m unittest -v test_warehouse_partner_settlements_point10.py
