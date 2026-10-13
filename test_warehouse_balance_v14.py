@@ -141,6 +141,66 @@ class WarehouseBalanceV14Tests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(rows, [("DIRECT_PAYMENT_MARGIN", 2925), ("CORRECTION", -2925)])
 
+    def test_correction_idempotency_strict_identity(self):
+        self.confirm()
+        base = dict(
+            correction_id="corr-1",
+            warehouse_id=1,
+            order_id="I12J-4582",
+            amount_rub=-2925,
+            actual_actor="admin:1",
+            reason="approved cancellation",
+            effective_subject="warehouse:1",
+        )
+        event_id = wb.post_correction(self.db, **base)
+        self.assertGreater(event_id, 0)
+        self.assertEqual(wb.balance_summary(self.db, 1)["available_rub"], 0)
+
+        # Exact replay returns the original event.
+        self.assertEqual(wb.post_correction(self.db, **base), event_id)
+
+        conflicts = [
+            dict(base, reason="different reason"),
+            dict(base, amount_rub=-2924),
+            dict(base, warehouse_id=2),
+            dict(base, order_id="I12J-9999"),
+            dict(base, actual_actor="admin:2"),
+            dict(base, effective_subject="warehouse:2"),
+        ]
+        for replay in conflicts:
+            with self.subTest(replay=replay):
+                before_1 = wb.balance_summary(self.db, 1)
+                before_2 = wb.balance_summary(self.db, 2)
+                with self.assertRaisesRegex(
+                    ValueError, "warehouse balance correction conflict"
+                ):
+                    wb.post_correction(self.db, **replay)
+                self.assertEqual(wb.balance_summary(self.db, 1), before_1)
+                self.assertEqual(wb.balance_summary(self.db, 2), before_2)
+
+        with sqlite3.connect(self.db) as c:
+            ledger = c.execute(
+                """SELECT event_type,amount_rub,warehouse_id,order_id,
+                          actual_actor,effective_subject
+                   FROM warehouse_internal_balance_ledger
+                   ORDER BY id"""
+            ).fetchall()
+            reasons = c.execute(
+                """SELECT ledger_event_id,reason
+                   FROM warehouse_balance_correction_reasons
+                   ORDER BY ledger_event_id"""
+            ).fetchall()
+        self.assertEqual(
+            ledger,
+            [
+                ("DIRECT_PAYMENT_MARGIN", 2925, 1, "I12J-4582",
+                 "warehouse:user-1", "warehouse:1"),
+                ("CORRECTION", -2925, 1, "I12J-4582",
+                 "admin:1", "warehouse:1"),
+            ],
+        )
+        self.assertEqual(reasons, [(event_id, "approved cancellation")])
+
     def test_negative_margin_stays_blocked_pending_owner_decision(self):
         with self.assertRaisesRegex(ValueError, "NEGATIVE_INTERNAL_MARGIN_NOT_APPROVED"):
             self.confirm(customer=10000, partner=11000)
