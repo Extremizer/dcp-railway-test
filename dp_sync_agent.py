@@ -16,9 +16,14 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import time
 import traceback
+import uuid
+
+import dp_sync_protocol
+from dp_result_completion import _dealer_source, _identity
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -39,6 +44,9 @@ STARTUP_GRACE_SECONDS = float(
     os.getenv("DP_SYNC_STARTUP_GRACE_SECONDS", "15") or "15"
 )
 STATUS_FILE = Path(__file__).with_name("dp_sync_agent_status.json")
+PRODUCER_ID = "dp-v2-" + uuid.uuid4().hex
+JOURNAL_FILE = Path(__file__).with_name("dp_sync_agent_inflight_v2.json")
+_PRODUCER_STOP = False
 _STATUS = "offline"
 _MUTEX_HANDLE = None
 _DCP_STATUS = "UNKNOWN"
@@ -158,38 +166,107 @@ def _headers(path: str) -> dict[str, str]:
 
 
 def _request(path: str, *, method: str = "GET", payload: dict | None = None) -> dict:
-    headers = _headers(path)
-    body = None
+    # These bytes are both signed and transmitted; never serialize a second time.
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8") if payload is not None else b""
+    if path == "/internal/dp-sync/health":
+        headers = _headers(path)  # Stage 2 explicitly retains the v1 health contract.
+    else:
+        ts = int(time.time())
+        headers = {"X-DP-Protocol": "2", "X-DP-Producer-ID": PRODUCER_ID,
+                   "X-DP-Sync-Ts": str(ts),
+                   "X-DP-Sync-Sig": dp_sync_protocol.sign(_key(), method, path, ts, PRODUCER_ID, body)}
     if payload is not None:
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(
-        BASE_URL + path,
-        data=body,
-        headers=headers,
-        method=method,
-    )
+    req = urllib.request.Request(BASE_URL + path, data=body if payload is not None else None,
+                                 headers=headers, method=method)
     with urllib.request.urlopen(req, timeout=20) as response:
-        return json.loads(response.read().decode("utf-8"))
+        result = json.loads(response.read().decode("utf-8"))
+    if not isinstance(result, dict):
+        raise ValueError("invalid_server_response")
+    return result
+
+
+def _journal(phase, item=None):
+    # Persist uncertainty BEFORE claiming or touching DCP. No token, cookie, price
+    # or claim secret is retained. Any remaining journal blocks the next boot.
+    data = {"protocol_version": 2, "producer_id": PRODUCER_ID, "phase": phase,
+            "created_at": _utc_now()}
+    if item:
+        data.update(request_id=item["request_id"], claim_generation=item["claim_generation"])
+    tmp = JOURNAL_FILE.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+        f.flush()
+        os.fsync(f.fileno())
+    os.replace(tmp, JOURNAL_FILE)
+    if os.name != "nt":
+        fd = os.open(str(JOURNAL_FILE.parent), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+
+
+def _clear_journal():
+    JOURNAL_FILE.unlink()
 
 
 def _claim() -> dict | None:
-    return _request("/internal/dp-sync/next").get("request")
+    response = _request("/internal/dp-sync/next")
+    if "error_code" in response or "request" not in response:
+        raise ValueError("producer_claim_rejected")
+    item = response["request"]
+    if item is None:
+        return None
+    if (not isinstance(item, dict) or item.get("protocol_version") != 2
+        or item.get("producer_id") != PRODUCER_ID
+        or not isinstance(item.get("claim_token"), str) or not item["claim_token"]
+        or type(item.get("claim_generation")) is not int or item["claim_generation"] < 1
+        or not isinstance(item.get("request_id"), str) or not item["request_id"]):
+        raise ValueError("invalid_claim_fence")
+    lease = datetime.fromisoformat(str(item.get("lease_expires_at") or ""))
+    if lease.tzinfo is None or lease <= datetime.now(timezone.utc):
+        raise ValueError("invalid_claim_lease")
+    manufacturer, oem = _identity(item.get("manufacturer"), item.get("oem")) if item.get("manufacturer") != "__AUTO__" else ("__AUTO__", _identity("Honda", item.get("oem"))[1])
+    if item["oem"] != oem or item["manufacturer"] != manufacturer:
+        raise ValueError("noncanonical_claim_identity")
+    return item
 
 
-def _finish(request_id: str, result: dict) -> None:
+def _validated_result(item, result):
     status = str(result.get("status") or "TECHNICAL_ERROR").upper()
-    payload = {
-        "request_id": request_id,
-        "status": status,
-        "dealer_price_usd": result.get("dealer_price_usd"),
-        "source": result.get("source"),
-        "current_oem": result.get("current_oem"),
-        "name": result.get("name"),
-        "error_code": result.get("error_code") or (None if status == "FOUND" else status),
-        "manufacturer": result.get("manufacturer"),
-    }
-    _request("/internal/dp-sync/result", method="POST", payload=payload)
+    if status == "BROWSER_DOWN":
+        return {"status": "TECHNICAL_ERROR", "error_code": "BROWSER_DOWN"}
+    if status != "FOUND":
+        return {"status": status if status in {"NOT_FOUND", "NO_PRICE", "CLOUDFLARE", "AUTH_REQUIRED", "TECHNICAL_ERROR"} else "TECHNICAL_ERROR",
+                "error_code": status}
+    try:
+        manufacturer, query = _identity(result.get("manufacturer"), result.get("query_oem"))
+        _, current = _identity(manufacturer, result.get("current_oem") or query)
+        _, sku = _identity(manufacturer, result.get("matched_sku"))
+        price = result.get("dealer_price_usd")
+        if (query != item["oem"] or item["manufacturer"] not in {"__AUTO__", manufacturer}
+            or sku not in {query, current} or type(price) not in (int, float)
+            or not math.isfinite(price) or price <= 0 or result.get("currency", "USD") != "USD"):
+            raise ValueError("invalid_producer_identity_or_price")
+        _dealer_source(result.get("source"), manufacturer, query)
+        # Exact DCP .c2 .dbl parser produces dealer_price_usd, not Retail/MSRP.
+        return {"status": "FOUND", "manufacturer": manufacturer, "query_oem": query,
+                "matched_sku": sku, "current_oem": current, "dealer_price_usd": price,
+                "currency": "USD", "source": result["source"], "name": result.get("name")}
+    except Exception:
+        return {"status": "TECHNICAL_ERROR", "error_code": "producer_result_contract_rejected"}
+
+
+def _finish(item: dict, result: dict) -> dict:
+    payload = {**result, "request_id": item["request_id"], "protocol_version": 2,
+               "producer_id": PRODUCER_ID, "claim_token": item["claim_token"],
+               "claim_generation": item["claim_generation"]}
+    response = _request("/internal/dp-sync/result", method="POST", payload=payload)
+    if (response.get("ok") is not True or response.get("status") != result["status"]
+        or response.get("server_cache_committed") is not (result["status"] == "FOUND")):
+        raise ValueError("result_commit_ack_not_proven")
+    return response
 
 
 def _agent_status_for_dcp(status: str) -> str:
@@ -252,8 +329,9 @@ def _preflight_dcp() -> str:
         )
         return _DCP_STATUS
 
-    pages = [x for x in tabs if x.get("type") == "page"]
-    for tab in pages:
+    # WOPS or any other challenged site must not poison shared DCP health.
+    dcp_pages = [x for x in tabs if oemixibot_dcp_price._is_dcp_page(x)]
+    for tab in dcp_pages:
         tab_url = str(tab.get("url") or "")
         tab_title = str(tab.get("title") or "")
         marker_text = (tab_url + "\n" + tab_title).lower()
@@ -264,10 +342,6 @@ def _preflight_dcp() -> str:
             _set_dcp_health("CLOUDFLARE", detail="cloudflare_tab_detected")
             return _DCP_STATUS
 
-    dcp_pages = [
-        x for x in pages
-        if oemixibot_dcp_price.DCP_HOST in str(x.get("url") or "")
-    ]
     if not dcp_pages:
         _set_dcp_health("TECHNICAL_ERROR", detail="dcp_tab_missing")
         return _DCP_STATUS
@@ -329,7 +403,15 @@ def _auto_identity_price(oem: str) -> dict:
     for cat in finder.CATALOGS:
         if cat.kind == "parts" and cat.manufacturer not in manufacturers:
             manufacturers.append(cat.manufacturer)
-    for manufacturer in manufacturers:
+    try:
+        gap = float(os.getenv("DP_SYNC_LOOKUP_GAP_SECONDS", "5"))
+    except ValueError:
+        gap = 5.0
+    if not math.isfinite(gap) or gap < 0:
+        gap = 5.0
+    for index, manufacturer in enumerate(manufacturers):
+        if index:
+            time.sleep(gap)
         r = oemixibot_dcp_price.get_dealer_price_dict(manufacturer, oem)
         status = str(r.get("status") or "").upper()
         if status == "FOUND":
@@ -342,54 +424,48 @@ def _auto_identity_price(oem: str) -> dict:
 
 
 def run_once() -> bool:
-    item = _claim()
-    if not item:
+    global _PRODUCER_STOP
+    if _PRODUCER_STOP or JOURNAL_FILE.exists():
+        _PRODUCER_STOP = True
         return False
-
-    request_id = str(item["request_id"])
-    manufacturer = str(item["manufacturer"])
-    oem = str(item["oem"])
     try:
-        result = (
-            _auto_identity_price(oem)
-            if manufacturer == "__AUTO__"
-            else oemixibot_dcp_price.get_dealer_price_dict(manufacturer, oem)
-        )
-    except Exception as exc:
-        result = {
-            "status": "TECHNICAL_ERROR",
-            "dealer_price_usd": None,
-            "source": None,
-            "current_oem": None,
-            "name": None,
-            "message": type(exc).__name__,
-        }
-
-    status = str(result.get("status") or "TECHNICAL_ERROR").upper()
-    _finish(request_id, result)
-
-    if status in {"CLOUDFLARE", "AUTH_REQUIRED", "TECHNICAL_ERROR"}:
-        _set_dcp_health(
-            status,
-            detail=str(result.get("message") or status),
-        )
-    else:
-        _write_status("online", detail=status)
-
-    print(
-        "DP_SYNC",
-        manufacturer,
-        oem,
-        status,
-        flush=True,
-    )
-    return True
+        _journal("claim_delivery_uncertain")
+        item = _claim()
+        if not item:
+            _clear_journal()
+            return False
+        _journal("lookup_inflight", item)
+        try:
+            raw = (_auto_identity_price(item["oem"]) if item["manufacturer"] == "__AUTO__"
+                   else oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"]))
+        except Exception:
+            raw = {"status": "TECHNICAL_ERROR"}
+        result = _validated_result(item, raw)
+        status = result["status"]
+        if status in {"CLOUDFLARE", "AUTH_REQUIRED", "TECHNICAL_ERROR"}:
+            _set_dcp_health(status, detail=status)
+        _journal("result_delivery_uncertain", item)
+        _finish(item, result)
+        _clear_journal()
+        if status in {"CLOUDFLARE", "AUTH_REQUIRED"}:
+            _PRODUCER_STOP = True  # Explicit operator recovery; no automatic search.
+        _write_status(_agent_status_for_dcp(status), detail=status)
+        return True
+    except Exception:
+        # Includes 401/409, malformed claims, GET/POST timeouts and lost ACK after
+        # server COMMIT. Even passive READY cannot clear this boot/disk latch.
+        _PRODUCER_STOP = True
+        _write_status("offline", detail="producer_v2_reconciliation_required")
+        raise
 
 
 def main() -> int:
     if not _acquire_singleton():
         print("DP_SYNC_AGENT already running; exiting duplicate", flush=True)
         return 23
+    if JOURNAL_FILE.exists():
+        _write_status("offline", detail="producer_v2_reconciliation_required")
+        return 24
     _dealer_token()
     _write_status("online", detail="started")
     print("DP_SYNC_AGENT starting via signed HTTPS", flush=True)
@@ -399,6 +475,8 @@ def main() -> int:
     _preflight_dcp()
 
     while True:
+        if _PRODUCER_STOP:
+            return 24
         try:
             if _health_check_due():
                 _preflight_dcp()
@@ -419,7 +497,7 @@ def main() -> int:
                 "TECHNICAL_ERROR",
                 detail=type(exc).__name__,
             )
-            traceback.print_exc()
+            print("DP_SYNC_ERROR", type(exc).__name__, flush=True)
             time.sleep(5)
 
 

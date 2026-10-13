@@ -14,7 +14,8 @@ class ProcenkaDPBridgeTests(unittest.TestCase):
         self.assertIn("get_dealer_price_cache(", block)
         self.assertIn("if cached and cached.get(\"fresh\"):", block)
         self.assertIn("dp_live_bridge.request_live_dp", block)
-        self.assertIn("upsert_dealer_price_cache(", block)
+        self.assertNotIn("upsert_dealer_price_cache(", block)
+        self.assertIn('live.get("server_cache_committed") is True', block)
         self.assertLess(
             block.index("if cached and cached.get(\"fresh\"):"),
             block.index("dp_live_bridge.request_live_dp"),
