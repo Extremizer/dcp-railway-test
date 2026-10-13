@@ -291,6 +291,42 @@ class Web2FinanceRoleUiTests(unittest.TestCase):
             self.assertEqual(first.locator(".partner-amount").get_attribute("data-authoritative"), "false")
             self.assertNotEqual(norm(first.locator(".partner-amount").inner_text()), "0 ₽")
 
+    def test_p3_nullable_history_fields_render_as_em_dash(self):
+        payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
+        row = payload["warehouse"]["rows"][0]
+        row["date"] = None
+        row["warehouseOrderNo"] = None
+        row["customerAmountRub"] = None
+        row["partnerAmountRub"] = None
+        row["partnerAmountAuthoritative"] = False
+        row["paymentSource"] = None
+        row["paymentStatus"] = None
+        row["balanceDeltaRub"] = None
+        row["client"] = None
+        row["oems"] = []
+
+        with fixture_server() as url:
+            browser = self.browser()
+            page = browser.new_page(viewport={"width": 1200, "height": 900})
+            page.route(
+                "**/finance_role_preview_fixture.json",
+                lambda route: route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(payload, ensure_ascii=False),
+                ),
+            )
+            page.goto(url)
+            page.wait_for_selector("#warehouseBody tr")
+            first = page.locator("#warehouseBody tr").first
+            cells = [norm(x) for x in first.locator("td").all_inner_texts()]
+            self.assertIn("—", cells[0])
+            self.assertIn("—", cells[1])
+            self.assertEqual(norm(first.locator(".customer-amount").inner_text()), "—")
+            self.assertEqual(norm(first.locator(".partner-amount").inner_text()), "—")
+            self.assertEqual(first.locator(".balance-cell").inner_text(), "")
+            self.assertNotIn("0 ₽", first.inner_text())
+
     def test_server_strings_are_escaped_not_inserted_as_active_html(self):
         payload = json.loads(FIXTURE.read_text(encoding="utf-8"))
         payload["warehouse"]["rows"][0]["client"] = '<img id="xssClient" src=x onerror="window.__pwned=1">'
