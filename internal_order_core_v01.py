@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import hashlib
 import json
 import sqlite3
 from typing import Any
@@ -24,6 +25,28 @@ import warehouse_balance_v14 as warehouse_balance
 
 PAYMENT_DUE = "DUE"
 PAYMENT_PAID = "PAID"
+TERMS_FINGERPRINT_VERSION = "order-items-v1"
+
+
+def _strict_whole_rub(value: Any, name: str, *, allow_zero: bool = True) -> int:
+    """Whole-RUB money contract for Internal Order terms.
+
+    bool, float, Decimal-like objects and strings are rejected instead of being
+    coerced/truncated. Existing FinanceEngine arithmetic is not changed.
+    """
+    if type(value) is not int:
+        raise TypeError(f"{name} must be an integer number of RUB")
+    if value < 0 or (not allow_zero and value == 0):
+        raise ValueError(f"{name} must be {'positive' if not allow_zero else 'non-negative'}")
+    return value
+
+
+def _strict_positive_int(value: Any, name: str) -> int:
+    if type(value) is not int:
+        raise TypeError(f"{name} must be a positive integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return value
 
 
 def _now() -> str:
@@ -80,6 +103,14 @@ def init(db_file) -> None:
               created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS internal_order_terms_integrity_v01(
+              order_id TEXT PRIMARY KEY,
+              fingerprint_version TEXT NOT NULL,
+              fingerprint_sha256 TEXT NOT NULL,
+              item_count INTEGER NOT NULL CHECK(item_count > 0),
+              created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS internal_order_payment_state_v01(
               order_id TEXT PRIMARY KEY,
               payment_status TEXT NOT NULL CHECK(payment_status IN ('DUE','PAID')),
@@ -133,12 +164,36 @@ def _load_shared_order(c, order_id: str):
     }
 
 
-def _load_internal_line_facts(c, order_id: str) -> dict:
+def _order_item_columns(c) -> set[str]:
+    return {str(row[1]) for row in c.execute("PRAGMA table_info(order_items)")}
+
+
+def _canonical_internal_terms(c, order_id: str) -> dict:
+    """Return strict authoritative line facts + canonical fingerprint payload."""
+    required = {
+        "id",
+        "order_id",
+        "offer_source",
+        "warehouse_id",
+        "oem",
+        "quantity",
+        "customer_unit_rub",
+        "payment_route",
+    }
+    cols = _order_item_columns(c)
+    missing = sorted(required - cols)
+    if missing:
+        raise RuntimeError(
+            "shared order_items schema missing terms-integrity columns: "
+            + ",".join(missing)
+        )
+
     rows = c.execute(
-        """SELECT offer_source,warehouse_id,quantity,customer_unit_rub,payment_route
+        """SELECT id,offer_source,warehouse_id,oem,quantity,
+                  customer_unit_rub,payment_route
            FROM order_items
            WHERE order_id=?
-           ORDER BY position,id""",
+           ORDER BY id""",
         (order_id,),
     ).fetchall()
     if not rows:
@@ -147,32 +202,93 @@ def _load_internal_line_facts(c, order_id: str) -> dict:
     warehouse_ids = set()
     routes = set()
     customer_total = 0
-    for source, warehouse_id, quantity, customer_unit_rub, route in rows:
-        if str(source or "").strip().lower() != "warehouse":
+    canonical_items = []
+
+    for item_id, source, warehouse_id, oem, quantity, customer_unit_rub, route in rows:
+        item_id = _strict_positive_int(item_id, "order_item_id")
+        source = str(source or "").strip().lower()
+        if source != "warehouse":
             raise ValueError("INTERNAL_ORDER_MUST_CONTAIN_ONLY_WAREHOUSE_LINES")
-        if warehouse_id is None:
-            raise ValueError("internal order line missing warehouse_id")
-        warehouse_ids.add(int(warehouse_id))
-        qty = int(quantity)
-        if qty <= 0:
-            raise ValueError("internal order quantity must be positive")
-        if customer_unit_rub is None:
-            raise ValueError("internal order customer amount snapshot missing")
-        customer_total += int(customer_unit_rub) * qty
+        warehouse_id = _strict_positive_int(warehouse_id, "warehouse_id")
+        oem = str(oem or "").strip()
+        if not oem:
+            raise ValueError("internal order OEM snapshot missing")
+        qty = _strict_positive_int(quantity, "quantity")
+        unit_rub = _strict_whole_rub(customer_unit_rub, "customer_unit_rub")
         try:
-            routes.add(PaymentRoute(str(route or "").strip()).value)
+            route_value = PaymentRoute(str(route or "").strip()).value
         except ValueError as exc:
             raise ValueError("internal order payment_route snapshot invalid") from exc
+
+        warehouse_ids.add(warehouse_id)
+        routes.add(route_value)
+        customer_total += unit_rub * qty
+        canonical_items.append(
+            {
+                "customer_unit_rub": unit_rub,
+                "item_id": item_id,
+                "oem": oem,
+                "offer_source": source,
+                "payment_route": route_value,
+                "quantity": qty,
+                "warehouse_id": warehouse_id,
+            }
+        )
 
     if len(warehouse_ids) != 1:
         raise ValueError("INTERNAL_ORDER_MUST_TARGET_ONE_WAREHOUSE")
     if len(routes) != 1:
         raise ValueError("INTERNAL_ORDER_PAYMENT_ROUTE_MUST_BE_UNIFORM")
+
+    payload = json.dumps(
+        canonical_items,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()
     return {
         "warehouse_id": next(iter(warehouse_ids)),
-        "customer_amount_rub": int(customer_total),
+        "customer_amount_rub": customer_total,
         "payment_route": next(iter(routes)),
+        "item_count": len(canonical_items),
+        "fingerprint_version": TERMS_FINGERPRINT_VERSION,
+        "fingerprint_sha256": fingerprint,
+        "canonical_items": canonical_items,
     }
+
+
+def _load_internal_line_facts(c, order_id: str) -> dict:
+    terms = _canonical_internal_terms(c, order_id)
+    return {
+        "warehouse_id": terms["warehouse_id"],
+        "customer_amount_rub": terms["customer_amount_rub"],
+        "payment_route": terms["payment_route"],
+    }
+
+
+def _integrity_row(c, order_id: str):
+    return c.execute(
+        """SELECT order_id,fingerprint_version,fingerprint_sha256,item_count,created_at
+           FROM internal_order_terms_integrity_v01
+           WHERE order_id=?""",
+        (order_id,),
+    ).fetchone()
+
+
+def _assert_terms_integrity(c, order_id: str) -> dict:
+    proof = _integrity_row(c, order_id)
+    if proof is None:
+        raise ValueError("INTERNAL_TERMS_INTEGRITY_PROOF_REQUIRED")
+    current = _canonical_internal_terms(c, order_id)
+    same = (
+        str(proof[1]) == current["fingerprint_version"]
+        and str(proof[2]) == current["fingerprint_sha256"]
+        and int(proof[3]) == int(current["item_count"])
+    )
+    if not same:
+        raise ValueError("INTERNAL_ORDER_TERMS_DRIFT")
+    return current
 
 
 def _snapshot_row(c, order_id: str):
@@ -224,9 +340,9 @@ def create_payment_snapshot(
     order_id = _text(order_id, "order_id")
     client_id = _text(client_id, "client_id")
     created_by = _text(created_by, "created_by")
-    partner_amount_rub = int(partner_amount_rub)
-    if partner_amount_rub < 0:
-        raise ValueError("partner_amount_rub must be non-negative")
+    partner_amount_rub = _strict_whole_rub(
+        partner_amount_rub, "partner_amount_rub"
+    )
     warehouse_order_number = str(warehouse_order_number or "").strip() or None
 
     own = conn is None
@@ -242,8 +358,12 @@ def create_payment_snapshot(
         order = _load_shared_order(c, order_id)
         line_facts = _load_internal_line_facts(c, order_id)
         warehouse_id = int(line_facts["warehouse_id"])
-        if expected_warehouse_id is not None and int(expected_warehouse_id) != warehouse_id:
-            raise PermissionError("INTERNAL_ORDER_WAREHOUSE_SCOPE_MISMATCH")
+        if expected_warehouse_id is not None:
+            expected_warehouse_id = _strict_positive_int(
+                expected_warehouse_id, "expected_warehouse_id"
+            )
+            if expected_warehouse_id != warehouse_id:
+                raise PermissionError("INTERNAL_ORDER_WAREHOUSE_SCOPE_MISMATCH")
 
         existing = _snapshot_row(c, order_id)
         candidate = (
@@ -261,6 +381,10 @@ def create_payment_snapshot(
             same = tuple(existing[:9]) == candidate
             if not same:
                 raise ValueError("internal payment snapshot conflict")
+            # Compatibility: legacy P2/P3 snapshots remain readable. If they
+            # predate P4 and have no proof, do not silently backfill one.
+            if _integrity_row(c, order_id) is not None:
+                _assert_terms_integrity(c, order_id)
             result = get_payment_snapshot(db_file, order_id, conn=c)
             ok = True
             return result
@@ -273,6 +397,19 @@ def create_payment_snapshot(
                  order_status_snapshot,created_by,created_at)
                VALUES(?,?,?,?,?,?,?,?,?,?)""",
             candidate + (now,),
+        )
+        terms = _canonical_internal_terms(c, order_id)
+        c.execute(
+            """INSERT INTO internal_order_terms_integrity_v01(
+                 order_id,fingerprint_version,fingerprint_sha256,item_count,created_at)
+               VALUES(?,?,?,?,?)""",
+            (
+                order_id,
+                terms["fingerprint_version"],
+                terms["fingerprint_sha256"],
+                int(terms["item_count"]),
+                now,
+            ),
         )
         c.execute(
             """INSERT INTO internal_order_payment_state_v01(
@@ -380,7 +517,9 @@ def confirm_internal_direct_payment(
         raise PermissionError("WAREHOUSE_ACTOR_NOT_AUTHORIZED")
     if not payment_confirmed:
         raise ValueError("FULL_PAYMENT_CONFIRMATION_REQUIRED")
-    confirmed_amount_rub = int(confirmed_amount_rub)
+    confirmed_amount_rub = _strict_whole_rub(
+        confirmed_amount_rub, "confirmed_amount_rub"
+    )
 
     init(db_file)
     c = sqlite3.connect(db_file, timeout=30)
@@ -392,8 +531,19 @@ def confirm_internal_direct_payment(
         if snapshot_row is None:
             raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_REQUIRED")
         snapshot = get_payment_snapshot(db_file, order_id, conn=c)
+        current_terms = _assert_terms_integrity(c, order_id)
 
-        if int(actor_context.warehouse_id) != int(snapshot["warehouse_id"]):
+        if int(current_terms["warehouse_id"]) != int(snapshot["warehouse_id"]):
+            raise ValueError("INTERNAL_ORDER_TERMS_DRIFT")
+        if int(current_terms["customer_amount_rub"]) != int(snapshot["customer_amount_rub"]):
+            raise ValueError("INTERNAL_ORDER_TERMS_DRIFT")
+        if str(current_terms["payment_route"]) != str(snapshot["payment_route"]):
+            raise ValueError("INTERNAL_ORDER_TERMS_DRIFT")
+
+        actor_warehouse_id = _strict_positive_int(
+            actor_context.warehouse_id, "actor_context.warehouse_id"
+        )
+        if actor_warehouse_id != int(snapshot["warehouse_id"]):
             raise PermissionError("CROSS_WAREHOUSE_PAYMENT_CONFIRMATION_DENIED")
         if str(snapshot["payment_route"]) != PaymentRoute.DIRECT_PARTNER.value:
             raise ValueError("INTERNAL_DIRECT_CONFIRMATION_REQUIRES_DIRECT_PARTNER")
@@ -546,6 +696,13 @@ def prepare_admin_extremizer_exception(
         if snapshot_row is None:
             raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_REQUIRED")
         snapshot = get_payment_snapshot(db_file, order_id, conn=c)
+        current_terms = _assert_terms_integrity(c, order_id)
+        if (
+            int(current_terms["warehouse_id"]) != int(snapshot["warehouse_id"])
+            or int(current_terms["customer_amount_rub"]) != int(snapshot["customer_amount_rub"])
+            or str(current_terms["payment_route"]) != str(snapshot["payment_route"])
+        ):
+            raise ValueError("INTERNAL_ORDER_TERMS_DRIFT")
         reservation = warehouse_balance.reserve_full_balance(
             db_file,
             reservation_id=reservation_id,
@@ -601,6 +758,7 @@ __all__ = [
     "init",
     "create_payment_snapshot",
     "get_payment_snapshot",
+    "TERMS_FINGERPRINT_VERSION",
     "confirm_internal_direct_payment",
     "prepare_admin_extremizer_exception",
 ]
