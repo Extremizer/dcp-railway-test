@@ -1,0 +1,57 @@
+name: WEB2 Finance Role UI Isolated
+
+on:
+  push:
+    branches:
+      - web2-ui-role-consistency-readmodel-20261013
+    paths:
+      - "web2/finance_role_preview.*"
+      - "web2_finance_read_model_adapter.py"
+      - "test_web2_finance_read_model_adapter.py"
+      - "test_web2_finance_role_ui.py"
+      - "WEB2_WAREHOUSE_HISTORY_ADAPTER_CONTRACT.md"
+      - "WEB2_ROLE_CONSISTENCY_READMODEL_BOUNDARY.md"
+      - ".github/workflows/web2-finance-role-ui-isolated.yml"
+  pull_request:
+    paths:
+      - "web2/finance_role_preview.*"
+      - "web2_finance_read_model_adapter.py"
+      - "test_web2_finance_read_model_adapter.py"
+      - "test_web2_finance_role_ui.py"
+      - "warehouse_history_v14.py"
+      - "warehouse_balance_v14.py"
+      - ".github/workflows/web2-finance-role-ui-isolated.yml"
+  workflow_dispatch:
+
+jobs:
+  role-read-model-ui:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: JavaScript syntax
+        run: node --check web2/finance_role_preview.js
+
+      - name: Python syntax
+        run: |
+          python -m py_compile             warehouse_history_v14.py             web2_finance_read_model_adapter.py             test_web2_finance_read_model_adapter.py             test_web2_finance_role_ui.py
+
+      - name: Theme 1 warehouse-history read-model regression
+        run: python -B -m unittest -v test_warehouse_history_v14.py
+
+      - name: WEB2 typed read-model adapter regression
+        run: python -B -m unittest -v test_web2_finance_read_model_adapter.py
+
+      - name: Install isolated browser dependencies
+        run: |
+          python -m pip install "playwright>=1.50,<2"
+          python -m playwright install --with-deps chromium
+
+      - name: WEB2 role consistency and safe-render browser regression
+        run: python -B -m unittest -v test_web2_finance_role_ui.py

@@ -1,0 +1,54 @@
+WEB2 ROLE CONSISTENCY / READ-MODEL — LOCAL ISOLATED VERIFICATION
+Date: 2026-10-13
+Branch: web2-ui-role-consistency-readmodel-20261013
+Theme 1 base: 84758f44e6a15f8cc254c767146a0dc51f07d9fd
+
+LOCAL ONLY — this file does not claim GitHub CI.
+
+JavaScript:
+node --check web2/finance_role_preview.js
+PASS
+
+Python syntax:
+web2_finance_read_model_adapter.py
+test_web2_finance_read_model_adapter.py
+test_web2_finance_role_ui.py
+PASS
+
+Typed adapter regression:
+py -3 -m unittest -v test_web2_finance_read_model_adapter.py
+Ran 6 tests
+OK
+
+Browser regression:
+py -3 -m unittest -v test_web2_finance_role_ui.py
+Ran 11 tests in 31.027s
+OK
+
+Verified locally:
+- effective rf_warehouse_user -> SKLAD working view;
+- ADMIN/SKLAD comparison only in explicit DEMO MODE;
+- Acting-As banner matches effective context;
+- preview exit never claims a server session ended;
+- exactly four warehouse business statuses;
+- System Error rendered separately in #FF3030 with context;
+- five Desktop columns preserved;
+- Mobile structured cards preserve five fields;
+- role-relative order numbers preserved;
+- both numbers resolve to one fixture order card;
+- default 15 / option 20 / pagination/search preserved;
+- posted/reserved/available separated;
+- full-history fixture total 3 425 ₽ unaffected by filter;
+- missing authoritative P renders — and never 0 ₽;
+- typed adapter maps real warehouse_history_v14 fields;
+- business status comes from separate Order Core metadata, not finance inference;
+- future server strings are escaped; injected HTML/event handlers do not execute;
+- client direct warehouse payment/refund remain zero wallet delta;
+- Dealer USD balance and DCP Financial Gate remain separate.
+
+Environment note:
+The pre-existing Theme 1 test_warehouse_history_v14.py on this Windows host uses
+TemporaryDirectory + sqlite and Python 3.14 retains handles long enough for Windows
+cleanup to raise WinError 32 after assertions. Theme 2 did not modify Theme 1 Core
+or its test to mask that host/interpreter cleanup behavior. The dedicated GitHub CI
+runs Python 3.12 and is the required authoritative CI proof for that server test.

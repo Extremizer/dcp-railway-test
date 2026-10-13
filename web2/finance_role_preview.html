@@ -9,12 +9,24 @@
 <body>
   <div id="actingBanner" class="acting-banner" role="status" aria-live="polite">
     <div>
-      <strong>РЕЖИМ ЗАМЕЩЕНИЯ</strong>
+      <strong>РЕЖИМ ЗАМЕЩЕНИЯ · FIXTURE ONLY</strong>
       <span>Фактически: <b id="actualAdmin"></b></span>
       <span>От имени: <b id="effectiveSubject"></b></span>
       <span>Роль: <b id="effectiveRole"></b></span>
+      <span>Представление: <b id="effectiveView"></b></span>
     </div>
-    <button id="actingExit" type="button">Вернуться в ADMIN</button>
+    <button id="actingExit" type="button">Выход — только preview</button>
+  </div>
+
+  <div id="demoBanner" class="demo-banner" hidden>
+    <div>
+      <strong>DEMO MODE · СРАВНЕНИЕ ПРЕДСТАВЛЕНИЙ</strong>
+      <span>Это презентационный режим. Он не меняет effective role, разрешения или серверную Acting-As сессию.</span>
+    </div>
+    <div class="role-switch" aria-label="Demo role comparison">
+      <button id="adminRole" class="role-btn" type="button">ADMIN</button>
+      <button id="skladRole" class="role-btn" type="button">SKLAD</button>
+    </div>
   </div>
 
   <header class="shell-header">
@@ -23,13 +35,16 @@
       <h1>Role-Based Finance UI Preview</h1>
       <p>Изолированный интерфейс. Реальные оплаты, заказы, DCP и авторизация не подключены.</p>
     </div>
-    <span class="fixture-badge">FINANCE WIRING PENDING</span>
+    <div class="header-actions">
+      <span class="fixture-badge">FINANCE WIRING PENDING</span>
+      <button id="demoToggle" class="demo-toggle" type="button" aria-pressed="false">DEMO MODE: OFF</button>
+    </div>
   </header>
 
   <nav class="section-tabs" aria-label="Разделы preview">
-    <button class="tab is-active" data-panel="warehousePanel">Warehouse History</button>
-    <button class="tab" data-panel="clientPanel">Client Payments</button>
-    <button class="tab" data-panel="dealerPanel">Dealer USD / DCP Gate</button>
+    <button class="tab is-active" data-panel="warehousePanel" data-context="warehouse">Warehouse History</button>
+    <button class="tab" data-panel="clientPanel" data-context="client">Client Payments</button>
+    <button class="tab" data-panel="dealerPanel" data-context="dealer">Dealer USD / DCP Gate</button>
   </nav>
 
   <main>
@@ -38,11 +53,7 @@
         <div>
           <div class="eyebrow">WAREHOUSE HISTORY</div>
           <h2>Пять утверждённых полей</h2>
-          <p>Финансовые значения приходят готовыми из fixture read model; браузер не рассчитывает ledger.</p>
-        </div>
-        <div class="role-switch" aria-label="Роль просмотра">
-          <button id="adminRole" class="role-btn is-active" type="button">ADMIN</button>
-          <button id="skladRole" class="role-btn" type="button">SKLAD</button>
+          <p>Активное представление: <strong id="activeViewLabel">—</strong>. Финансовые значения приходят готовыми из read model.</p>
         </div>
       </div>
 
@@ -70,12 +81,13 @@
         </label>
       </div>
 
-      <div class="legend" aria-label="Статусы">
+      <div id="systemMessages" class="system-messages" aria-live="polite"></div>
+
+      <div class="legend" aria-label="Бизнес-статусы заказа">
         <span class="legend-item status-new">Новый</span>
         <span class="legend-item status-assembled-unpaid">Собран, не оплачен</span>
         <span class="legend-item status-assembled-paid">Собран, оплачен</span>
         <span class="legend-item status-shipped">Отгружен</span>
-        <span class="legend-item status-system-error">System Error</span>
       </div>
 
       <div class="table-wrap desktop-only">
@@ -83,7 +95,7 @@
           <thead>
             <tr>
               <th>Дата</th>
-              <th id="ordersHeader">№ нашего заказа / № заказа на складе</th>
+              <th id="ordersHeader">№ нашего заказа / № заказа Extremizer</th>
               <th>Сумма для клиента</th>
               <th>Сумма по условиям склада</th>
               <th>Баланс</th>

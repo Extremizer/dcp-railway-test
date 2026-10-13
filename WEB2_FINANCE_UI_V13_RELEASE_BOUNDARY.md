@@ -1,5 +1,7 @@
 # WEB2 UI v1.3 — Finance v1.4 isolated implementation boundary
 
+> **Role/read-model addendum:** this earlier boundary is retained for traceability. Current role-consistency and warehouse read-model rules are authoritative in `WEB2_ROLE_CONSISTENCY_READMODEL_BOUNDARY.md` and `WEB2_WAREHOUSE_HISTORY_ADAPTER_CONTRACT.md`.
+
 Status: isolated UI only. No production wiring, merge, deployment, financial operation, real user impersonation, DCP submission, or order mutation is authorized by this package.
 
 ## Fixture UI surfaces
@@ -15,15 +17,16 @@ The browser consumes a fixture read-model JSON. It does not calculate finance fr
 
 ## Confirmed visual rules
 
-Warehouse row/status palette:
+Warehouse business-order row palette:
 
 - New: `#FFFFFF`.
 - Assembled, unpaid: `#FF6B65`.
 - Assembled, paid: `#FFF176`.
 - Shipped: `#BFF803`.
-- System Error: `#FF3030`.
 
 Status text remains visible; color is never the sole indicator.
+
+`System Error` is **not** a fifth business-order status. `#FF3030` is reserved for a separate system-error message carrying explicit error text/context.
 
 The full-history balance fixture is `3 425 ₽` and is deliberately supplied by the read model, not recomputed from filtered browser rows. The preview also exposes posted/reserved/available separately.
 
@@ -33,9 +36,11 @@ No endpoint below is asserted to exist today. Names are intentionally illustrati
 
 ### Warehouse History read model
 
-Authorization: ADMIN capability or exact warehouse resource scope.
+Theme 1 now provides the proven read-only module `warehouse_history_v14.py`. Its typed WEB2 mapping is frozen in `WEB2_WAREHOUSE_HISTORY_ADAPTER_CONTRACT.md`; no parallel history calculator is permitted.
 
-Required response fields:
+Authorization for future HTTP/service exposure remains: ADMIN capability or exact warehouse resource scope.
+
+Required UI response fields:
 
 - `warehouse_id`
 - `posted_rub`
@@ -118,11 +123,15 @@ Both displayed order numbers must resolve to the same authoritative order card.
 
 ## Integration gates
 
-Real wiring remains blocked until Theme 1 / COMMON CORE closes at least:
+Theme 1 has now closed two former preparation blockers on branch `finance-v14-internal-routing-p0-p1-20261013`:
 
-1. final Internal default payment route (`CLIENT -> WAREHOUSE`) in persisted Order Core snapshots;
-2. authoritative Warehouse Balance v1.4 history read model;
-3. canonical warehouse order-number field/source;
-4. scoped order-card projections by role/resource;
-5. real Acting-As identity resolver/router;
-6. supplier/DCP submission enforcement of `dcp_procurement_ready()` if automatic blocking is to be claimed.
+- default Internal warehouse routing is `CLIENT -> WAREHOUSE` / `DIRECT_PARTNER`;
+- authoritative read-only `warehouse_history_v14.py` exists.
+
+Theme 2 still does **not** wire real payment or finance runtime. Remaining real-wiring gates include:
+
+1. role-scoped HTTP/read-service exposure of `warehouse_history_v14.py`;
+2. authoritative canonical warehouse-order-number ownership for every Internal order;
+3. scoped Order Core metadata projection for status/client/OEM and detailed order cards;
+4. real Acting-As identity resolver/router and permission composition;
+5. supplier/DCP submission enforcement of `dcp_procurement_ready()` before automatic blocking can be claimed.
