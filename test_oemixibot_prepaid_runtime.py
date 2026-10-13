@@ -71,23 +71,19 @@ class RuntimePrepaidTests(unittest.TestCase):
             self.assertTrue(q.edit_message_text.called)
         self.assertEqual(self.finance.history('d')[0]['event_type'], 'PAYMENT')
 
+
     def test_checkout_callback_rejects_then_accepts_prepaid(self):
         self.store.cart_add('d', 'TEST-OEM', 60, 'Ski-Doo', 'part', 'Accessories')
         self.pay(50)
         update, q = self.update('checkout')
         asyncio.run(app.callback(update, SimpleNamespace(user_data={})))
-        self.assertIn('Недостаточно предоплаченного USD-баланса', q.edit_message_text.call_args.args[0])
-        self.assertEqual(len(self.store.cart_view('d')['items']), 1)
-        with self.store.db() as c:
-            self.assertEqual(c.execute('SELECT COUNT(*) FROM dealer_orders').fetchone()[0], 0)
-        self.pay(20, 'extra')
-        update, q = self.update('checkout')
-        asyncio.run(app.callback(update, SimpleNamespace(user_data={})))
         self.assertIn('подтверждён', q.edit_message_text.call_args.args[0])
         self.assertEqual(self.store.cart_view('d')['items'], [])
-        self.assertEqual(self.finance.balance('d'), Decimal('10'))
+        self.assertEqual(self.finance.balance('d'), Decimal('-10'))
+        self.assertFalse(self.finance.dcp_procurement_ready('d')['ready'])
+        self.pay(10, 'debt-close')
+        self.assertTrue(self.finance.dcp_procurement_ready('d')['ready'])
         self.assertEqual(sum(r['event_type']=='ORDER_CHARGE' for r in self.finance.history('d')), 1)
-
     def test_order_refund_and_adjustments_preserved(self):
         self.pay(100)
         self.store.cart_add('d', 'TEST-OEM', 60)
@@ -180,6 +176,7 @@ class RuntimePrepaidTests(unittest.TestCase):
         if runtime.job_queue is not None:
             self.assertEqual(runtime.job_queue.jobs(), ())
 
+
     def test_historical_credit_and_wallet_data_remain_unused(self):
         with self.store.db() as c:
             c.execute('ALTER TABLE dealers ADD COLUMN credit_limit_usd TEXT')
@@ -189,12 +186,12 @@ class RuntimePrepaidTests(unittest.TestCase):
         self.store.init()
         self.store.add_dealer('second', 102, 'Second')
         self.store.cart_add('d','TEST',1)
-        with self.assertRaisesRegex(ValueError,'INSUFFICIENT_AVAILABLE'):
-            self.store.checkout_cart('d','no-credit-order')
+        self.store.checkout_cart('d','debt-order')
+        self.assertEqual(self.finance.balance('d'), Decimal('-1'))
+        self.assertFalse(self.finance.dcp_procurement_ready('d')['ready'])
         with self.store.db() as c:
             self.assertEqual(c.execute("SELECT credit_limit_usd FROM dealers WHERE id='d'").fetchone()[0], '1000000')
             self.assertEqual(tuple(c.execute('SELECT * FROM wallet_events').fetchone()), (1,1000000))
-
 
 if __name__ == '__main__':
     unittest.main()
