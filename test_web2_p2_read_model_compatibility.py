@@ -127,7 +127,8 @@ class Web2P3CompatibilityTests(unittest.TestCase):
         self.assertIsNone(row.balance_delta_rub)
         self.assertEqual(row.status, "Собран, не оплачен")
         self.assertEqual(row.status_key, "assembled-unpaid")
-        self.assertEqual(row.client, "client:1001")
+        self.assertEqual(row.canonical_client_id, "client:1001")
+        self.assertIsNone(row.client_display)
         self.assertEqual(row.oems, ("OEM-1", "OEM-2"))
 
     def test_real_p3_paid_status_and_ledger_effect_remain_separate_from_business_status(self):
@@ -200,7 +201,8 @@ class Web2P3CompatibilityTests(unittest.TestCase):
         self.assertIsNone(row.partner_amount_rub)
         self.assertIsNone(row.payment_status)
         self.assertEqual(row.status, "Новый")
-        self.assertIsNone(row.client)
+        self.assertIsNone(row.canonical_client_id)
+        self.assertIsNone(row.client_display)
         self.assertEqual(row.oems, ())
         payload = to_fixture_dict(model)["warehouse"]["rows"][0]
         self.assertIsNone(payload["warehouseOrderNo"])
@@ -288,6 +290,186 @@ class Web2P3CompatibilityTests(unittest.TestCase):
         self.assertEqual(model.rows, ())
         self.assertEqual(model.summary.posted_rub, 2925)
         self.assertEqual(model.summary.full_history_balance_rub, 2925)
+
+
+    def test_trusted_client_display_is_separate_from_canonical_client_id(self):
+        db = self.full_db()
+        self.add_snapshot_order(db)
+        history = read_warehouse_history(db, warehouse_id=1, context=self.sklad())
+        strict = read_order(
+            db, warehouse_id=1, order_id="I-P3-UI", context=self.sklad()
+        )
+        model = adapt_warehouse_history(
+            history,
+            strict_orders_by_id={"I-P3-UI": strict},
+            client_display_by_id={"client:1001": "Trusted Client"},
+        )
+        row = model.rows[0]
+        self.assertEqual(row.canonical_client_id, "client:1001")
+        self.assertEqual(row.client_display, "Trusted Client")
+        payload = to_fixture_dict(model)["warehouse"]["rows"][0]
+        self.assertEqual(payload["clientId"], "client:1001")
+        self.assertEqual(payload["client"], "Trusted Client")
+
+    def test_client_id_is_never_implicitly_used_as_display_name(self):
+        db = self.full_db()
+        self.add_snapshot_order(db)
+        history = read_warehouse_history(db, warehouse_id=1, context=self.sklad())
+        strict = read_order(
+            db, warehouse_id=1, order_id="I-P3-UI", context=self.sklad()
+        )
+        model = adapt_warehouse_history(
+            history,
+            strict_orders_by_id={"I-P3-UI": strict},
+        )
+        row = model.rows[0]
+        self.assertEqual(row.canonical_client_id, "client:1001")
+        self.assertIsNone(row.client_display)
+        payload = to_fixture_dict(model)["warehouse"]["rows"][0]
+        self.assertEqual(payload["clientId"], "client:1001")
+        self.assertIsNone(payload["client"])
+
+    def test_money_fields_reject_bool_float_fractional_string_and_bad_types(self):
+        valid = {
+            "contract_version": P3_CONTRACT_VERSION,
+            "scope": {"warehouse_id": 1, "viewer_type": "warehouse"},
+            "summary": {
+                "warehouse_id": 1,
+                "posted_balance_rub": 100,
+                "reserved_balance_rub": 20,
+                "available_balance_rub": 80,
+            },
+            "rows": [],
+        }
+        probes = [
+            ("summary", "posted_balance_rub", True),
+            ("summary", "posted_balance_rub", 100.0),
+            ("summary", "posted_balance_rub", 100.5),
+            ("summary", "posted_balance_rub", "100"),
+            ("summary", "posted_balance_rub", "100.5"),
+            ("summary", "posted_balance_rub", float("nan")),
+            ("summary", "posted_balance_rub", float("inf")),
+            ("summary", "posted_balance_rub", []),
+        ]
+        for container, key, value in probes:
+            with self.subTest(value=repr(value)):
+                payload = {
+                    **valid,
+                    "scope": dict(valid["scope"]),
+                    "summary": dict(valid["summary"]),
+                    "rows": [],
+                }
+                payload[container][key] = value
+                with self.assertRaisesRegex(ReadModelContractError, "INVALID_INTEGER"):
+                    adapt_warehouse_history(payload)
+
+    def test_negative_customer_and_partner_amounts_are_rejected_but_signed_ledger_effect_is_allowed(self):
+        db = self.full_db()
+        self.add_snapshot_order(db)
+        history = read_warehouse_history(db, warehouse_id=1, context=self.sklad())
+        strict = read_order(
+            db, warehouse_id=1, order_id="I-P3-UI", context=self.sklad()
+        )
+
+        bad_c = {
+            **history,
+            "rows": [{**history["rows"][0], "customer_amount_rub": -1}],
+        }
+        with self.assertRaisesRegex(ReadModelContractError, "NEGATIVE_NOT_ALLOWED:customer_amount_rub"):
+            adapt_warehouse_history(
+                bad_c, strict_orders_by_id={"I-P3-UI": strict}
+            )
+
+        bad_p = {
+            **history,
+            "rows": [{**history["rows"][0], "partner_amount_rub": -1}],
+        }
+        with self.assertRaisesRegex(ReadModelContractError, "NEGATIVE_NOT_ALLOWED:partner_amount_rub"):
+            adapt_warehouse_history(
+                bad_p, strict_orders_by_id={"I-P3-UI": strict}
+            )
+
+        # Signed ledger effects are valid. Use a non-snapshot pre-terms row to
+        # isolate validation from strict snapshot matching.
+        signed = {
+            "contract_version": P3_CONTRACT_VERSION,
+            "scope": {"warehouse_id": 1, "viewer_type": "warehouse"},
+            "summary": {
+                "warehouse_id": 1,
+                "posted_balance_rub": -8500,
+                "reserved_balance_rub": 0,
+                "available_balance_rub": -8500,
+            },
+            "rows": [{
+                "extremizer_order_number": "I-SIGNED",
+                "warehouse_order_number": None,
+                "date": None,
+                "order_status": "new",
+                "payment_status": None,
+                "client_id": None,
+                "customer_amount_rub": None,
+                "partner_amount_rub": 8500,
+                "partner_amount_source": "warehouse_balance_reservation",
+                "payment_route": None,
+                "internal_payment_snapshot": False,
+                "warehouse_id": 1,
+                "balance_rub": -8500,
+            }],
+        }
+        model = adapt_warehouse_history(signed)
+        self.assertEqual(model.rows[0].balance_delta_rub, -8500)
+
+    def test_available_balance_invariant_is_checked_without_recalculation(self):
+        response = {
+            "contract_version": P3_CONTRACT_VERSION,
+            "scope": {"warehouse_id": 1, "viewer_type": "warehouse"},
+            "summary": {
+                "warehouse_id": 1,
+                "posted_balance_rub": 3425,
+                "reserved_balance_rub": 1000,
+                "available_balance_rub": 9999,
+            },
+            "rows": [],
+        }
+        with self.assertRaisesRegex(
+            ReadModelContractError, "AVAILABLE_BALANCE_INVARIANT_MISMATCH"
+        ):
+            adapt_warehouse_history(response)
+
+    def test_unknown_or_unproven_server_status_fails_closed(self):
+        base = {
+            "contract_version": P3_CONTRACT_VERSION,
+            "scope": {"warehouse_id": 1, "viewer_type": "warehouse"},
+            "summary": {
+                "warehouse_id": 1,
+                "posted_balance_rub": 0,
+                "reserved_balance_rub": 0,
+                "available_balance_rub": 0,
+            },
+            "rows": [{
+                "extremizer_order_number": "I-STATUS",
+                "warehouse_order_number": None,
+                "date": None,
+                "order_status": "cancelled",
+                "payment_status": None,
+                "client_id": None,
+                "customer_amount_rub": None,
+                "partner_amount_rub": None,
+                "partner_amount_source": None,
+                "payment_route": None,
+                "internal_payment_snapshot": False,
+                "warehouse_id": 1,
+                "balance_rub": None,
+            }],
+        }
+        with self.assertRaisesRegex(ReadModelContractError, "UNSUPPORTED_ORDER_STATUS"):
+            adapt_warehouse_history(base)
+
+        for unproven in ("assembled_paid", "shipped"):
+            with self.subTest(status=unproven):
+                payload = {**base, "rows": [{**base["rows"][0], "order_status": unproven}]}
+                with self.assertRaisesRegex(ReadModelContractError, "UNSUPPORTED_ORDER_STATUS"):
+                    adapt_warehouse_history(payload)
 
 
 if __name__ == "__main__":
