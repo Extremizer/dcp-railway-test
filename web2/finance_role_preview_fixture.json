@@ -1,0 +1,326 @@
+{
+  "meta": {
+    "source": "fixtures-only",
+    "contract": "WEB UX v1.3 + Finance v1.4",
+    "realFinanceWiring": false,
+    "realAuthorization": false
+  },
+  "actingAs": {
+    "active": true,
+    "actualAdmin": "admin-1 · Дмитрий",
+    "effectiveSubject": "Склад 1",
+    "effectiveRole": "rf_warehouse_user",
+    "scope": "warehouse:1"
+  },
+  "warehouse": {
+    "summary": {
+      "postedRub": 3425,
+      "reservedRub": 1000,
+      "availableRub": 2425,
+      "fullHistoryBalanceRub": 3425
+    },
+    "rows": [
+      {
+        "date": "2026-10-13",
+        "extremizerOrderNo": "I17J-5679",
+        "warehouseOrderNo": "5245",
+        "client": "Алексей В.",
+        "oems": ["705402449"],
+        "customerAmountRub": 12600,
+        "partnerAmountRub": 10700,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Новый",
+        "statusKey": "new"
+      },
+      {
+        "date": "2026-10-13",
+        "extremizerOrderNo": "I17J-5678",
+        "warehouseOrderNo": "5244",
+        "client": "Мария П.",
+        "oems": ["860200987"],
+        "customerAmountRub": 21400,
+        "partnerAmountRub": 18190,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Собран, не оплачен",
+        "statusKey": "assembled-unpaid"
+      },
+      {
+        "date": "2026-10-12",
+        "extremizerOrderNo": "I17J-5677",
+        "warehouseOrderNo": "5243",
+        "client": "Сергей К.",
+        "oems": ["417300574"],
+        "customerAmountRub": 19500,
+        "partnerAmountRub": 16575,
+        "balanceDisplay": "+2 925 ₽",
+        "balanceDeltaRub": 2925,
+        "customerAmountStruck": false,
+        "status": "Собран, оплачен",
+        "statusKey": "assembled-paid"
+      },
+      {
+        "date": "2026-10-12",
+        "extremizerOrderNo": "I17J-5676",
+        "warehouseOrderNo": "5242",
+        "client": "Олег Д.",
+        "oems": ["0627-111"],
+        "customerAmountRub": 11000,
+        "partnerAmountRub": 9500,
+        "balanceDisplay": "+1 500 ₽",
+        "balanceDeltaRub": 1500,
+        "customerAmountStruck": false,
+        "status": "Отгружен",
+        "statusKey": "shipped"
+      },
+      {
+        "date": "2026-10-11",
+        "extremizerOrderNo": "I17J-5674",
+        "warehouseOrderNo": "5240",
+        "client": "Иван С.",
+        "oems": ["3006-682"],
+        "customerAmountRub": 18000,
+        "partnerAmountRub": 15000,
+        "balanceDisplay": "+3 000 ₽",
+        "balanceDeltaRub": 3000,
+        "customerAmountStruck": false,
+        "status": "Отгружен",
+        "statusKey": "shipped"
+      },
+      {
+        "date": "2026-10-11",
+        "extremizerOrderNo": "I17J-5673",
+        "warehouseOrderNo": "5239",
+        "client": "Николай Р.",
+        "oems": ["860200783"],
+        "customerAmountRub": 24500,
+        "partnerAmountRub": 20000,
+        "balanceDisplay": "+4 500 ₽",
+        "balanceDeltaRub": 4500,
+        "customerAmountStruck": false,
+        "status": "Собран, оплачен",
+        "statusKey": "assembled-paid"
+      },
+      {
+        "date": "2026-10-10",
+        "extremizerOrderNo": "I17J-5675",
+        "warehouseOrderNo": "5241",
+        "client": "Дмитрий М.",
+        "oems": ["0746-435"],
+        "customerAmountRub": 10000,
+        "partnerAmountRub": 8500,
+        "balanceDisplay": "−8 500 ₽",
+        "balanceDeltaRub": -8500,
+        "customerAmountStruck": true,
+        "status": "Отгружен",
+        "statusKey": "shipped"
+      },
+      {
+        "date": "2026-10-10",
+        "extremizerOrderNo": "I17J-5672",
+        "warehouseOrderNo": "5238",
+        "client": "Антон Л.",
+        "oems": ["2670-265"],
+        "customerAmountRub": 9900,
+        "partnerAmountRub": 8400,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "System Error",
+        "statusKey": "system-error"
+      },
+      {
+        "date": "2026-10-09",
+        "extremizerOrderNo": "I17J-5671",
+        "warehouseOrderNo": "5237",
+        "client": "Юрий Н.",
+        "oems": ["422280652"],
+        "customerAmountRub": 17700,
+        "partnerAmountRub": 15100,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Новый",
+        "statusKey": "new"
+      },
+      {
+        "date": "2026-10-09",
+        "extremizerOrderNo": "I17J-5670",
+        "warehouseOrderNo": "5236",
+        "client": "Роман Ф.",
+        "oems": ["705402449", "417300574"],
+        "customerAmountRub": 31900,
+        "partnerAmountRub": 27800,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Собран, не оплачен",
+        "statusKey": "assembled-unpaid"
+      },
+      {
+        "date": "2026-10-08",
+        "extremizerOrderNo": "I17J-5669",
+        "warehouseOrderNo": "5235",
+        "client": "Виктор Г.",
+        "oems": ["860200987"],
+        "customerAmountRub": 15500,
+        "partnerAmountRub": 13100,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Отгружен",
+        "statusKey": "shipped"
+      },
+      {
+        "date": "2026-10-08",
+        "extremizerOrderNo": "I17J-5668",
+        "warehouseOrderNo": "5234",
+        "client": "Елена Т.",
+        "oems": ["0627-111"],
+        "customerAmountRub": 8300,
+        "partnerAmountRub": 7100,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Собран, оплачен",
+        "statusKey": "assembled-paid"
+      },
+      {
+        "date": "2026-10-07",
+        "extremizerOrderNo": "I17J-5667",
+        "warehouseOrderNo": "5233",
+        "client": "Павел А.",
+        "oems": ["3006-682"],
+        "customerAmountRub": 14200,
+        "partnerAmountRub": 12100,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Новый",
+        "statusKey": "new"
+      },
+      {
+        "date": "2026-10-07",
+        "extremizerOrderNo": "I17J-5666",
+        "warehouseOrderNo": "5232",
+        "client": "Михаил Б.",
+        "oems": ["860200783"],
+        "customerAmountRub": 27100,
+        "partnerAmountRub": 23000,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Собран, не оплачен",
+        "statusKey": "assembled-unpaid"
+      },
+      {
+        "date": "2026-10-06",
+        "extremizerOrderNo": "I17J-5665",
+        "warehouseOrderNo": "5231",
+        "client": "Артём З.",
+        "oems": ["0746-435"],
+        "customerAmountRub": 12300,
+        "partnerAmountRub": 10400,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Отгружен",
+        "statusKey": "shipped"
+      },
+      {
+        "date": "2026-10-06",
+        "extremizerOrderNo": "I17J-5664",
+        "warehouseOrderNo": "5230",
+        "client": "Денис И.",
+        "oems": ["2670-265"],
+        "customerAmountRub": 7700,
+        "partnerAmountRub": 6400,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Новый",
+        "statusKey": "new"
+      },
+      {
+        "date": "2026-10-05",
+        "extremizerOrderNo": "I17J-5663",
+        "warehouseOrderNo": "5229",
+        "client": "Владимир Ч.",
+        "oems": ["422280652"],
+        "customerAmountRub": 20500,
+        "partnerAmountRub": 17500,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Собран, оплачен",
+        "statusKey": "assembled-paid"
+      },
+      {
+        "date": "2026-10-05",
+        "extremizerOrderNo": "I17J-5662",
+        "warehouseOrderNo": "5228",
+        "client": "Константин Е.",
+        "oems": ["705402449"],
+        "customerAmountRub": 13600,
+        "partnerAmountRub": 11600,
+        "balanceDisplay": "",
+        "balanceDeltaRub": null,
+        "customerAmountStruck": false,
+        "status": "Отгружен",
+        "statusKey": "shipped"
+      }
+    ]
+  },
+  "clientWallet": {
+    "clientId": "client-fixture-1",
+    "balanceRub": 47800,
+    "events": [
+      {
+        "eventType": "INFO_DIRECT_WAREHOUSE_PAYMENT",
+        "orderId": "I17J-5677",
+        "warehouse": "Склад 1",
+        "description": "Прямая оплата партнёрскому складу",
+        "externalAmountRub": 19500,
+        "walletDeltaRub": 0,
+        "createdAt": "2026-10-12T13:40:00+02:00"
+      },
+      {
+        "eventType": "INFO_DIRECT_WAREHOUSE_REFUND",
+        "orderId": "I17J-5651",
+        "warehouse": "Склад 3",
+        "description": "Прямой возврат от партнёрского склада",
+        "externalAmountRub": 8200,
+        "walletDeltaRub": 0,
+        "createdAt": "2026-10-09T17:05:00+02:00"
+      }
+    ]
+  },
+  "dealer": {
+    "dealerId": "dealer-fixture-1",
+    "name": "Dealer Demo",
+    "scenarios": {
+      "debt": {
+        "balanceUsd": -60,
+        "gateReady": false,
+        "orderId": "E01A-0001",
+        "orderStatus": "Подтвержден",
+        "orderTotalUsd": 60,
+        "orderChargeUsd": -60,
+        "orderChargeCount": 1
+      },
+      "repaid": {
+        "balanceUsd": 0,
+        "gateReady": true,
+        "orderId": "E01A-0001",
+        "orderStatus": "Подтвержден",
+        "orderTotalUsd": 60,
+        "orderChargeUsd": -60,
+        "orderChargeCount": 1
+      }
+    },
+    "supplierGateWiring": "PENDING"
+  }
+}
