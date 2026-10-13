@@ -131,8 +131,8 @@ function filteredRows() {
       row.date,
     ].join(' ').toLowerCase();
     if (q && !text.includes(q)) return false;
-    if (state.dateFrom && row.date < state.dateFrom) return false;
-    if (state.dateTo && row.date > state.dateTo) return false;
+    if (state.dateFrom && (!row.date || row.date < state.dateFrom)) return false;
+    if (state.dateTo && (!row.date || row.date > state.dateTo)) return false;
     return true;
   });
 }
@@ -199,7 +199,7 @@ function renderWarehouse() {
       <tr class="warehouse-row ${statusClass(row.statusKey)}"
           data-order="${esc(row.extremizerOrderNo)}"
           data-status="${esc(row.statusKey)}">
-        <td>${esc(row.date)}<span class="status-inline">${esc(row.status)}</span><span class="submeta">${esc(row.client)} · ${oems}</span></td>
+        <td>${esc(row.date || "—")}<span class="status-inline">${esc(row.status || "—")}</span><span class="submeta">${esc(row.client || "—")} · ${oems || "—"}</span></td>
         <td>${orderButtons(row)}</td>
         <td><span class="customer-amount ${row.customerAmountStruck ? 'is-spent' : ''}">${rub(row.customerAmountRub)}</span></td>
         <td class="partner-amount" data-authoritative="${row.partnerAmountAuthoritative === true ? 'true' : 'false'}">${partnerAmount}</td>
@@ -218,15 +218,15 @@ function renderWarehouse() {
       : signedRub(row.balanceDeltaRub);
     return `
       <article class="mobile-card ${statusClass(row.statusKey)}" data-order="${esc(row.extremizerOrderNo)}">
-        <span class="status-inline">${esc(row.status)}</span>
+        <span class="status-inline">${esc(row.status || "—")}</span>
         <div class="field-grid">
-          <div class="field"><span>Дата</span><strong>${esc(row.date)}</strong></div>
+          <div class="field"><span>Дата</span><strong>${esc(row.date || "—")}</strong></div>
           <div class="field"><span>Баланс</span><strong>${balanceDisplay}</strong></div>
           <div class="field full"><span>${state.viewRole === 'admin' ? '№ нашего заказа / № заказа на складе' : '№ нашего заказа / № заказа Extremizer'}</span><strong>${orderButtons(row)}</strong></div>
           <div class="field"><span>Сумма для клиента</span><strong class="customer-amount ${row.customerAmountStruck ? 'is-spent' : ''}">${rub(row.customerAmountRub)}</strong></div>
           <div class="field"><span>Сумма по условиям склада</span><strong class="partner-amount">${partnerAmount}</strong></div>
         </div>
-        <span class="submeta">${esc(row.client)} · ${oems}</span>
+        <span class="submeta">${esc(row.client || "—")} · ${oems || "—"}</span>
       </article>`;
   }).join('');
 
@@ -253,9 +253,9 @@ function openOrder(orderNo) {
     ? '—'
     : signedRub(row.balanceDeltaRub);
   document.querySelector('#dialogContent').innerHTML = `<div class="dialog-body"><dl>
-    <dt>Клиент</dt><dd>${esc(row.client)}</dd>
-    <dt>OEM</dt><dd>${oems}</dd>
-    <dt>Статус</dt><dd>${esc(row.status)}</dd>
+    <dt>Клиент</dt><dd>${esc(row.client || "—")}</dd>
+    <dt>OEM</dt><dd>${oems || "—"}</dd>
+    <dt>Статус</dt><dd>${esc(row.status || "—")}</dd>
     <dt>Payment source</dt><dd>${esc(row.paymentSource || '—')}</dd>
     <dt>Сумма для клиента</dt><dd>${rub(row.customerAmountRub)}</dd>
     <dt>Сумма по условиям склада</dt><dd>${partnerAmount}</dd>
