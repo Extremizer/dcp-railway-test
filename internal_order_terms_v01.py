@@ -201,6 +201,13 @@ def get_snapshot_terms_provenance(db_file, order_id, *, conn=None):
     own = conn is None
     c = sqlite3.connect(db_file) if own else conn
     try:
+        exists = c.execute(
+            """SELECT 1 FROM sqlite_master
+               WHERE type='table'
+                 AND name='internal_order_snapshot_terms_provenance_v01'"""
+        ).fetchone()
+        if exists is None:
+            raise ValueError("TRUSTED_TERMS_PROVENANCE_REQUIRED")
         row = c.execute(
             """SELECT order_id,confirmation_key,contract_version,warehouse_id,
                       client_id,warehouse_order_number,terms_version,
