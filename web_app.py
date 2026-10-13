@@ -32,6 +32,8 @@ import warehouse_store
 import stock_engine
 import web_handoff
 import dp_live_bridge
+import dp_result_completion
+import dp_sync_protocol
 import dp_live_health
 import pricing_analytics
 import supplier_runtime
@@ -514,6 +516,13 @@ class DPSyncLookupRequest(BaseModel):
 
 class DPSyncResultRequest(BaseModel):
     request_id: str
+    protocol_version: int | None = None
+    producer_id: str | None = None
+    claim_token: str | None = None
+    claim_generation: int | None = None
+    query_oem: str | None = None
+    matched_sku: str | None = None
+    currency: str | None = None
     status: str
     dealer_price_usd: float | None = None
     source: str | None = None
@@ -945,122 +954,50 @@ def dp_sync_health(
 def dp_sync_next(
     x_dp_sync_ts: str | None = Header(default=None),
     x_dp_sync_sig: str | None = Header(default=None),
+    x_dp_protocol: str | None = Header(default=None),
+    x_dp_producer_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
     path = "/internal/dp-sync/next"
-    _require_dp_sync_signature(path, x_dp_sync_ts, x_dp_sync_sig)
-    return {"request": dp_live_bridge.claim_next(core.ORDERS_DB_FILE)}
+    if x_dp_protocol != "2":
+        _require_dp_sync_signature(path, x_dp_sync_ts, x_dp_sync_sig)
+        # The installed v1 agent must not start work it cannot fence/complete.
+        return {"request": None, "error_code": "producer_protocol_upgrade_required"}
+    try:
+        dp_sync_protocol.verify(_dp_sync_key(), "GET", path, x_dp_sync_ts,
+                                x_dp_producer_id, b"", x_dp_sync_sig)
+    except dp_sync_protocol.ProtocolError as exc:
+        raise HTTPException(status_code=401, detail={"code": str(exc)})
+    return {"request": dp_live_bridge.claim_next(core.ORDERS_DB_FILE, producer_id=x_dp_producer_id)}
 
 
 @app.post("/internal/dp-sync/result")
-def dp_sync_result(
+async def dp_sync_result(
     payload: DPSyncResultRequest,
+    request: Request,
     x_dp_sync_ts: str | None = Header(default=None),
     x_dp_sync_sig: str | None = Header(default=None),
+    x_dp_protocol: str | None = Header(default=None),
+    x_dp_producer_id: str | None = Header(default=None),
 ) -> dict[str, Any]:
-    path = "/internal/dp-sync/result"
-    _require_dp_sync_signature(path, x_dp_sync_ts, x_dp_sync_sig)
-
-    status = str(payload.status or "").strip().upper() or "TECHNICAL_ERROR"
-    allowed = {
-        "FOUND", "NOT_FOUND", "NO_PRICE", "CLOUDFLARE",
-        "AUTH_REQUIRED", "TECHNICAL_ERROR",
-    }
-    if status not in allowed:
-        raise HTTPException(status_code=400, detail={"code": "invalid_status"})
-
-    with sqlite3.connect(core.ORDERS_DB_FILE) as conn:
-        row = conn.execute(
-            """SELECT manufacturer,oem
-                 FROM dp_live_requests
-                WHERE request_id=?""",
-            (payload.request_id,),
-        ).fetchone()
-    if not row:
-        raise HTTPException(status_code=404, detail={"code": "request_not_found"})
-
-    requested_manufacturer = str(row[0] or "").strip()
-    requested_oem = core.finder.normalize_oem(str(row[1] or "").strip())
-    if requested_manufacturer == "__AUTO__":
-        manufacturer = core.finder.manufacturer_alias(
-            str(payload.manufacturer or "").strip()
-        )
-    else:
-        manufacturer = core.finder.manufacturer_alias(requested_manufacturer)
-    if not manufacturer or not requested_oem:
-        raise HTTPException(status_code=400, detail={"code": "invalid_request_identity"})
-
-    source = str(payload.source or "").strip() or None
-    raw_current_oem = str(payload.current_oem or "").strip()
-    current_oem = core.finder.normalize_oem(raw_current_oem) if raw_current_oem else None
-    name = str(payload.name or "").strip() or None
-
-    if status == "FOUND":
-        price = payload.dealer_price_usd
-        if not isinstance(price, (int, float)) or float(price) <= 0:
-            raise HTTPException(status_code=400, detail={"code": "invalid_dp"})
-        verified_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        verified_source = "verified_local_dcp:" + (source or "dcp")
-        if not core.upsert_dealer_price_cache(
-            manufacturer,
-            requested_oem,
-            float(price),
-            verified_source,
-            verified_at,
-        ):
-            raise HTTPException(status_code=500, detail={"code": "cache_write_failed"})
-        if current_oem and current_oem != requested_oem:
-            core.upsert_dealer_price_cache(
-                manufacturer,
-                current_oem,
-                float(price),
-                verified_source,
-                verified_at,
-            )
-        source = verified_source
-        if requested_manufacturer == "__AUTO__":
-            # Persist only identity verified by the trusted local DCP agent.
-            with sqlite3.connect(core.ORDERS_DB_FILE) as conn:
-                conn.execute(
-                    """CREATE TABLE IF NOT EXISTS probnik_oem_identity (
-                           manufacturer TEXT NOT NULL, oem TEXT NOT NULL,
-                           current_oem TEXT NOT NULL, name TEXT, verified INTEGER NOT NULL DEFAULT 0,
-                           source_kind TEXT, source_ref TEXT, first_seen_at TEXT NOT NULL,
-                           last_verified_at TEXT NOT NULL, PRIMARY KEY(manufacturer,oem))"""
-                )
-                conn.execute(
-                    """INSERT INTO probnik_oem_identity(
-                           manufacturer,oem,current_oem,name,verified,source_kind,source_ref,
-                           first_seen_at,last_verified_at) VALUES(?,?,?,?,1,?,?,?,?)
-                       ON CONFLICT(manufacturer,oem) DO UPDATE SET
-                           current_oem=excluded.current_oem,name=excluded.name,verified=1,
-                           source_kind=excluded.source_kind,source_ref=excluded.source_ref,
-                           last_verified_at=excluded.last_verified_at""",
-                    (manufacturer, requested_oem, current_oem or requested_oem, name,
-                     "verified_local_dcp", source or "dcp", verified_at, verified_at),
-                )
-                conn.commit()
-
-    ok = dp_live_bridge.finish(
-        core.ORDERS_DB_FILE,
-        payload.request_id,
-        result_status=status,
-        dealer_price_usd=(
-            float(payload.dealer_price_usd)
-            if status == "FOUND" and payload.dealer_price_usd is not None
-            else None
-        ),
-        source=source,
-        current_oem=current_oem,
-        name=name[:300] if name else None,
-        manufacturer=manufacturer if requested_manufacturer == "__AUTO__" else None,
-        error_code=(
-            str(payload.error_code).strip()[:120]
-            if payload.error_code else None
-        ),
-    )
-    if not ok:
-        raise HTTPException(status_code=409, detail={"code": "request_already_finished"})
-    return {"ok": True, "status": status}
+    if x_dp_protocol != "2":
+        _require_dp_sync_signature("/internal/dp-sync/result", x_dp_sync_ts, x_dp_sync_sig)
+        raise HTTPException(status_code=409, detail={"code": "producer_protocol_upgrade_required"})
+    body = await request.body()
+    try:
+        dp_sync_protocol.verify(_dp_sync_key(), "POST", "/internal/dp-sync/result",
+                                x_dp_sync_ts, x_dp_producer_id, body, x_dp_sync_sig)
+    except dp_sync_protocol.ProtocolError as exc:
+        raise HTTPException(status_code=401, detail={"code": str(exc)})
+    # Preserve exact numeric types: Pydantic coercion must not turn true into DP=1.
+    data = json.loads(body)
+    if data.get("producer_id") != x_dp_producer_id:
+        raise HTTPException(status_code=409, detail={"code": "claim_fence_mismatch"})
+    try:
+        return dp_result_completion.complete_result(core.ORDERS_DB_FILE, data)
+    except dp_result_completion.CompletionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail={"code": exc.code})
+    except sqlite3.Error:
+        raise HTTPException(status_code=500, detail={"code": "dp_result_transaction_failed"})
 
 
 def _weight_for_oem(oem: str) -> dict[str, Any] | None:
