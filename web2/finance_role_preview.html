@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>EXTREMIZER WEB2 · Finance v1.4 UI Preview</title>
+  <link rel="stylesheet" href="finance_role_preview.css">
+</head>
+<body>
+  <div id="actingBanner" class="acting-banner" role="status" aria-live="polite">
+    <div>
+      <strong>РЕЖИМ ЗАМЕЩЕНИЯ · FIXTURE ONLY</strong>
+      <span>Фактически: <b id="actualAdmin"></b></span>
+      <span>От имени: <b id="effectiveSubject"></b></span>
+      <span>Роль: <b id="effectiveRole"></b></span>
+      <span>Представление: <b id="effectiveView"></b></span>
+    </div>
+    <button id="actingExit" type="button">Выход — только preview</button>
+  </div>
+
+  <div id="demoBanner" class="demo-banner" hidden>
+    <div>
+      <strong>DEMO MODE · СРАВНЕНИЕ ПРЕДСТАВЛЕНИЙ</strong>
+      <span>Это презентационный режим. Он не меняет effective role, разрешения или серверную Acting-As сессию.</span>
+    </div>
+    <div class="role-switch" aria-label="Demo role comparison">
+      <button id="adminRole" class="role-btn" type="button">ADMIN</button>
+      <button id="skladRole" class="role-btn" type="button">SKLAD</button>
+    </div>
+  </div>
+
+  <header class="shell-header">
+    <div>
+      <div class="eyebrow">EXTREMIZER WEB2 · FIXTURES ONLY</div>
+      <h1>Role-Based Finance UI Preview</h1>
+      <p>Изолированный интерфейс. Реальные оплаты, заказы, DCP и авторизация не подключены.</p>
+    </div>
+    <div class="header-actions">
+      <span class="fixture-badge">FINANCE WIRING PENDING</span>
+      <button id="demoToggle" class="demo-toggle" type="button" aria-pressed="false">DEMO MODE: OFF</button>
+    </div>
+  </header>
+
+  <nav class="section-tabs" aria-label="Разделы preview">
+    <button class="tab is-active" data-panel="warehousePanel" data-context="warehouse">Warehouse History</button>
+    <button class="tab" data-panel="clientPanel" data-context="client">Client Payments</button>
+    <button class="tab" data-panel="dealerPanel" data-context="dealer">Dealer USD / DCP Gate</button>
+  </nav>
+
+  <main>
+    <section id="warehousePanel" class="panel is-active">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">WAREHOUSE HISTORY</div>
+          <h2>Пять утверждённых полей</h2>
+          <p>Активное представление: <strong id="activeViewLabel">—</strong>. Финансовые значения приходят готовыми из read model.</p>
+        </div>
+      </div>
+
+      <div class="summary-grid" aria-label="Warehouse balance summary">
+        <article><span>Posted</span><strong id="postedBalance">—</strong></article>
+        <article><span>Reserved</span><strong id="reservedBalance">—</strong></article>
+        <article><span>Available</span><strong id="availableBalance">—</strong></article>
+      </div>
+
+      <div class="filters">
+        <label class="search-field">Поиск
+          <input id="warehouseSearch" type="search" placeholder="№ EXTREMIZER, № склада, клиент, OEM, дата">
+        </label>
+        <label>С даты
+          <input id="dateFrom" type="date">
+        </label>
+        <label>По дату
+          <input id="dateTo" type="date">
+        </label>
+        <label>На странице
+          <select id="pageSize">
+            <option value="15" selected>15</option>
+            <option value="20">20</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="systemMessages" class="system-messages" aria-live="polite"></div>
+
+      <div class="legend" aria-label="Бизнес-статусы заказа">
+        <span class="legend-item status-new">Новый</span>
+        <span class="legend-item status-assembled-unpaid">Собран, не оплачен</span>
+        <span class="legend-item status-assembled-paid">Собран, оплачен</span>
+        <span class="legend-item status-shipped">Отгружен</span>
+      </div>
+
+      <div class="table-wrap desktop-only">
+        <table id="warehouseTable">
+          <thead>
+            <tr>
+              <th>Дата</th>
+              <th id="ordersHeader">№ нашего заказа / № заказа Extremizer</th>
+              <th>Сумма для клиента</th>
+              <th>Сумма по условиям склада</th>
+              <th>Баланс</th>
+            </tr>
+          </thead>
+          <tbody id="warehouseBody"></tbody>
+        </table>
+      </div>
+
+      <div id="warehouseCards" class="mobile-only cards" aria-label="Warehouse mobile cards"></div>
+
+      <div class="pager-row">
+        <span id="resultCount">—</span>
+        <div class="pager">
+          <button id="prevPage" type="button">←</button>
+          <span id="pageIndicator">1 / 1</span>
+          <button id="nextPage" type="button">→</button>
+        </div>
+      </div>
+
+      <div class="history-total">
+        <span>Итоговый баланс за всю историю</span>
+        <strong id="historyTotal">—</strong>
+        <small>Не зависит от поиска, фильтра и текущей страницы.</small>
+      </div>
+    </section>
+
+    <section id="clientPanel" class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">CLIENT / WALLET HISTORY</div>
+          <h2>Информационные прямые оплаты</h2>
+          <p>Реальная внешняя сумма видима, но delta кошелька EXTREMIZER = 0 ₽.</p>
+        </div>
+        <article class="wallet-balance"><span>Денежный баланс</span><strong id="clientWalletBalance">—</strong></article>
+      </div>
+      <div id="clientEvents" class="event-list"></div>
+      <aside class="guard-note">
+        <strong>Guard:</strong> INFO_DIRECT_WAREHOUSE_PAYMENT и INFO_DIRECT_WAREHOUSE_REFUND не отображаются как PAYMENT или ORDER_CHARGE.
+      </aside>
+    </section>
+
+    <section id="dealerPanel" class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">DEALER / USD</div>
+          <h2>Баланс и DCP Financial Gate — разные состояния</h2>
+          <p>Заказ может быть создан при отрицательном USD-балансе. Кредитного лимита нет.</p>
+        </div>
+        <div class="scenario-switch">
+          <button id="dealerDebt" class="role-btn is-active" type="button">−$60</button>
+          <button id="dealerRepaid" class="role-btn" type="button">$0</button>
+        </div>
+      </div>
+      <div class="dealer-grid">
+        <article class="dealer-card"><span>USD balance</span><strong id="dealerBalance">—</strong></article>
+        <article class="dealer-card"><span>Статус заказа</span><strong id="dealerOrderStatus">—</strong></article>
+        <article class="dealer-card"><span>DCP Financial Gate</span><strong id="dealerGate">—</strong></article>
+        <article class="dealer-card"><span>ORDER_CHARGE</span><strong id="dealerCharge">—</strong><small id="dealerChargeCount"></small></article>
+      </div>
+      <div id="dealerOrder" class="dealer-order"></div>
+      <aside class="guard-note warning">
+        <strong>Integration boundary:</strong> gate рассчитан fixture/read-model уровнем. Реальная автоматическая блокировка supplier/DCP submission ещё не подключена.
+      </aside>
+    </section>
+  </main>
+
+  <dialog id="orderDialog">
+    <div class="dialog-head">
+      <div>
+        <div class="eyebrow">ORDER CARD · FIXTURE</div>
+        <h2 id="dialogTitle">Заказ</h2>
+      </div>
+      <button id="dialogClose" type="button" aria-label="Закрыть">×</button>
+    </div>
+    <div id="dialogContent"></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <script src="finance_role_preview.js" defer></script>
+</body>
+</html>
