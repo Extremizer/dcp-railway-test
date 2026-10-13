@@ -9,6 +9,8 @@ DCP Chrome session, and posts only the verified result back to Railway.
 from __future__ import annotations
 
 import os
+import math
+import re
 import sqlite3
 import time
 import uuid
@@ -16,6 +18,79 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import dp_live_health
+
+
+def _request_key(manufacturer: str, oem: str) -> tuple[str, str]:
+    aliases = {
+        "arcticcat": "Arctic Cat", "skidoo": "Ski-Doo", "canam": "Can-Am",
+        "seadoo": "Sea-Doo", "cfmoto": "CFMoto", "honda": "Honda",
+        "yamaha": "Yamaha", "kawasaki": "Kawasaki", "suzuki": "Suzuki",
+        "polaris": "Polaris", "ktm": "KTM", "indian": "Indian",
+    }
+    raw = str(manufacturer or "").strip()
+    canonical = "__AUTO__" if raw.upper() == "__AUTO__" else aliases.get(
+        re.sub(r"[\s_-]", "", raw).lower(), raw
+    )
+    normalized_oem = re.sub(r"\s+", "", str(oem or "")).upper()
+    if not canonical or not re.fullmatch(r"[A-Z0-9-]{4,40}", normalized_oem):
+        return "", ""
+    return canonical, normalized_oem
+
+
+def _valid_dp(price: object, source: object) -> bool:
+    return (
+        isinstance(price, (int, float)) and not isinstance(price, bool)
+        and math.isfinite(price) and price > 0
+        and str(source or "").startswith("verified_local_dcp:")
+        and not any(x in str(source).lower() for x in ("msrp", "retail", "rrp"))
+    )
+
+
+def _result(row: tuple) -> dict:
+    return dict(zip(
+        ("request_id", "status", "dealer_price_usd", "source", "current_oem",
+         "name", "error_code", "manufacturer"), row
+    ))
+
+
+def _expire_pending(conn: sqlite3.Connection, now: str) -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=30)).isoformat(timespec="seconds")
+    # Never free an in-flight slot while a browser operation may still run.
+    # An orphaned claim requires explicit recovery, not a second live lookup.
+    conn.execute(
+        """UPDATE dp_live_requests SET status='finished',finished_at=?,
+                  result_status='TIMEOUT',error_code='stale_request'
+           WHERE status='pending' AND requested_at<?""", (now, cutoff)
+    )
+
+
+def _breaker_status(conn: sqlite3.Connection) -> str | None:
+    blocked, blocked_at = conn.execute(
+        "SELECT blocked_status,blocked_at FROM dp_live_coordination WHERE singleton_id=1"
+    ).fetchone()
+    if not blocked:
+        return None
+    health = conn.execute(
+        "SELECT status,checked_at FROM dp_live_health WHERE singleton_id=1"
+    ).fetchone()
+    observed = dp_live_health._parse_datetime(health[1]) if health else None
+    blocked_time = dp_live_health._parse_datetime(blocked_at)
+    if health and health[0] == "READY" and observed and blocked_time and observed > blocked_time:
+        conn.execute("UPDATE dp_live_coordination SET blocked_status=NULL,blocked_at=NULL WHERE singleton_id=1")
+        return None
+    return str(blocked)
+
+
+def _blocked_health(conn: sqlite3.Connection) -> str | None:
+    if not _health_enforced():
+        return None
+    status, checked_at = conn.execute(
+        "SELECT status,checked_at FROM dp_live_health WHERE singleton_id=1"
+    ).fetchone()
+    checked = dp_live_health._parse_datetime(checked_at)
+    if not checked or (datetime.now(timezone.utc)-checked).total_seconds() > 5400:
+        return "TECHNICAL_ERROR"
+    return None if status == "READY" else str(status)
 
 
 def _now() -> str:
@@ -55,6 +130,10 @@ def init(db_file: Path | str) -> None:
             """CREATE INDEX IF NOT EXISTS idx_dp_live_requests_status
                ON dp_live_requests(status, requested_at)"""
         )
+        conn.execute("""CREATE TABLE IF NOT EXISTS dp_live_coordination (
+            singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
+            blocked_status TEXT, blocked_at TEXT)""")
+        conn.execute("INSERT OR IGNORE INTO dp_live_coordination(singleton_id) VALUES(1)")
         conn.commit()
 
 
@@ -67,8 +146,7 @@ def request_live_dp(
 ) -> dict:
     """Create/reuse one pending request and wait briefly for the local agent."""
     init(db_file)
-    manufacturer = str(manufacturer or "").strip()
-    oem = str(oem or "").strip()
+    manufacturer, oem = _request_key(manufacturer, oem)
     if not manufacturer or not oem:
         return {"status": "INVALID"}
 
@@ -89,17 +167,24 @@ def request_live_dp(
     request_id = None
     now = _now()
     with sqlite3.connect(str(db_file), timeout=10) as conn:
-        cutoff = (
-            datetime.now(timezone.utc) - timedelta(seconds=30)
-        ).isoformat(timespec="seconds")
-        conn.execute(
-            """UPDATE dp_live_requests
-                  SET status='finished', finished_at=?, result_status='TIMEOUT',
-                      error_code='stale_request'
-                WHERE status IN ('pending','claimed') AND requested_at<?""",
-            (now, cutoff),
-        )
-        conn.commit()
+        # Lookup and insert must share the write lock across all bot processes.
+        conn.execute("BEGIN IMMEDIATE")
+        _expire_pending(conn, now)
+        blocked = _breaker_status(conn) or _blocked_health(conn)
+        if blocked:
+            conn.commit()
+            return {"status": blocked, "error_code": "dcp_circuit_open"}
+        recent = conn.execute(
+            """SELECT request_id,result_status,dealer_price_usd,result_source,
+                      current_oem,item_name,error_code,result_manufacturer
+               FROM dp_live_requests WHERE manufacturer=? AND oem=?
+                 AND status='finished' AND result_status='FOUND' AND finished_at>=?
+               ORDER BY finished_at DESC LIMIT 1""",
+            (manufacturer, oem, (datetime.now(timezone.utc)-timedelta(seconds=5)).isoformat(timespec="seconds")),
+        ).fetchone()
+        if recent and _valid_dp(recent[2], recent[3]):
+            conn.commit()
+            return _result(recent)
         row = conn.execute(
             """SELECT request_id
                  FROM dp_live_requests
@@ -117,7 +202,7 @@ def request_live_dp(
                    ) VALUES(?,?,?,'pending',?)""",
                 (request_id, manufacturer, oem, now),
             )
-            conn.commit()
+        conn.commit()
 
     deadline = time.monotonic() + max(0.0, float(wait_seconds))
     while time.monotonic() < deadline:
@@ -152,6 +237,23 @@ def claim_next(db_file: Path | str) -> dict | None:
             return None
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        _expire_pending(conn, _now())
+        if _breaker_status(conn) or _blocked_health(conn) or conn.execute(
+            "SELECT 1 FROM dp_live_requests WHERE status='claimed' LIMIT 1"
+        ).fetchone():
+            conn.commit()
+            return None
+        # Also serialize different OEMs; all agents share this admission limit.
+        try:
+            gap = float(os.getenv("EXTREMIZER_DP_MIN_LOOKUP_GAP_SECONDS", "5"))
+        except ValueError:
+            gap = 5.0
+        if not math.isfinite(gap) or gap < 0:
+            gap = 5.0
+        last = conn.execute("SELECT MAX(claimed_at) FROM dp_live_requests").fetchone()[0]
+        if last and (datetime.now(timezone.utc)-datetime.fromisoformat(last)).total_seconds() < gap:
+            conn.commit()
+            return None
         row = conn.execute(
             """SELECT request_id,manufacturer,oem
                  FROM dp_live_requests
@@ -190,7 +292,13 @@ def finish(
     manufacturer: str | None = None,
 ) -> bool:
     init(db_file)
+    status = str(result_status or "TECHNICAL_ERROR").upper()
+    if status == "FOUND" and not _valid_dp(dealer_price_usd, source):
+        status, dealer_price_usd, error_code = "NO_PRICE", None, "invalid_verified_dp"
+    if status != "FOUND":
+        dealer_price_usd = None
     with sqlite3.connect(str(db_file), timeout=10) as conn:
+        conn.execute("BEGIN IMMEDIATE")
         changed = conn.execute(
             """UPDATE dp_live_requests
                   SET status='finished',
@@ -205,7 +313,7 @@ def finish(
                 WHERE request_id=? AND status IN ('pending','claimed')""",
             (
                 _now(),
-                str(result_status or "TECHNICAL_ERROR").upper(),
+                status,
                 dealer_price_usd,
                 source,
                 current_oem,
@@ -215,5 +323,10 @@ def finish(
                 str(request_id),
             ),
         ).rowcount
+        if changed and status in {"CLOUDFLARE", "AUTH_REQUIRED"}:
+            conn.execute(
+                "UPDATE dp_live_coordination SET blocked_status=?,blocked_at=? WHERE singleton_id=1",
+                (status, datetime.now(timezone.utc).isoformat()),
+            )
         conn.commit()
         return changed == 1
