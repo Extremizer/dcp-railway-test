@@ -67,6 +67,11 @@ def init(db_file) -> None:
 
             CREATE INDEX IF NOT EXISTS idx_warehouse_balance_reservation_wh_status
               ON warehouse_internal_balance_reservations(warehouse_id,status);
+
+            CREATE TABLE IF NOT EXISTS warehouse_balance_correction_reasons(
+              ledger_event_id INTEGER PRIMARY KEY,
+              reason TEXT NOT NULL
+            );
             """
         )
 
@@ -433,25 +438,38 @@ def post_correction(
     amount = int(amount_rub)
     if amount == 0:
         raise ValueError("correction amount must be non-zero")
+    effective_subject = str(effective_subject or "") or None
     init(db_file)
     with sqlite3.connect(db_file, timeout=30) as c:
+        c.row_factory = sqlite3.Row
         c.execute("BEGIN IMMEDIATE")
         key = f"WAREHOUSE_BALANCE_CORRECTION:{correction_id}"
         existing = c.execute(
-            """SELECT id,warehouse_id,order_id,amount_rub
-               FROM warehouse_internal_balance_ledger
-               WHERE idempotency_key=?""",
+            """SELECT l.id,l.warehouse_id,l.order_id,l.event_type,l.amount_rub,
+                      l.reference_type,l.reference_id,l.actual_actor,
+                      l.effective_subject,r.reason
+               FROM warehouse_internal_balance_ledger l
+               LEFT JOIN warehouse_balance_correction_reasons r
+                 ON r.ledger_event_id=l.id
+               WHERE l.idempotency_key=?""",
             (key,),
         ).fetchone()
         if existing:
-            if (
-                int(existing[1]) != int(warehouse_id)
-                or str(existing[2]) != order_id
-                or int(existing[3]) != amount
-            ):
+            same = (
+                int(existing["warehouse_id"]) == int(warehouse_id)
+                and str(existing["order_id"]) == order_id
+                and str(existing["event_type"]) == "CORRECTION"
+                and int(existing["amount_rub"]) == amount
+                and str(existing["reference_type"]) == "correction"
+                and str(existing["reference_id"]) == correction_id
+                and str(existing["actual_actor"]) == actual_actor
+                and existing["effective_subject"] == effective_subject
+                and existing["reason"] == reason
+            )
+            if not same:
                 raise ValueError("warehouse balance correction conflict")
             c.rollback()
-            return int(existing[0])
+            return int(existing["id"])
         cur = c.execute(
             """INSERT INTO warehouse_internal_balance_ledger(
                  warehouse_id,order_id,event_type,amount_rub,
@@ -466,18 +484,12 @@ def post_correction(
                 "correction",
                 correction_id,
                 actual_actor,
-                str(effective_subject or "") or None,
+                effective_subject,
                 key,
                 _now(),
             ),
         )
         event_id = int(cur.lastrowid)
-        c.execute(
-            """CREATE TABLE IF NOT EXISTS warehouse_balance_correction_reasons(
-                 ledger_event_id INTEGER PRIMARY KEY,
-                 reason TEXT NOT NULL
-               )"""
-        )
         c.execute(
             """INSERT INTO warehouse_balance_correction_reasons(
                  ledger_event_id,reason) VALUES(?,?)""",
