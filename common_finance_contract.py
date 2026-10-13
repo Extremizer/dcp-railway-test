@@ -77,11 +77,41 @@ class LineFinanceSnapshot:
 
 
 def default_client_payment_route(offer_source: str) -> PaymentRoute:
-    """Current safe default until per-warehouse payment routing is enabled."""
+    """Owner-approved default route for newly persisted client lines.
+
+    USA remains paid through the EXTREMIZER client wallet. RF warehouse/Internal
+    lines default to direct payment to the partner warehouse. Persisted snapshots
+    remain authoritative for existing orders and are never rewritten by this
+    policy function.
+    """
 
     source = str(offer_source or "").strip().lower()
-    if source not in {"usa", "warehouse"}:
-        raise ValueError("unsupported offer_source")
+    if source == "usa":
+        return PaymentRoute.EXTREMIZER_BALANCE
+    if source == "warehouse":
+        return PaymentRoute.DIRECT_PARTNER
+    raise ValueError("unsupported offer_source")
+
+
+def resolve_internal_client_payment_route(
+    *,
+    admin_assign_extremizer: bool = False,
+    full_partner_amount_reserved: bool = False,
+) -> PaymentRoute:
+    """Resolve the future Internal checkout payment route.
+
+    Direct partner payment is the default and the client does not choose the
+    payee. EXTREMIZER may be selected only by an authorized admin flow after the
+    same warehouse has atomically reserved the full partner amount P.
+
+    This pure policy guard does not itself reserve money; the authoritative
+    caller must obtain that reservation from the warehouse-balance domain.
+    """
+
+    if not admin_assign_extremizer:
+        return PaymentRoute.DIRECT_PARTNER
+    if not full_partner_amount_reserved:
+        raise ValueError("EXTREMIZER_INTERNAL_ROUTE_REQUIRES_FULL_PARTNER_BALANCE")
     return PaymentRoute.EXTREMIZER_BALANCE
 
 
@@ -105,6 +135,7 @@ __all__ = [
     "CLIENT_POLICY",
     "DEALER_POLICY",
     "default_client_payment_route",
+    "resolve_internal_client_payment_route",
     "client_usa_financially_ready",
     "requires_client_wallet_charge",
 ]
