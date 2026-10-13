@@ -51,6 +51,14 @@ class QueueTests(unittest.TestCase):
     def enqueue(self, manufacturer="Arctic Cat", oem="2670-265"):
         return bridge.request_live_dp(self.db, manufacturer, oem, wait_seconds=0)
 
+    def finish(self, request_id, **kwargs):
+        # Existing Stage 1 tests now provide the fence returned by the broker.
+        with sqlite3.connect(self.db) as conn:
+            row=conn.execute("SELECT claim_token,claim_generation,claim_owner FROM dp_live_requests WHERE request_id=?",(request_id,)).fetchone()
+        if row and row[0]:
+            kwargs.update(claim_token=row[0],claim_generation=row[1],producer_id=row[2])
+        return bridge.finish(self.db,request_id,**kwargs)
+
     def test_three_consumer_requests_share_one_lookup(self):
         # These are broker contract consumers; production OEMixi is NOT yet wired
         # to this broker. Its migration remains a separate documented prerequisite.
@@ -67,7 +75,7 @@ class QueueTests(unittest.TestCase):
                 if lookup is None: time.sleep(0.01)
             self.assertIsNotNone(lookup)
             self.assertIsNone(bridge.claim_next(self.db))
-            bridge.finish(self.db, lookup["request_id"], result_status="FOUND", dealer_price_usd=31.25, source=SOURCE)
+            self.finish(lookup["request_id"], result_status="FOUND", dealer_price_usd=31.25, source=SOURCE)
             results = [f.result(timeout=4) for f in futures]
         self.assertEqual({r["request_id"] for r in results}, {lookup["request_id"]})
         self.assertEqual([r["status"] for r in results], ["FOUND"] * 3)
@@ -79,14 +87,14 @@ class QueueTests(unittest.TestCase):
         self.enqueue("Honda", "91303-PA9-004")
         self.assertEqual(bridge.claim_next(self.db)["request_id"], first["request_id"])
         self.assertIsNone(bridge.claim_next(self.db))
-        bridge.finish(self.db, first["request_id"], result_status="NOT_FOUND")
+        self.finish(first["request_id"], result_status="NOT_FOUND")
         self.assertEqual(bridge.claim_next(self.db)["manufacturer"], "Honda")
 
     def test_rate_limit_between_finished_lookups(self):
         first = self.enqueue()
         self.enqueue("Honda", "91303-PA9-004")
         bridge.claim_next(self.db)
-        bridge.finish(self.db, first["request_id"], result_status="NOT_FOUND")
+        self.finish(first["request_id"], result_status="NOT_FOUND")
         with patch.dict(os.environ, {"EXTREMIZER_DP_MIN_LOOKUP_GAP_SECONDS": "5"}):
             self.assertIsNone(bridge.claim_next(self.db))
             with sqlite3.connect(self.db) as conn:
@@ -117,7 +125,7 @@ class QueueTests(unittest.TestCase):
         first = self.enqueue()
         bridge.claim_next(self.db)
         self.enqueue("Honda", "91303-PA9-004")
-        bridge.finish(self.db, first["request_id"], result_status=status)
+        self.finish(first["request_id"], result_status=status)
         with patch.dict(os.environ, {"EXTREMIZER_DP_HEALTH_ENFORCE": "0"}):
             for _ in range(20):
                 self.assertEqual(self.enqueue()["status"], status)
@@ -127,7 +135,7 @@ class QueueTests(unittest.TestCase):
 
     def test_days_of_blockage_do_not_auto_retry(self):
         first = self.enqueue()
-        bridge.finish(self.db, first["request_id"], result_status="CLOUDFLARE")
+        self.finish(first["request_id"], result_status="CLOUDFLARE")
         health.set_health(self.db, "CLOUDFLARE")
         with sqlite3.connect(self.db) as conn:
             conn.execute("UPDATE dp_live_coordination SET blocked_at=?", ((datetime.now(timezone.utc)-timedelta(days=2)).isoformat(),))
@@ -137,12 +145,12 @@ class QueueTests(unittest.TestCase):
 
     def test_old_ready_cannot_close_new_circuit(self):
         first = self.enqueue()
-        bridge.finish(self.db, first["request_id"], result_status="CLOUDFLARE")
+        self.finish(first["request_id"], result_status="CLOUDFLARE")
         self.assertEqual(self.enqueue()["status"], "CLOUDFLARE")
 
     def test_recent_verified_result_reused_without_new_live(self):
         first = self.enqueue()
-        bridge.finish(self.db, first["request_id"], result_status="FOUND", dealer_price_usd=31.25, source=SOURCE)
+        self.finish(first["request_id"], result_status="FOUND", dealer_price_usd=31.25, source=SOURCE)
         result = self.enqueue("arctic_cat")
         self.assertEqual(result["status"], "FOUND")
         self.assertEqual(result["request_id"], first["request_id"])
@@ -151,21 +159,21 @@ class QueueTests(unittest.TestCase):
     def test_invalid_prices_and_msrp_never_found(self):
         for price, source in [(0, SOURCE), (-1, SOURCE), (float("nan"), SOURCE), (float("inf"), SOURCE), (True, SOURCE), (55, "public_msrp"), (55, SOURCE+":msrp")]:
             req = self.enqueue("Honda", "91303-PA9-004")
-            bridge.finish(self.db, req["request_id"], result_status="FOUND", dealer_price_usd=price, source=source)
+            self.finish(req["request_id"], result_status="FOUND", dealer_price_usd=price, source=source)
             with sqlite3.connect(self.db) as conn:
                 row = conn.execute("SELECT result_status,dealer_price_usd FROM dp_live_requests WHERE request_id=?", (req["request_id"],)).fetchone()
             self.assertEqual(row, ("NO_PRICE", None))
 
     def test_error_payload_cannot_leak_price(self):
         req = self.enqueue()
-        bridge.finish(self.db, req["request_id"], result_status="CLOUDFLARE", dealer_price_usd=99, source=SOURCE)
+        self.finish(req["request_id"], result_status="CLOUDFLARE", dealer_price_usd=99, source=SOURCE)
         with sqlite3.connect(self.db) as conn:
             self.assertIsNone(conn.execute("SELECT dealer_price_usd FROM dp_live_requests").fetchone()[0])
 
     def test_late_result_cannot_latch_completed_request(self):
         req = self.enqueue()
-        bridge.finish(self.db, req["request_id"], result_status="NOT_FOUND")
-        self.assertFalse(bridge.finish(self.db, req["request_id"], result_status="CLOUDFLARE"))
+        self.finish(req["request_id"], result_status="NOT_FOUND")
+        self.assertFalse(self.finish(req["request_id"], result_status="CLOUDFLARE"))
         self.assertEqual(self.enqueue()["status"], "TIMEOUT")
 
 

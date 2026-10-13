@@ -64,6 +64,28 @@ def _expire_pending(conn: sqlite3.Connection, now: str) -> None:
     )
 
 
+def _quarantine_claims(conn: sqlite3.Connection, now: str) -> bool:
+    """Lease expiry proves uncertainty, never that the browser operation stopped."""
+    rows = conn.execute(
+        """SELECT request_id,claim_generation,claim_token,lease_expires_at
+           FROM dp_live_requests WHERE status='claimed'""",
+    ).fetchall()
+    observed = dp_live_health._parse_datetime(now)
+    for request_id, generation, token, expires_at in rows:
+        deadline = dp_live_health._parse_datetime(expires_at)
+        if token and deadline and deadline > observed:
+            continue
+        conn.execute(
+            "UPDATE dp_live_requests SET status='orphaned',orphaned_at=? WHERE request_id=? AND status='claimed'",
+            (now, request_id),
+        )
+        conn.execute(
+            """INSERT INTO dp_live_recovery_events(request_id,claim_generation,event_type,actor,created_at)
+               VALUES(?,?,'quarantined','server',?)""", (request_id, generation, now),
+        )
+    return bool(conn.execute("SELECT 1 FROM dp_live_requests WHERE status='orphaned' LIMIT 1").fetchone())
+
+
 def _breaker_status(conn: sqlite3.Connection) -> str | None:
     blocked, blocked_at = conn.execute(
         "SELECT blocked_status,blocked_at FROM dp_live_coordination WHERE singleton_id=1"
@@ -126,6 +148,18 @@ def init(db_file: Path | str) -> None:
         cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(dp_live_requests)")}
         if "result_manufacturer" not in cols:
             conn.execute("ALTER TABLE dp_live_requests ADD COLUMN result_manufacturer TEXT")
+        for column, definition in {
+            "claim_token": "TEXT", "claim_owner": "TEXT",
+            "claim_generation": "INTEGER NOT NULL DEFAULT 0", "lease_expires_at": "TEXT",
+            "orphaned_at": "TEXT",
+        }.items():
+            if column not in cols:
+                conn.execute(f"ALTER TABLE dp_live_requests ADD COLUMN {column} {definition}")
+        conn.execute("""CREATE TABLE IF NOT EXISTS dp_live_recovery_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL,
+            claim_generation INTEGER NOT NULL, event_type TEXT NOT NULL,
+            actor TEXT NOT NULL, evidence_sha256 TEXT, plan_sha256 TEXT,
+            created_at TEXT NOT NULL)""")
         conn.execute(
             """CREATE INDEX IF NOT EXISTS idx_dp_live_requests_status
                ON dp_live_requests(status, requested_at)"""
@@ -170,6 +204,9 @@ def request_live_dp(
         # Lookup and insert must share the write lock across all bot processes.
         conn.execute("BEGIN IMMEDIATE")
         _expire_pending(conn, now)
+        if _quarantine_claims(conn, now):
+            conn.commit()
+            return {"status": "TECHNICAL_ERROR", "error_code": "claim_recovery_required"}
         blocked = _breaker_status(conn) or _blocked_health(conn)
         if blocked:
             conn.commit()
@@ -229,7 +266,9 @@ def request_live_dp(
     return {"request_id": request_id, "status": "TIMEOUT"}
 
 
-def claim_next(db_file: Path | str) -> dict | None:
+def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> dict | None:
+    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", producer_id):
+        raise ValueError("invalid_producer_id")
     init(db_file)
     if _health_enforced():
         health = dp_live_health.get_health(db_file)
@@ -238,7 +277,7 @@ def claim_next(db_file: Path | str) -> dict | None:
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute("BEGIN IMMEDIATE")
         _expire_pending(conn, _now())
-        if _breaker_status(conn) or _blocked_health(conn) or conn.execute(
+        if _quarantine_claims(conn, _now()) or _breaker_status(conn) or _blocked_health(conn) or conn.execute(
             "SELECT 1 FROM dp_live_requests WHERE status='claimed' LIMIT 1"
         ).fetchone():
             conn.commit()
@@ -255,7 +294,7 @@ def claim_next(db_file: Path | str) -> dict | None:
             conn.commit()
             return None
         row = conn.execute(
-            """SELECT request_id,manufacturer,oem
+            """SELECT request_id,manufacturer,oem,claim_generation
                  FROM dp_live_requests
                 WHERE status='pending'
                 ORDER BY requested_at ASC LIMIT 1"""
@@ -263,11 +302,15 @@ def claim_next(db_file: Path | str) -> dict | None:
         if not row:
             conn.commit()
             return None
+        now = datetime.now(timezone.utc)
+        claim_token = uuid.uuid4().hex
+        lease_expires_at = (now + timedelta(seconds=600)).isoformat(timespec="seconds")
         changed = conn.execute(
             """UPDATE dp_live_requests
-                  SET status='claimed', claimed_at=?
+                  SET status='claimed', claimed_at=?,claim_token=?,claim_owner=?,
+                      claim_generation=claim_generation+1,lease_expires_at=?
                 WHERE request_id=? AND status='pending'""",
-            (_now(), str(row[0])),
+            (now.isoformat(timespec="seconds"), claim_token, producer_id, lease_expires_at, str(row[0])),
         ).rowcount
         conn.commit()
         if changed != 1:
@@ -276,6 +319,11 @@ def claim_next(db_file: Path | str) -> dict | None:
             "request_id": str(row[0]),
             "manufacturer": str(row[1]),
             "oem": str(row[2]),
+            "claim_token": claim_token,
+            "producer_id": producer_id,
+            "claim_generation": int(row[3]) + 1,
+            "lease_expires_at": lease_expires_at,
+            "protocol_version": 2,
         }
 
 
@@ -290,6 +338,9 @@ def finish(
     name: str | None = None,
     error_code: str | None = None,
     manufacturer: str | None = None,
+    claim_token: str | None = None,
+    claim_generation: int | None = None,
+    producer_id: str | None = None,
 ) -> bool:
     init(db_file)
     status = str(result_status or "TECHNICAL_ERROR").upper()
@@ -310,7 +361,10 @@ def finish(
                       item_name=?,
                       error_code=?,
                       result_manufacturer=?
-                WHERE request_id=? AND status IN ('pending','claimed')""",
+                WHERE request_id=? AND
+                  ((status='pending' AND claim_token IS NULL) OR
+                   (status='claimed' AND claim_token=? AND claim_generation=?
+                    AND claim_owner=? AND lease_expires_at>?))""",
             (
                 _now(),
                 status,
@@ -321,6 +375,7 @@ def finish(
                 error_code,
                 manufacturer,
                 str(request_id),
+                claim_token, claim_generation, producer_id, datetime.now(timezone.utc).isoformat(),
             ),
         ).rowcount
         if changed and status in {"CLOUDFLARE", "AUTH_REQUIRED"}:
