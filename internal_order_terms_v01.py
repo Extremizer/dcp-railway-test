@@ -167,6 +167,18 @@ def confirm_terms_and_create_payment_snapshot(
                WHERE confirmation_key=?""",
             (confirmation_key,),
         ).fetchone()
+        if prior is not None:
+            immutable_request_same=(
+                str(prior[0])==order_id
+                and int(prior[1])==warehouse_id
+                and str(prior[2])==terms_version
+                and str(prior[3])==terms_source_type
+                and str(prior[4])==terms_source_ref
+                and str(prior[5])==actual_actor
+                and str(prior[6])==effective_subject
+            )
+            if not immutable_request_same:
+                raise ValueError("internal terms confirmation conflict")
 
         lines=_load_order_lines(c,order_id)
         expected_ids={int(r[0]) for r in lines}
