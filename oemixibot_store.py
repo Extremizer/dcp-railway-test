@@ -515,7 +515,6 @@ CREATE TABLE IF NOT EXISTS item_financial_events(
         if row["confirmed_at"]: return False
         amount=round(float(row["total_usd"]),2)
         finance=FinanceEngine(self.path)
-        finance.require_order_capacity(buyer_id=row['dealer_id'],buyer_type='dealer',currency='USD',amount=amount,conn=c)
         ts=now_iso()
         if self._has_column(c,'dealer_orders','updated_at'):
             c.execute("UPDATE dealer_orders SET confirmed_at=?,status='Подтвержден',updated_at=? WHERE id=?",(ts,ts,order_id))
@@ -641,7 +640,6 @@ CREATE TABLE IF NOT EXISTS dealer_cart_items(
             items=[dict(r) for r in c.execute("SELECT * FROM dealer_cart_items WHERE dealer_id=? ORDER BY id",(dealer_id,)).fetchall()]
             if not items: raise ValueError("empty cart")
             total=round(sum(float(r["dlp_usd"])*int(r["qty"]) for r in items),2)
-            FinanceEngine(self.path).require_order_capacity(buyer_id=dealer_id,buyer_type='dealer',currency='USD',amount=total,conn=c)
             self.create_order(order_id,dealer_id,total,conn=c)
             for r in items:
                 self.add_item(order_id,r["oem"],r["qty"],r["brand"],r["item_type"],"Принята",r["dl_usd"],r["coefficient"],r["dlp_usd"],round(r["dlp_usd"]*r["qty"],2),conn=c)
