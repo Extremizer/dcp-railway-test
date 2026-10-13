@@ -17,6 +17,8 @@ def _connection(db_file, conn):
     c = sqlite3.connect(db_file) if own else conn
     if own:
         c.row_factory = sqlite3.Row
+        # Enforce the read-model boundary at the SQLite connection level.
+        c.execute("PRAGMA query_only=ON")
     return c, own
 
 
@@ -93,6 +95,8 @@ def _known_order_ids_conn(c, warehouse_id: int) -> list[str]:
          "SELECT DISTINCT order_id FROM warehouse_internal_balance_reservations WHERE warehouse_id=?"),
         ("warehouse_direct_payment_confirmations",
          "SELECT DISTINCT order_id FROM warehouse_direct_payment_confirmations WHERE warehouse_id=?"),
+        ("internal_order_payment_snapshots_v01",
+         "SELECT DISTINCT order_id FROM internal_order_payment_snapshots_v01 WHERE warehouse_id=?"),
     ]:
         if _table_exists(c, table):
             ids.update(
@@ -113,6 +117,91 @@ def _known_order_ids_conn(c, warehouse_id: int) -> list[str]:
     return sorted(ids)
 
 
+def _internal_payment_snapshot_conn(c, warehouse_id: int, order_id: str) -> dict | None:
+    """Return trusted immutable Internal terms for one scoped order.
+
+    The snapshot is accepted only when the shared order still exists and the
+    persisted warehouse lines resolve to the same exact warehouse. No legacy
+    partner-settlement value is consulted here.
+    """
+    if not _table_exists(c, "internal_order_payment_snapshots_v01"):
+        return None
+
+    required = {
+        "order_id", "warehouse_id", "warehouse_order_number", "client_id",
+        "customer_amount_rub", "partner_amount_rub", "payment_route",
+        "order_status_snapshot", "created_by", "created_at",
+    }
+    if not required.issubset(_columns(c, "internal_order_payment_snapshots_v01")):
+        raise RuntimeError("INTERNAL_PAYMENT_SNAPSHOT_SCHEMA_INVALID")
+
+    row = c.execute(
+        """SELECT order_id,warehouse_id,warehouse_order_number,client_id,
+                  customer_amount_rub,partner_amount_rub,payment_route,
+                  order_status_snapshot,created_by,created_at
+           FROM internal_order_payment_snapshots_v01
+           WHERE order_id=?""",
+        (str(order_id),),
+    ).fetchone()
+    if row is None:
+        return None
+
+    names = [
+        "order_id", "warehouse_id", "warehouse_order_number", "client_id",
+        "customer_amount_rub", "partner_amount_rub", "payment_route",
+        "order_status_snapshot", "created_by", "created_at",
+    ]
+    snapshot = dict(zip(names, row))
+    if str(snapshot["order_id"]) != str(order_id):
+        raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_ORDER_MISMATCH")
+    if int(snapshot["warehouse_id"]) != int(warehouse_id):
+        raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_WAREHOUSE_MISMATCH")
+
+    order_cols = _columns(c, "orders")
+    if "order_id" in order_cols:
+        exists = c.execute(
+            "SELECT 1 FROM orders WHERE order_id=?",
+            (str(order_id),),
+        ).fetchone()
+        if exists is None:
+            raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_ORDER_MISMATCH")
+
+    item_cols = _columns(c, "order_items")
+    if {"order_id", "offer_source", "warehouse_id"}.issubset(item_cols):
+        facts = c.execute(
+            """SELECT offer_source,warehouse_id
+               FROM order_items WHERE order_id=?""",
+            (str(order_id),),
+        ).fetchall()
+        if not facts:
+            raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_ORDER_MISMATCH")
+        warehouse_ids = set()
+        for source, item_warehouse_id in facts:
+            if str(source or "").strip().lower() != "warehouse":
+                raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_ORDER_MISMATCH")
+            if item_warehouse_id is None:
+                raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_WAREHOUSE_MISMATCH")
+            warehouse_ids.add(int(item_warehouse_id))
+        if warehouse_ids != {int(warehouse_id)}:
+            raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_WAREHOUSE_MISMATCH")
+
+    if not _table_exists(c, "internal_order_payment_state_v01"):
+        raise RuntimeError("INTERNAL_PAYMENT_STATE_REQUIRED")
+    state = c.execute(
+        """SELECT payment_status
+           FROM internal_order_payment_state_v01
+           WHERE order_id=?""",
+        (str(order_id),),
+    ).fetchone()
+    if state is None:
+        raise RuntimeError("INTERNAL_PAYMENT_STATE_REQUIRED")
+    payment_status = str(state[0] or "")
+    if payment_status not in {"DUE", "PAID"}:
+        raise ValueError("INTERNAL_PAYMENT_STATUS_INVALID")
+    snapshot["payment_status"] = payment_status
+    return snapshot
+
+
 def _order_display_conn(c, warehouse_id: int, order_id: str) -> dict:
     order_cols = _columns(c, "orders")
     item_cols = _columns(c, "order_items")
@@ -120,9 +209,14 @@ def _order_display_conn(c, warehouse_id: int, order_id: str) -> dict:
         "extremizer_order_number": str(order_id),
         "warehouse_order_number": None,
         "date": None,
+        "warehouse_id": int(warehouse_id),
+        "client_id": None,
         "customer_amount_rub": None,
         "partner_amount_rub": None,
         "partner_amount_source": None,
+        "payment_status": None,
+        "payment_route": None,
+        "order_status_snapshot": None,
     }
 
     if "order_id" in order_cols:
@@ -153,6 +247,27 @@ def _order_display_conn(c, warehouse_id: int, order_id: str) -> dict:
         ).fetchone()
         if total_row and int(total_row[2] or 0) > 0 and int(total_row[1] or 0) == 0:
             result["customer_amount_rub"] = int(total_row[0] or 0)
+
+    snapshot = _internal_payment_snapshot_conn(c, warehouse_id, order_id)
+    if snapshot is not None:
+        # The immutable payment-ready snapshot is the authoritative Internal
+        # terms source for C/P and payment state. It wins over older fallback
+        # sources such as direct-confirmation or reservation records.
+        result["warehouse_order_number"] = (
+            snapshot["warehouse_order_number"]
+            if snapshot["warehouse_order_number"] is not None
+            else result["warehouse_order_number"]
+        )
+        result["client_id"] = str(snapshot["client_id"])
+        result["customer_amount_rub"] = int(snapshot["customer_amount_rub"])
+        result["partner_amount_rub"] = int(snapshot["partner_amount_rub"])
+        result["partner_amount_source"] = "internal_payment_snapshot"
+        result["payment_status"] = str(snapshot["payment_status"])
+        result["payment_route"] = str(snapshot["payment_route"])
+        result["order_status_snapshot"] = str(snapshot["order_status_snapshot"])
+        if result["date"] is None:
+            result["date"] = snapshot["created_at"]
+        return result
 
     if _table_exists(c, "warehouse_direct_payment_confirmations"):
         row = c.execute(
