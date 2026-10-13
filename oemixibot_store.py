@@ -102,15 +102,18 @@ CREATE TABLE IF NOT EXISTS oem_physical(
             return item_id
         if conn is not None: return add(conn)
         with self.db() as c: return add(c)
-    def set_status(self, item_id, new_status, reason=None, actor="admin"):
+    def _set_status_conn(self,c,item_id,new_status,reason=None,actor="admin"):
         ts=now_iso()
+        row=c.execute("SELECT status FROM item_slices WHERE id=?",(item_id,)).fetchone()
+        if not row: raise KeyError(item_id)
+        c.execute("UPDATE item_slices SET status=?,updated_at=? WHERE id=?",(new_status,ts,item_id))
+        c.execute("""INSERT INTO item_status_history(item_slice_id,from_status,to_status,reason,actor,created_at)
+                     VALUES(?,?,?,?,?,?)""",(item_id,row["status"],new_status,reason,actor,ts))
+
+    def set_status(self,item_id,new_status,reason=None,actor="admin"):
         with self.db() as c:
-            row=c.execute("SELECT status FROM item_slices WHERE id=?",(item_id,)).fetchone()
-            if not row: raise KeyError(item_id)
-            old=row["status"]
-            c.execute("UPDATE item_slices SET status=?,updated_at=? WHERE id=?",(new_status,ts,item_id))
-            c.execute("""INSERT INTO item_status_history(item_slice_id,from_status,to_status,reason,actor,created_at)
-                         VALUES(?,?,?,?,?,?)""",(item_id,old,new_status,reason,actor,ts))
+            c.execute("BEGIN IMMEDIATE")
+            self._set_status_conn(c,item_id,new_status,reason,actor)
 
     def create_tracking(self, number, carrier=None):
         with self.db() as c:
@@ -129,8 +132,9 @@ CREATE TABLE IF NOT EXISTS oem_physical(
                           (code,method,now_iso()))
             return cur.lastrowid
 
-    def add_to_shipment(self, shipment_id, item_id, qty):
+    def add_to_shipment(self,shipment_id,item_id,qty):
         with self.db() as c:
+            c.execute("BEGIN IMMEDIATE")
             shipment=c.execute("SELECT id,status FROM usa_shipments WHERE id=?",(shipment_id,)).fetchone()
             if not shipment: raise KeyError(shipment_id)
             if shipment["status"]!="draft": raise ValueError("shipment is not draft")
@@ -139,22 +143,23 @@ CREATE TABLE IF NOT EXISTS oem_physical(
             if row["status"]!="На складе США": raise ValueError("item is not in US warehouse")
             if row["usa_shipment_id"] is not None: raise ValueError("item already assigned to USA shipment")
             if qty<=0 or qty>row["qty"]: raise ValueError("invalid qty")
-        use_id=item_id if qty==row["qty"] else self.split_item(item_id,qty)
-        with self.db() as c:
+            use_id=item_id if qty==row["qty"] else self._split_item_conn(c,item_id,qty)
             c.execute("INSERT INTO shipment_items VALUES(?,?,?)",(shipment_id,use_id,qty))
-            c.execute("UPDATE item_slices SET usa_shipment_id=?,updated_at=? WHERE id=?",
-                      (shipment_id,now_iso(),use_id))
-        return use_id
+            c.execute("UPDATE item_slices SET usa_shipment_id=?,updated_at=? WHERE id=?",(shipment_id,now_iso(),use_id))
+            return use_id
 
-    def depart_shipment(self, shipment_id, actor="admin"):
+    def depart_shipment(self,shipment_id,actor="admin"):
         with self.db() as c:
+            c.execute("BEGIN IMMEDIATE")
             shipment=c.execute("SELECT status FROM usa_shipments WHERE id=?",(shipment_id,)).fetchone()
             if not shipment: raise KeyError(shipment_id)
             if shipment["status"]!="draft": raise ValueError("shipment already departed")
             ids=[r[0] for r in c.execute("SELECT item_slice_id FROM shipment_items WHERE shipment_id=?",(shipment_id,))]
             if not ids: raise ValueError("empty USA shipment")
-            ts=now_iso(); c.execute("UPDATE usa_shipments SET status='in_transit',departed_at=? WHERE id=?",(ts,shipment_id))
-        for item_id in ids: self.set_status(item_id,"Едет в Москву","shipment departed",actor)
+            ts=now_iso()
+            c.execute("UPDATE usa_shipments SET status='in_transit',departed_at=? WHERE id=?",(ts,shipment_id))
+            for item_id in ids: self._set_status_conn(c,item_id,"Едет в Москву","shipment departed",actor)
+
     def save_physical(self,oem,actual=None,length=None,width=None,height=None,volume_effective=None,actor="admin",reason=None):
         dims=(length,width,height)
         if any(v is not None for v in dims) and not all(v is not None for v in dims):
@@ -200,13 +205,11 @@ CREATE TABLE IF NOT EXISTS oem_physical(
 
     def assign_tracking(self,item_id,tracking_id,actor="admin"):
         with self.db() as c:
-            if not c.execute("SELECT 1 FROM supplier_trackings WHERE id=?",(tracking_id,)).fetchone():
-                raise KeyError(tracking_id)
-            if not c.execute("SELECT 1 FROM item_slices WHERE id=?",(item_id,)).fetchone():
-                raise KeyError(item_id)
-            c.execute("UPDATE item_slices SET supplier_tracking_id=?,updated_at=? WHERE id=?",
-                      (tracking_id,now_iso(),item_id))
-        self.set_status(item_id,"Едет на склад США","supplier tracking assigned",actor)
+            c.execute("BEGIN IMMEDIATE")
+            if not c.execute("SELECT 1 FROM supplier_trackings WHERE id=?",(tracking_id,)).fetchone(): raise KeyError(tracking_id)
+            if not c.execute("SELECT 1 FROM item_slices WHERE id=?",(item_id,)).fetchone(): raise KeyError(item_id)
+            c.execute("UPDATE item_slices SET supplier_tracking_id=?,updated_at=? WHERE id=?",(tracking_id,now_iso(),item_id))
+            self._set_status_conn(c,item_id,"Едет на склад США","supplier tracking assigned",actor)
 
     def receive_moscow_item(self,shipment_id,item_id,actual_weight=None,length=None,width=None,height=None,actor="admin"):
         dims=(length,width,height)
@@ -301,26 +304,30 @@ CREATE TABLE IF NOT EXISTS oem_physical(
 
     def split_item(self,item_id,move_qty):
         with self.db() as c:
-            row=c.execute("SELECT * FROM item_slices WHERE id=?",(item_id,)).fetchone()
-            if not row: raise KeyError(item_id)
-            if move_qty<=0 or move_qty>=row["qty"]: raise ValueError("invalid split qty")
-            remain_qty=row["qty"]-move_qty
-            unit=row["unit_price_usd"]
-            remain_total=round(unit*remain_qty,2) if unit is not None else None
-            moved_total=round(unit*move_qty,2) if unit is not None else None
-            ts=now_iso()
-            c.execute("UPDATE item_slices SET qty=?,line_total_usd=?,updated_at=? WHERE id=?",
-                      (remain_qty,remain_total,ts,item_id))
-            cur=c.execute("""INSERT INTO item_slices(order_id,parent_slice_id,oem,brand,item_type,qty,status,
-                exception_status,supplier_tracking_id,usa_shipment_id,created_at,updated_at,
-                dl_usd,coefficient,unit_price_usd,line_total_usd)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(row["order_id"],item_id,row["oem"],row["brand"],row["item_type"],
-                move_qty,row["status"],row["exception_status"],row["supplier_tracking_id"],row["usa_shipment_id"],ts,ts,
-                row["dl_usd"],row["coefficient"],unit,moved_total))
-            new_id=cur.lastrowid
-            c.execute("INSERT INTO item_status_history(item_slice_id,to_status,reason,actor,created_at) VALUES(?,?,?,?,?)",
-                      (new_id,row["status"],f"split from {item_id}","system",ts))
-            return new_id
+            c.execute("BEGIN IMMEDIATE")
+            return self._split_item_conn(c,item_id,move_qty)
+
+    def _split_item_conn(self,c,item_id,move_qty):
+        row=c.execute("SELECT * FROM item_slices WHERE id=?",(item_id,)).fetchone()
+        if not row: raise KeyError(item_id)
+        if move_qty<=0 or move_qty>=row["qty"]: raise ValueError("invalid split qty")
+        remain_qty=row["qty"]-move_qty
+        unit=row["unit_price_usd"]
+        remain_total=round(unit*remain_qty,2) if unit is not None else None
+        moved_total=round(unit*move_qty,2) if unit is not None else None
+        ts=now_iso()
+        c.execute("UPDATE item_slices SET qty=?,line_total_usd=?,updated_at=? WHERE id=?",
+                  (remain_qty,remain_total,ts,item_id))
+        cur=c.execute("""INSERT INTO item_slices(order_id,parent_slice_id,oem,brand,item_type,qty,status,
+            exception_status,supplier_tracking_id,usa_shipment_id,created_at,updated_at,
+            dl_usd,coefficient,unit_price_usd,line_total_usd)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(row["order_id"],item_id,row["oem"],row["brand"],row["item_type"],
+            move_qty,row["status"],row["exception_status"],row["supplier_tracking_id"],row["usa_shipment_id"],ts,ts,
+            row["dl_usd"],row["coefficient"],unit,moved_total))
+        new_id=cur.lastrowid
+        c.execute("INSERT INTO item_status_history(item_slice_id,to_status,reason,actor,created_at) VALUES(?,?,?,?,?)",
+                  (new_id,row["status"],f"split from {item_id}","system",ts))
+        return new_id
 
     def ensure_receiving_schema(self):
         with self.db() as c:
