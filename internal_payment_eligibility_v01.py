@@ -103,6 +103,13 @@ def evaluate_direct_payment_eligibility(
             context.payment_ready_statuses
         ):
             reasons.append(_reason("ORDER_NOT_PAYMENT_READY",order["status"]))
+        elif snap is not None and str(order["status"]) != str(snap["order_status_snapshot"]):
+            reasons.append(
+                _reason(
+                    "ORDER_STATUS_CHANGED_SINCE_SNAPSHOT",
+                    f"{snap['order_status_snapshot']}->{order['status']}",
+                )
+            )
 
         if snap is not None:
             try:
