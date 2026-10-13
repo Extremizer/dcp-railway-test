@@ -1,18 +1,18 @@
-name: WEB2 + Internal P3 Scoped Read Isolated
+name: WEB2 P4 Secure Read Proof Isolated
 
 on:
   push:
     branches:
-      - web2-ui-p3-scoped-read-20261014
+      - web2-p4-secure-read-20261014
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  p3-scoped-read:
+  p4-secure-read:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -20,21 +20,39 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Install isolated test dependencies
+        run: |
+          python -m pip install "fastapi>=0.115,<1" "httpx>=0.27,<1"
+
       - name: Syntax
         run: |
-          python -B -m py_compile             warehouse_history_v14.py             internal_order_read_v01.py             web2_finance_read_model_adapter.py             test_web2_p2_read_model_compatibility.py             test_web2_finance_role_ui.py
+          python -B -m py_compile \
+            warehouse_history_v14.py \
+            internal_order_read_v01.py \
+            web2_finance_read_model_adapter.py \
+            web2_p4_secure_read_harness.py \
+            test_web2_p2_read_model_compatibility.py \
+            test_web2_p4_secure_read.py \
+            test_web2_finance_role_ui.py
           node --check web2/finance_role_preview.js
 
-      - name: Authoritative Theme 1 P3 regression
-        run: python -B -m unittest -v test_internal_order_read_v01.py
+      - name: Applicable Theme 1 P3 and finance regressions
+        run: |
+          python -B -m unittest -v \
+            test_internal_order_read_v01.py \
+            test_internal_order_core_v01.py \
+            test_warehouse_history_v14.py
 
-      - name: Theme 2 real P3 adapter compatibility
+      - name: Theme 2 P4 strict adapter regression
         run: python -B -m unittest -v test_web2_p2_read_model_compatibility.py
+
+      - name: Theme 2 P4 protected GET proof
+        run: python -B -m unittest -v test_web2_p4_secure_read.py
 
       - name: Install browser dependency
         run: |
           python -m pip install "playwright>=1.50,<2"
           python -m playwright install --with-deps chromium
 
-      - name: Theme 2 browser role nullable and safe-render regression
+      - name: Theme 2 browser role client nullability and safe-render regression
         run: python -B -m unittest -v test_web2_finance_role_ui.py
