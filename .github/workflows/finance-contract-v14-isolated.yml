@@ -2,7 +2,7 @@ name: Finance Contract v1.4 Isolated
 
 on:
   push:
-    branches: [finance-contract-v14-20261013]
+    branches: [finance-contract-v14-20261013, finance-v14-internal-routing-p0-p1-20261013]
   workflow_dispatch:
 
 permissions:
@@ -30,6 +30,7 @@ jobs:
           for path in Path('.').glob('*.py'):
               ast.parse(path.read_text(encoding='utf-8-sig'), filename=str(path))
           import warehouse_balance_v14
+          import warehouse_history_v14
           import client_wallet_info_v14
           import acting_as_v14
           import oemixibot_finance
@@ -39,11 +40,22 @@ jobs:
 
       - name: Contract v1.4 focused regressions
         run: |
-          python -B -m unittest -v             test_warehouse_balance_v14.py             test_client_wallet_info_v14.py             test_dealer_debt_v14.py             test_oemixibot_debt_runtime_v14.py             test_acting_as_v14.py
+          python -B -m unittest -v \
+            test_warehouse_balance_v14.py \
+            test_client_wallet_info_v14.py \
+            test_internal_payment_routing_v14.py \
+            test_internal_payment_atomic_v14.py \
+            test_warehouse_history_v14.py \
+            test_dealer_debt_v14.py \
+            test_oemixibot_debt_runtime_v14.py \
+            test_acting_as_v14.py \
+            test_partner_routes_checkout_point10.py
 
       - name: Existing dealer/OEMixi compatibility regressions
         run: |
-          python -B -m unittest -v             test_dealer_prepaid_finance.py             test_oemixibot_prepaid_runtime.py
+          python -B -m unittest -v \
+            test_dealer_prepaid_finance.py \
+            test_oemixibot_prepaid_runtime.py
 
       - name: Existing client RUB and order-core regressions
         run: |
