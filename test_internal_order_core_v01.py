@@ -33,6 +33,7 @@ def create_shared_schema(db):
               position INTEGER NOT NULL,
               offer_source TEXT NOT NULL,
               warehouse_id INTEGER,
+              oem TEXT,
               quantity INTEGER NOT NULL,
               customer_unit_rub INTEGER,
               payment_route TEXT NOT NULL
@@ -66,10 +67,10 @@ class InternalOrderCoreV01Tests(unittest.TestCase):
             for pos, price in enumerate(prices, 1):
                 c.execute(
                     """INSERT INTO order_items(
-                         order_id,position,offer_source,warehouse_id,
+                         order_id,position,offer_source,warehouse_id,oem,
                          quantity,customer_unit_rub,payment_route)
-                       VALUES(?,?,'warehouse',?,1,?,?)""",
-                    (order_id, pos, warehouse_id, price, route),
+                       VALUES(?,?,'warehouse',?,?,1,?,?)""",
+                    (order_id, pos, warehouse_id, f"OEM-{pos}", price, route),
                 )
 
     def add_usa_order(self, order_id="E-P2-USA"):
@@ -80,9 +81,9 @@ class InternalOrderCoreV01Tests(unittest.TestCase):
             )
             c.execute(
                 """INSERT INTO order_items(
-                     order_id,position,offer_source,warehouse_id,
+                     order_id,position,offer_source,warehouse_id,oem,
                      quantity,customer_unit_rub,payment_route)
-                   VALUES(?,1,'usa',NULL,1,5000,'extremizer_balance')""",
+                   VALUES(?,1,'usa',NULL,'USA-OEM',1,5000,'extremizer_balance')""",
                 (order_id,),
             )
 
