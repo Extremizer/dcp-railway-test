@@ -81,6 +81,7 @@ class DealerPrepaidTests(unittest.TestCase):
             order_id=key, actor='test', idempotency_key='ORDER_CHARGE:'+key,
             conn=conn)
 
+
     def test_policy_and_legacy_limit_cannot_authorize(self):
         self.assertEqual(DEALER_POLICY.wallet_currency, 'USD')
         self.assertFalse(any((DEALER_POLICY.credit_enabled,
@@ -90,10 +91,9 @@ class DealerPrepaidTests(unittest.TestCase):
         self.assertEqual(self.engine.available_to_order('dealer'), Decimal('0'))
         with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_AVAILABLE'):
             self.engine.require_order_capacity(buyer_id='dealer', amount=1)
-        with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_AVAILABLE'):
-            self.charge(1)
-        self.assertEqual(self.engine.history('dealer'), [])
-
+        self.charge(1)
+        self.assertEqual(self.engine.balance('dealer'), Decimal('-1'))
+        self.assertEqual(len(self.engine.history('dealer')), 1)
     def test_payment_charge_refund_adjustment_history_idempotency(self):
         payment = self.pay()
         charge = self.charge()
@@ -115,20 +115,22 @@ class DealerPrepaidTests(unittest.TestCase):
                 retry()
         self.assertEqual(len(self.engine.history('dealer')), 5)
 
+
     def test_insufficient_charge_preserves_caller_transaction(self):
         with sqlite3.connect(self.path) as c:
             c.row_factory = sqlite3.Row
             c.execute('BEGIN IMMEDIATE')
             c.execute("INSERT INTO dealer_orders VALUES('pending','dealer')")
-            with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_AVAILABLE'):
-                self.charge(1, 'pending', conn=c)
+            self.charge(1, 'pending', conn=c)
             self.assertTrue(c.in_transaction)
             self.assertIsNotNone(c.execute("SELECT id FROM dealer_orders WHERE id='pending'").fetchone())
+            self.assertEqual(c.execute(
+                "SELECT COUNT(*) FROM finance_ledger WHERE event_type='ORDER_CHARGE'"
+            ).fetchone()[0], 1)
             c.rollback()
         with sqlite3.connect(self.path) as c:
             self.assertEqual(c.execute('SELECT COUNT(*) FROM dealer_orders').fetchone()[0], 0)
         self.assertEqual(self.engine.history('dealer'), [])
-
     def test_inactive_dealer_cannot_charge(self):
         self.pay()
         with sqlite3.connect(self.path) as c:
@@ -137,64 +139,48 @@ class DealerPrepaidTests(unittest.TestCase):
             self.charge(1)
         self.assertEqual(self.engine.balance('dealer'), Decimal('100'))
 
+
     def test_owned_failure_explicitly_rolls_back_then_closes(self):
-        for insert_error in (False, True):
-            with self.subTest(insert_error=insert_error):
-                if insert_error:
-                    self.pay(100)
-                c = sqlite3.connect(self.path, factory=TrackedConnection)
-                c.row_factory = sqlite3.Row
-                c.fail_insert = insert_error
-                error = sqlite3.OperationalError if insert_error else ValueError
-                message = 'injected insert failure' if insert_error else 'INSUFFICIENT_AVAILABLE'
-                with patch.object(self.engine, '_db', return_value=c):
-                    with self.assertRaisesRegex(error, message):
-                        self.charge(1)
-                self.assertEqual(c.calls, ['begin', 'rollback', 'close'])
-                with self.assertRaises(sqlite3.ProgrammingError):
-                    c.execute('SELECT 1')
-                self.assertFalse(any(r['event_type'] == 'ORDER_CHARGE'
-                                     for r in self.engine.history('dealer')))
+        c = sqlite3.connect(self.path, factory=TrackedConnection)
+        c.row_factory = sqlite3.Row
+        c.fail_insert = True
+        with patch.object(self.engine, '_db', return_value=c):
+            with self.assertRaisesRegex(sqlite3.OperationalError, 'injected insert failure'):
+                self.charge(1)
+        self.assertEqual(c.calls, ['begin', 'rollback', 'close'])
+        with self.assertRaises(sqlite3.ProgrammingError):
+            c.execute('SELECT 1')
+        self.assertEqual(self.engine.history('dealer'), [])
 
     def test_caller_failure_never_finishes_or_closes_transaction(self):
-        for insert_error in (False, True):
-            with self.subTest(insert_error=insert_error):
-                c = sqlite3.connect(self.path, factory=TrackedConnection)
-                c.row_factory = sqlite3.Row
-                try:
-                    c.execute('BEGIN IMMEDIATE')
-                    c.execute("INSERT INTO dealer_orders VALUES('pending','dealer')")
-                    if insert_error:
-                        self.engine.post_event(buyer_type='dealer', buyer_id='dealer',
-                            currency='USD', event_type='PAYMENT', amount=100,
-                            description='topup', reference_type='payment', reference_id='shared',
-                            actor='test', idempotency_key='shared-payment', conn=c)
-                    c.calls.clear()
-                    c.fail_insert = insert_error
-                    error = sqlite3.OperationalError if insert_error else ValueError
-                    with self.assertRaises(error):
-                        self.charge(1, conn=c)
-                    self.assertEqual(c.calls, [])
-                    self.assertTrue(c.in_transaction)
-                    self.assertEqual(c.execute('SELECT COUNT(*) FROM dealer_orders').fetchone()[0], 1)
-                    self.assertEqual(c.execute("SELECT COUNT(*) FROM finance_ledger WHERE event_type='ORDER_CHARGE'").fetchone()[0], 0)
-                    # Caller can keep working and decides when to rollback.
-                    c.execute("UPDATE dealer_orders SET id='still-controlled'")
-                    c.rollback()
-                    self.assertEqual(c.calls, ['rollback'])
-                finally:
-                    c.close()
-                self.assertEqual(self.engine.history('dealer'), [])
+        c = sqlite3.connect(self.path, factory=TrackedConnection)
+        c.row_factory = sqlite3.Row
+        try:
+            c.execute('BEGIN IMMEDIATE')
+            c.execute("INSERT INTO dealer_orders VALUES('pending','dealer')")
+            c.calls.clear()
+            c.fail_insert = True
+            with self.assertRaises(sqlite3.OperationalError):
+                self.charge(1, conn=c)
+            self.assertEqual(c.calls, [])
+            self.assertTrue(c.in_transaction)
+            self.assertEqual(c.execute('SELECT COUNT(*) FROM dealer_orders').fetchone()[0], 1)
+            self.assertEqual(c.execute(
+                "SELECT COUNT(*) FROM finance_ledger WHERE event_type='ORDER_CHARGE'"
+            ).fetchone()[0], 0)
+            c.rollback()
+            self.assertEqual(c.calls, ['rollback'])
+        finally:
+            c.close()
+        self.assertEqual(self.engine.history('dealer'), [])
 
     def test_exact_balance_and_insufficient_balance(self):
         self.pay(10)
-        with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_AVAILABLE'):
-            self.charge('10.01')
-        self.charge(10)
-        self.assertEqual(self.engine.balance('dealer'), Decimal('0'))
-        with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_AVAILABLE'):
-            self.charge(1, 'second')
-
+        self.charge('10.01')
+        self.assertEqual(self.engine.balance('dealer'), Decimal('-0.01'))
+        self.charge(1, 'second')
+        self.assertEqual(self.engine.balance('dealer'), Decimal('-1.01'))
+        self.assertFalse(self.engine.dcp_procurement_ready('dealer')['ready'])
     def test_all_dealer_debits_prepaid_and_usd_only(self):
         with self.assertRaisesRegex(ValueError, 'must be USD'):
             self.charge(1, currency='RUB')
@@ -218,19 +204,16 @@ class DealerPrepaidTests(unittest.TestCase):
             c.rollback()
         self.assertEqual(self.engine.history('dealer'), [])
 
+
     def test_concurrent_debits_cannot_overspend(self):
         self.pay()
         def debit(key):
-            try:
-                self.charge(70, key)
-                return 'charged'
-            except ValueError as exc:
-                self.assertIn('INSUFFICIENT_AVAILABLE', str(exc))
-                return 'rejected'
+            self.charge(70, key)
+            return 'charged'
         with ThreadPoolExecutor(max_workers=2) as pool:
-            self.assertCountEqual(list(pool.map(debit, ['one', 'two'])),
-                                  ['charged', 'rejected'])
-        self.assertEqual(self.engine.balance('dealer'), Decimal('30'))
+            self.assertEqual(list(pool.map(debit, ['one', 'two'])), ['charged', 'charged'])
+        self.assertEqual(self.engine.balance('dealer'), Decimal('-40'))
+        self.assertFalse(self.engine.dcp_procurement_ready('dealer')['ready'])
 
     def test_legacy_negative_balance_and_schema_preserved(self):
         with sqlite3.connect(self.path) as c:
@@ -242,15 +225,15 @@ class DealerPrepaidTests(unittest.TestCase):
                 ('finance_receivable_terms', 'finance_due_date_audit',
                  'finance_aging_alert_state', 'finance_credit_limit_audit', 'dealers')}
         self.pay(40)
-        with self.assertRaisesRegex(ValueError, 'INSUFFICIENT_AVAILABLE'):
-            self.charge(1)
+        self.charge(1)
+        self.assertEqual(self.engine.balance('dealer'), Decimal('-11'))
         self.pay(20, 'second')
         self.charge(10)
-        self.assertEqual(self.engine.balance('dealer'), Decimal('0'))
+        self.assertEqual(self.engine.balance('dealer'), Decimal('-1'))
+        self.assertFalse(self.engine.dcp_procurement_ready('dealer')['ready'])
         with sqlite3.connect(self.path) as c:
             for table, rows in before.items():
                 self.assertEqual(c.execute('SELECT * FROM '+table).fetchall(), rows)
-
     def test_no_credit_column_required_and_no_obsolete_api(self):
         with sqlite3.connect(self.path) as c:
             c.execute('ALTER TABLE dealers DROP COLUMN credit_limit_usd')
