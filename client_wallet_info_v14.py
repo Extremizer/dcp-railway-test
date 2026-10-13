@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """Zero-impact client wallet history events for direct warehouse money flow.
 
-These rows are informational only. They use the existing shared finance_ledger
-so existing history readers can display them, but amount is always exactly 0
-and therefore cannot change the client RUB wallet balance.
+Public calls keep legacy self-owned transactions. Passing conn delegates all
+transaction ownership to the caller so Internal payment state, partner balance
+and the informational client event can share one commit or rollback.
 """
 from __future__ import annotations
 
@@ -26,6 +26,17 @@ def _text(value, name):
     return value
 
 
+def _connection(db_file, conn):
+    own = conn is None
+    if own:
+        ensure_client_finance_schema(db_file)
+        c = sqlite3.connect(db_file, timeout=30)
+        c.row_factory = sqlite3.Row
+    else:
+        c = conn
+    return c, own
+
+
 def record(
     db_file,
     *,
@@ -38,6 +49,7 @@ def record(
     actual_actor,
     description,
     effective_subject=None,
+    conn=None,
 ):
     client_id = _text(client_id, "client_id")
     order_id = _text(order_id, "order_id")
@@ -51,34 +63,48 @@ def record(
     external = Decimal(str(external_amount_rub))
     if not external.is_finite() or external <= 0:
         raise ValueError("external_amount_rub must be positive")
-    ensure_client_finance_schema(db_file)
+    effective_subject = str(effective_subject or "") or None
     key = f"{event_type}:{reference_id}"
     reason = (
         f"warehouse_id={warehouse_id};"
-        f"effective_subject={str(effective_subject or '')}"
+        f"effective_subject={effective_subject or ''}"
     )
-    with sqlite3.connect(db_file, timeout=30) as c:
-        c.row_factory = sqlite3.Row
-        c.execute("BEGIN IMMEDIATE")
+
+    c, own = _connection(db_file, conn)
+    ok = False
+    try:
+        if own:
+            c.execute("BEGIN IMMEDIATE")
         prior = c.execute(
-            "SELECT * FROM finance_ledger WHERE idempotency_key=?", (key,)
+            """SELECT id,buyer_type,buyer_id,wallet_currency,event_type,amount,
+                      description,reference_type,reference_id,order_id,actor,
+                      reason,idempotency_key,source_amount,source_currency,
+                      fx_code,fx_rate
+               FROM finance_ledger WHERE idempotency_key=?""",
+            (key,),
         ).fetchone()
         if prior:
             same = (
-                prior["buyer_type"] == "client"
-                and str(prior["buyer_id"]) == client_id
-                and prior["wallet_currency"] == "RUB"
-                and prior["event_type"] == event_type
-                and Decimal(str(prior["amount"])) == Decimal("0")
-                and str(prior["order_id"]) == order_id
-                and str(prior["reference_id"]) == reference_id
-                and Decimal(str(prior["source_amount"])) == external
-                and prior["source_currency"] == "RUB"
+                prior[1] == "client"
+                and str(prior[2]) == client_id
+                and prior[3] == "RUB"
+                and prior[4] == event_type
+                and Decimal(str(prior[5])) == Decimal("0")
+                and str(prior[6]) == description
+                and str(prior[7]) == "warehouse_direct_money_flow"
+                and str(prior[8]) == reference_id
+                and str(prior[9]) == order_id
+                and str(prior[10]) == actual_actor
+                and str(prior[11]) == reason
+                and Decimal(str(prior[13])) == external
+                and prior[14] == "RUB"
+                and prior[15] == "RUB_RUB"
+                and str(prior[16]) == "1"
             )
             if not same:
                 raise ValueError("informational idempotency conflict")
-            c.rollback()
-            return int(prior["id"])
+            ok = True
+            return int(prior[0])
 
         cur = c.execute(
             """INSERT INTO finance_ledger(
@@ -103,8 +129,14 @@ def record(
             ),
         )
         event_id = int(cur.lastrowid)
-        c.commit()
+        ok = True
         return event_id
+    finally:
+        if own:
+            try:
+                c.commit() if ok else c.rollback()
+            finally:
+                c.close()
 
 
 def record_direct_payment(db_file, **kwargs):
