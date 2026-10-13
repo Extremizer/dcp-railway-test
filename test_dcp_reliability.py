@@ -269,6 +269,9 @@ class BrowserTests(unittest.TestCase):
     def test_block_before_failed_result_delivery(self):
         order=[]
         ns=functions("dp_sync_agent.py", {"run_once"}, {
+            "_PRODUCER_STOP":False,"JOURNAL_FILE":SimpleNamespace(exists=lambda:False),
+            "_journal":lambda *a:None,"_clear_journal":lambda:None,
+            "_validated_result":lambda item,r:r,
             "_claim":lambda:{"request_id":"mock","manufacturer":"Arctic Cat","oem":"2670-265"},
             "oemixibot_dcp_price":SimpleNamespace(get_dealer_price_dict=lambda *a:{"status":"CLOUDFLARE"}),
             "_set_dcp_health":lambda *a,**k:order.append("blocked"),

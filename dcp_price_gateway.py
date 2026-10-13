@@ -34,7 +34,7 @@ def _read_cache(db_file, manufacturer, oem, max_age_hours):
         return None
     result = {"status":"FOUND","manufacturer":manufacturer,"query_oem":oem,"current_oem":oem,
               "dealer_price_usd":row[0],"source":row[1],"last_verified_at":row[2],"currency":"USD",
-              "server_cache_committed":True}
+              "verified_cache_hit":True}
     return result if _verified_price(result,manufacturer,oem,max_age_hours) else None
 
 
@@ -49,10 +49,12 @@ def request_price(db_file, manufacturer, oem, *, max_age_hours=168.0, wait_secon
     result = (live_request or dp_live_bridge.request_live_dp)(db_file,manufacturer,oem,wait_seconds=wait_seconds)
     if result.get("status") != "FOUND":
         return {k:v for k,v in result.items() if k not in {"dealer_price_usd","msrp_usd","retail","rrp"}}
+    if result.get("server_cache_committed") is not True:
+        return {"status":"NO_PRICE","error_code":"atomic_completion_not_proven"}
     # FOUND is useful only after the server atomically committed verified DP.
     cached = _read_cache(db_file,manufacturer,oem,max_age_hours)
     if cached:
-        return {**cached,"request_id":result.get("request_id"),"current_oem":result.get("current_oem") or oem,
+        return {**cached,"server_cache_committed":True,"cache_committed_at":result.get("cache_committed_at"),"request_id":result.get("request_id"),"current_oem":result.get("current_oem") or oem,
                 "name":result.get("name")}
     return {"status":"NO_PRICE","error_code":"verified_cache_completion_missing"}
 
@@ -68,7 +70,14 @@ class SharedDealerPriceAdapter:
         manufacturer,oem = dp_live_bridge._request_key(manufacturer,oem)
         if manufacturer not in MANUFACTURERS or not oem:
             return {"status":"INVALID"}
-        result = self.gateway(manufacturer,oem,max_age_hours=self.max_age_hours)
+        if not callable(self.gateway):
+            return {"status":"TECHNICAL_ERROR","error_code":"shared_gateway_not_configured"}
+        try:
+            result = self.gateway(manufacturer,oem,max_age_hours=self.max_age_hours)
+        except Exception:
+            return {"status":"TECHNICAL_ERROR","error_code":"shared_gateway_unavailable"}
+        if not isinstance(result, dict):
+            return {"status":"TECHNICAL_ERROR","error_code":"invalid_gateway_response"}
         if result.get("status") != "FOUND":
             return {k:v for k,v in result.items() if k not in {"dealer_price_usd","msrp_usd","retail","rrp"}}
         if not _verified_price(result,manufacturer,oem,self.max_age_hours):

@@ -61,6 +61,7 @@ class ThreeAdapterTests(CompletionFixture):
             "init_orders_db":lambda:None,"log":logging.getLogger("isolated-dcp-test"),
             "dp_live_bridge":SimpleNamespace(request_live_dp=lambda db,m,o,**kw:lookup(m,o)),
         })
+        procenka["upsert_dealer_price_cache"]=Mock(side_effect=AssertionError("consumer DP write forbidden"))
         dealer=actual_functions("oemixibot_catalog.py",{"resolve_identity","resolve_offer"},{
             "finder":self.finder,"oem_reference_service":SimpleNamespace(lookup_oem=lambda o:{}),
             "oem_identity_service":SimpleNamespace(lookup=lambda o:{"manufacturer":"Arctic Cat","item_type":"parts"}),

@@ -135,10 +135,10 @@ def complete_result(db_file, payload: dict) -> dict:
                     _write_identity(conn, manufacturer, requested_oem, current_oem, name, source, now)
             changed = conn.execute("""UPDATE dp_live_requests SET status='finished',finished_at=?,
                 result_status=?,dealer_price_usd=?,result_source=?,current_oem=?,item_name=?,
-                error_code=?,result_manufacturer=? WHERE request_id=? AND status='claimed'
+                error_code=?,result_manufacturer=?,cache_committed_at=? WHERE request_id=? AND status='claimed'
                 AND claim_token=? AND claim_generation=? AND claim_owner=?""",
                 (now,status,price,source,current_oem,name,str(payload.get("error_code") or "")[:120] or None,
-                 manufacturer,row["request_id"],token,generation,payload["producer_id"])).rowcount
+                 manufacturer,now if status == "FOUND" else None,row["request_id"],token,generation,payload["producer_id"])).rowcount
             if changed != 1:
                 raise CompletionError(409, "claim_fence_mismatch")
             if status in {"CLOUDFLARE", "AUTH_REQUIRED"}:

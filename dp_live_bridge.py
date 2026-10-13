@@ -47,10 +47,12 @@ def _valid_dp(price: object, source: object) -> bool:
 
 
 def _result(row: tuple) -> dict:
-    return dict(zip(
+    result = dict(zip(
         ("request_id", "status", "dealer_price_usd", "source", "current_oem",
-         "name", "error_code", "manufacturer"), row
+         "name", "error_code", "manufacturer", "cache_committed_at"), row
     ))
+    result["server_cache_committed"] = bool(result.get("cache_committed_at"))
+    return result
 
 
 def _expire_pending(conn: sqlite3.Connection, now: str) -> None:
@@ -151,7 +153,7 @@ def init(db_file: Path | str) -> None:
         for column, definition in {
             "claim_token": "TEXT", "claim_owner": "TEXT",
             "claim_generation": "INTEGER NOT NULL DEFAULT 0", "lease_expires_at": "TEXT",
-            "orphaned_at": "TEXT",
+            "orphaned_at": "TEXT", "cache_committed_at": "TEXT",
         }.items():
             if column not in cols:
                 conn.execute(f"ALTER TABLE dp_live_requests ADD COLUMN {column} {definition}")
@@ -213,7 +215,7 @@ def request_live_dp(
             return {"status": blocked, "error_code": "dcp_circuit_open"}
         recent = conn.execute(
             """SELECT request_id,result_status,dealer_price_usd,result_source,
-                      current_oem,item_name,error_code,result_manufacturer
+                      current_oem,item_name,error_code,result_manufacturer,cache_committed_at
                FROM dp_live_requests WHERE manufacturer=? AND oem=?
                  AND status='finished' AND result_status='FOUND' AND finished_at>=?
                ORDER BY finished_at DESC LIMIT 1""",
@@ -246,7 +248,7 @@ def request_live_dp(
         with sqlite3.connect(str(db_file), timeout=10) as conn:
             row = conn.execute(
                 """SELECT status,result_status,dealer_price_usd,result_source,
-                          current_oem,item_name,error_code,result_manufacturer
+                          current_oem,item_name,error_code,result_manufacturer,cache_committed_at
                      FROM dp_live_requests WHERE request_id=?""",
                 (request_id,),
             ).fetchone()
@@ -260,6 +262,8 @@ def request_live_dp(
                 "name": row[5],
                 "error_code": row[6],
                 "manufacturer": row[7],
+                "cache_committed_at": row[8],
+                "server_cache_committed": bool(row[8]),
             }
         time.sleep(0.20)
 
