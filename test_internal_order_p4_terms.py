@@ -11,6 +11,10 @@ from internal_order_core_v01 import (
     get_payment_snapshot,
     init,
 )
+from internal_order_read_v01 import (
+    WarehouseReadContext,
+    read_order,
+)
 from internal_order_terms_v01 import (
     TermsConfirmationContext,
     confirm_terms_and_create_payment_snapshot,
@@ -197,6 +201,25 @@ class TermsIntegrityTests(P4Base):
         with self.assertRaisesRegex(ValueError,"INTERNAL_TERMS_INTEGRITY_PROOF_REQUIRED"):
             self.confirm()
         self.assertEqual(self.counts()["status"],"DUE")
+
+    def test_nullable_warehouse_order_number_preserved_in_read_contract(self):
+        self.add_order()
+        self.snapshot()
+        result=read_order(
+            self.db,
+            warehouse_id=1,
+            order_id="I-P4-1",
+            context=WarehouseReadContext(
+                actual_actor="warehouse:1:reader",
+                warehouse_id=1,
+                authorized=True,
+            ),
+        )
+        self.assertIsNone(result["order"]["warehouse_order_number"])
+        self.assertEqual(
+            result["order"]["partner_amount_source"],
+            "internal_payment_snapshot",
+        )
 
     def test_toctou_writer_is_blocked_after_integrity_check(self):
         self.add_order()
