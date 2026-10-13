@@ -38,8 +38,6 @@ jobs:
           import internal_order_terms_v01
           import internal_order_persistence_v01
           import internal_payment_eligibility_v01
-          import internal_order_persistence_v01
-          import internal_payment_eligibility_v01
           import oemixibot_finance
           import oemixibot_store
           import client_finance_adapter
@@ -60,7 +58,8 @@ jobs:
             test_internal_order_core_v01.py \
             test_internal_order_read_v01.py \
             test_internal_order_p4_terms.py \
-            test_internal_order_p5_boundary.py
+            test_internal_order_p5_boundary.py \
+            test_internal_order_p5.py
 
       - name: Existing dealer/OEMixi compatibility regressions
         run: |
