@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Read-only warehouse finance history for CONTRACT v1.4.
+"""Read-only warehouse finance history for CONTRACT v1.4 / Internal P3.
 
-Reads only the new warehouse-balance domain plus order snapshots.
-It deliberately does not merge warehouse_partner_settlements automatically.
-Totals are calculated from the complete warehouse ledger, independently from
-search/pagination applied to returned history rows.
+The service reads the new warehouse-balance ledger and shared Order Core
+snapshots. If an Internal Order v0.1 immutable payment snapshot exists, it is
+the authoritative source for C/P/client/payment-route/warehouse order number.
+
+Legacy warehouse_partner_settlements are deliberately not merged.
+Search/pagination never affect warehouse-wide financial totals.
 """
 from __future__ import annotations
 
 import sqlite3
+
+
+_INTERNAL_SNAPSHOT_TABLE = "internal_order_payment_snapshots_v01"
+_INTERNAL_STATE_TABLE = "internal_order_payment_state_v01"
 
 
 def _connection(db_file, conn):
@@ -83,6 +89,65 @@ def summary(db_file, warehouse_id: int, *, conn=None) -> dict:
             c.close()
 
 
+def _internal_snapshot_conn(c, order_id: str):
+    if not _table_exists(c, _INTERNAL_SNAPSHOT_TABLE):
+        return None
+    return c.execute(
+        """SELECT order_id,warehouse_id,warehouse_order_number,client_id,
+                  customer_amount_rub,partner_amount_rub,payment_route,
+                  order_status_snapshot,created_by,created_at
+           FROM internal_order_payment_snapshots_v01
+           WHERE order_id=?""",
+        (str(order_id),),
+    ).fetchone()
+
+
+def _internal_payment_status_conn(c, order_id: str) -> str:
+    if not _table_exists(c, _INTERNAL_STATE_TABLE):
+        raise ValueError("INTERNAL_PAYMENT_STATE_REQUIRED")
+    row = c.execute(
+        """SELECT payment_status
+           FROM internal_order_payment_state_v01
+           WHERE order_id=?""",
+        (str(order_id),),
+    ).fetchone()
+    if row is None or str(row[0] or "") not in {"DUE", "PAID"}:
+        raise ValueError("INTERNAL_PAYMENT_STATE_REQUIRED")
+    return str(row[0])
+
+
+def _validate_internal_snapshot_scope_conn(
+    c,
+    *,
+    warehouse_id: int,
+    order_id: str,
+    snapshot,
+) -> None:
+    if str(snapshot[0]) != str(order_id):
+        raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_ORDER_MISMATCH")
+    if int(snapshot[1]) != int(warehouse_id):
+        raise ValueError("INTERNAL_PAYMENT_SNAPSHOT_WAREHOUSE_MISMATCH")
+
+    item_cols = _columns(c, "order_items")
+    required = {"order_id", "offer_source", "warehouse_id"}
+    if not required.issubset(item_cols):
+        raise ValueError("INTERNAL_ORDER_SCOPE_DATA_REQUIRED")
+
+    rows = c.execute(
+        """SELECT offer_source,warehouse_id
+           FROM order_items
+           WHERE order_id=?""",
+        (str(order_id),),
+    ).fetchall()
+    if not rows:
+        raise ValueError("INTERNAL_ORDER_SCOPE_DATA_REQUIRED")
+    for source, line_warehouse_id in rows:
+        if str(source or "").strip().lower() != "warehouse":
+            raise ValueError("INTERNAL_ORDER_SCOPE_MISMATCH")
+        if line_warehouse_id is None or int(line_warehouse_id) != int(warehouse_id):
+            raise ValueError("INTERNAL_ORDER_SCOPE_MISMATCH")
+
+
 def _known_order_ids_conn(c, warehouse_id: int) -> list[str]:
     warehouse_id = int(warehouse_id)
     ids: set[str] = set()
@@ -93,6 +158,8 @@ def _known_order_ids_conn(c, warehouse_id: int) -> list[str]:
          "SELECT DISTINCT order_id FROM warehouse_internal_balance_reservations WHERE warehouse_id=?"),
         ("warehouse_direct_payment_confirmations",
          "SELECT DISTINCT order_id FROM warehouse_direct_payment_confirmations WHERE warehouse_id=?"),
+        (_INTERNAL_SNAPSHOT_TABLE,
+         "SELECT DISTINCT order_id FROM internal_order_payment_snapshots_v01 WHERE warehouse_id=?"),
     ]:
         if _table_exists(c, table):
             ids.update(
@@ -120,14 +187,19 @@ def _order_display_conn(c, warehouse_id: int, order_id: str) -> dict:
         "extremizer_order_number": str(order_id),
         "warehouse_order_number": None,
         "date": None,
+        "order_status": None,
+        "payment_status": None,
+        "client_id": None,
         "customer_amount_rub": None,
         "partner_amount_rub": None,
         "partner_amount_source": None,
+        "payment_route": None,
+        "internal_payment_snapshot": False,
     }
 
     if "order_id" in order_cols:
         selected = ["order_id"]
-        for col in ("warehouse_order_number", "created_at"):
+        for col in ("warehouse_order_number", "created_at", "status"):
             if col in order_cols:
                 selected.append(col)
         row = c.execute(
@@ -138,6 +210,29 @@ def _order_display_conn(c, warehouse_id: int, order_id: str) -> dict:
             mapping = dict(zip(selected, row))
             result["warehouse_order_number"] = mapping.get("warehouse_order_number")
             result["date"] = mapping.get("created_at")
+            result["order_status"] = mapping.get("status")
+
+    snapshot = _internal_snapshot_conn(c, order_id)
+    if snapshot is not None:
+        _validate_internal_snapshot_scope_conn(
+            c,
+            warehouse_id=warehouse_id,
+            order_id=order_id,
+            snapshot=snapshot,
+        )
+        result.update(
+            {
+                "warehouse_order_number": snapshot[2],
+                "client_id": str(snapshot[3]),
+                "customer_amount_rub": int(snapshot[4]),
+                "partner_amount_rub": int(snapshot[5]),
+                "partner_amount_source": "internal_payment_snapshot",
+                "payment_route": str(snapshot[6]),
+                "payment_status": _internal_payment_status_conn(c, order_id),
+                "internal_payment_snapshot": True,
+            }
+        )
+        return result
 
     required = {"order_id", "offer_source", "warehouse_id", "quantity", "customer_unit_rub"}
     if required.issubset(item_cols):
@@ -199,11 +294,10 @@ def order_rows(
     offset: int = 0,
     conn=None,
 ) -> list[dict]:
-    """Return five-column row data without changing financial meaning.
+    """Return warehouse history row data without changing financial meaning.
 
-    balance_rub is None until the order has a posted new-ledger event.
-    It is the historical net effect of that order, not current warehouse-wide
-    available balance.
+    For an Internal v0.1 snapshot-backed order, C/P/client/payment status come
+    from that immutable domain. For legacy/pre-terms rows, P is never invented.
     """
     c, own = _connection(db_file, conn)
     try:
