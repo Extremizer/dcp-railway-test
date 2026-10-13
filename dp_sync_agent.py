@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import os
 import time
 import traceback
@@ -252,8 +253,9 @@ def _preflight_dcp() -> str:
         )
         return _DCP_STATUS
 
-    pages = [x for x in tabs if x.get("type") == "page"]
-    for tab in pages:
+    # WOPS or any other challenged site must not poison shared DCP health.
+    dcp_pages = [x for x in tabs if oemixibot_dcp_price._is_dcp_page(x)]
+    for tab in dcp_pages:
         tab_url = str(tab.get("url") or "")
         tab_title = str(tab.get("title") or "")
         marker_text = (tab_url + "\n" + tab_title).lower()
@@ -264,10 +266,6 @@ def _preflight_dcp() -> str:
             _set_dcp_health("CLOUDFLARE", detail="cloudflare_tab_detected")
             return _DCP_STATUS
 
-    dcp_pages = [
-        x for x in pages
-        if oemixibot_dcp_price.DCP_HOST in str(x.get("url") or "")
-    ]
     if not dcp_pages:
         _set_dcp_health("TECHNICAL_ERROR", detail="dcp_tab_missing")
         return _DCP_STATUS
@@ -329,7 +327,15 @@ def _auto_identity_price(oem: str) -> dict:
     for cat in finder.CATALOGS:
         if cat.kind == "parts" and cat.manufacturer not in manufacturers:
             manufacturers.append(cat.manufacturer)
-    for manufacturer in manufacturers:
+    try:
+        gap = float(os.getenv("DP_SYNC_LOOKUP_GAP_SECONDS", "5"))
+    except ValueError:
+        gap = 5.0
+    if not math.isfinite(gap) or gap < 0:
+        gap = 5.0
+    for index, manufacturer in enumerate(manufacturers):
+        if index:
+            time.sleep(gap)
         r = oemixibot_dcp_price.get_dealer_price_dict(manufacturer, oem)
         status = str(r.get("status") or "").upper()
         if status == "FOUND":
@@ -366,14 +372,15 @@ def run_once() -> bool:
         }
 
     status = str(result.get("status") or "TECHNICAL_ERROR").upper()
-    _finish(request_id, result)
-
+    # Stop locally before any result-delivery failure can leave us READY and
+    # send the next OEM into the same challenge. Reporting never navigates.
     if status in {"CLOUDFLARE", "AUTH_REQUIRED", "TECHNICAL_ERROR"}:
         _set_dcp_health(
             status,
             detail=str(result.get("message") or status),
         )
-    else:
+    _finish(request_id, result)
+    if status not in {"CLOUDFLARE", "AUTH_REQUIRED", "TECHNICAL_ERROR"}:
         _write_status("online", detail=status)
 
     print(
