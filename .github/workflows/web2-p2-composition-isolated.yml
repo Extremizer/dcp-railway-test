@@ -1,0 +1,40 @@
+name: WEB2 + Internal P3 Scoped Read Isolated
+
+on:
+  push:
+    branches:
+      - web2-ui-p3-scoped-read-20261014
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  p3-scoped-read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax
+        run: |
+          python -B -m py_compile             warehouse_history_v14.py             internal_order_read_v01.py             web2_finance_read_model_adapter.py             test_web2_p2_read_model_compatibility.py             test_web2_finance_role_ui.py
+          node --check web2/finance_role_preview.js
+
+      - name: Authoritative Theme 1 P3 regression
+        run: python -B -m unittest -v test_internal_order_read_v01.py
+
+      - name: Theme 2 real P3 adapter compatibility
+        run: python -B -m unittest -v test_web2_p2_read_model_compatibility.py
+
+      - name: Install browser dependency
+        run: |
+          python -m pip install "playwright>=1.50,<2"
+          python -m playwright install --with-deps chromium
+
+      - name: Theme 2 browser role nullable and safe-render regression
+        run: python -B -m unittest -v test_web2_finance_role_ui.py
