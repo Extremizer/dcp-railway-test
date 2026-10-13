@@ -44,6 +44,26 @@ class FinanceEngine:
             raise ValueError(f'INSUFFICIENT_AVAILABLE:{available}:{required}')
         return dict(cap,required=required,remaining=money(available-required))
 
+    def dcp_procurement_ready(self,buyer_id,buyer_type='dealer',currency='USD',conn=None):
+        """Return whether dealer aggregate USD debt is fully repaid.
+
+        CONTRACT v1.4 allows dealer ORDER_CHARGE to make the wallet negative,
+        but DCP supplier submission remains blocked while balance < 0.
+        """
+        if buyer_type!='dealer' or currency!='USD':
+            raise ValueError('DCP gate supports dealer/USD only')
+        own=conn is None
+        c=self._db() if own else conn
+        try:
+            dealer=c.execute('SELECT active FROM dealers WHERE id=?',(buyer_id,)).fetchone()
+            if not dealer or not dealer['active']:
+                raise ValueError('unknown or inactive dealer')
+            rows=c.execute('SELECT amount FROM finance_ledger WHERE buyer_type=? AND buyer_id=? AND wallet_currency=? ORDER BY id',(buyer_type,buyer_id,currency)).fetchall()
+            balance=money(sum((Decimal(str(r['amount'])) for r in rows),Decimal('0')))
+            return {'dealer_id':buyer_id,'balance':balance,'ready':balance>=Decimal('0.00')}
+        finally:
+            if own: c.close()
+
     def history(self,buyer_id,buyer_type='dealer',currency='USD',from_at=None,to_at=None,limit=100):
         if buyer_type not in {'client','dealer'}: raise ValueError('invalid buyer_type')
         if currency not in {'RUB','USD'}: raise ValueError('invalid wallet currency')
@@ -127,7 +147,7 @@ class FinanceEngine:
                 if not c.in_transaction: c.execute('BEGIN IMMEDIATE')
                 if not c.execute('SELECT 1 FROM dealers WHERE id=? AND active=1',(buyer_id,)).fetchone(): raise ValueError('unknown or inactive dealer')
                 if c.execute('SELECT 1 FROM finance_ledger WHERE idempotency_key=?',(idempotency_key,)).fetchone(): raise ValueError('duplicate idempotency_key')
-                if value<0:
+                if value<0 and event_type!='ORDER_CHARGE':
                     self.require_order_capacity(buyer_id=buyer_id,amount=-value,currency=currency,conn=c)
             sql="INSERT INTO finance_ledger (buyer_type,buyer_id,wallet_currency,event_type,amount,description,reference_type,reference_id,order_id,item_slice_id,arrival_id,actor,reason,idempotency_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now'))"
             try:
