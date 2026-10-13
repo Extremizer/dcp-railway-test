@@ -280,7 +280,12 @@ def _assert_terms_integrity(c, order_id: str) -> dict:
     proof = _integrity_row(c, order_id)
     if proof is None:
         raise ValueError("INTERNAL_TERMS_INTEGRITY_PROOF_REQUIRED")
-    current = _canonical_internal_terms(c, order_id)
+    try:
+        current = _canonical_internal_terms(c, order_id)
+    except (TypeError, ValueError):
+        # Once an immutable proof exists, any structural/value change that
+        # prevents reproduction of canonical terms is terms drift.
+        raise ValueError("INTERNAL_ORDER_TERMS_DRIFT") from None
     same = (
         str(proof[1]) == current["fingerprint_version"]
         and str(proof[2]) == current["fingerprint_sha256"]
