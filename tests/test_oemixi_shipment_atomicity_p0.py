@@ -27,12 +27,13 @@ class AtomicityRegression(unittest.TestCase):
         def after_sql(conn, *args):
             original(conn, *args)
             raise RuntimeError("injected after SQL split before commit")
+        history_before = self.rows("SELECT * FROM item_status_history")
         with patch.object(self.s, "_split_item_conn", side_effect=after_sql):
             with self.assertRaises(RuntimeError):
                 self.s.add_to_shipment(self.shipment, self.item, 1)
         self.assertEqual(self.rows("SELECT id,qty FROM item_slices WHERE order_id='order-red'"), [(self.item, 3)])
         self.assertEqual(self.rows("SELECT * FROM shipment_items"), [])
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM item_status_history"), [(0,)])
+        self.assertEqual(self.rows("SELECT * FROM item_status_history"), history_before)
 
     def test_retry_after_failure_and_snapshot_conservation(self):
         original = self.s._split_item_conn
@@ -58,11 +59,12 @@ class AtomicityRegression(unittest.TestCase):
             original(conn, *args)
             count += 1
             if count == 1: raise RuntimeError("injected after item SQL before commit")
+        history_before = self.rows("SELECT * FROM item_status_history")
         with patch.object(self.s, "_set_status_conn", side_effect=after_first_sql):
             with self.assertRaises(RuntimeError): self.s.depart_shipment(self.shipment)
         self.assertEqual(self.rows("SELECT status FROM usa_shipments WHERE id=?", (self.shipment,)), [("draft",)])
         self.assertEqual(self.rows("SELECT status FROM item_slices WHERE id IN (?,?) ORDER BY id", (self.item, other)), [("На складе США",), ("На складе США",)])
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM item_status_history"),[(0,)])
+        self.assertEqual(self.rows("SELECT * FROM item_status_history"),history_before)
 
     def test_tracking_failure_rolls_back_assignment(self):
         tracking = self.s.create_tracking("TRACE-RED-ONE")
@@ -70,6 +72,7 @@ class AtomicityRegression(unittest.TestCase):
         def after_status_sql(conn, *args):
             original(conn, *args)
             raise RuntimeError("injected after history SQL")
+        history_before = self.rows("SELECT * FROM item_status_history")
         with patch.object(self.s, "_set_status_conn", side_effect=after_status_sql):
             with self.assertRaises(RuntimeError): self.s.assign_tracking(self.item, tracking)
         self.assertEqual(self.rows("SELECT supplier_tracking_id FROM item_slices WHERE id=?", (self.item,)), [(None,)])
