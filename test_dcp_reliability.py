@@ -22,6 +22,7 @@ from urllib.parse import parse_qs, urlsplit
 
 import dp_live_bridge as bridge
 import dp_live_health as health
+from dcp_admission_test_support import approve_mode
 
 ROOT = Path(__file__).resolve().parent
 SOURCE = "verified_local_dcp:server_html:exact_dealer_row"
@@ -43,6 +44,7 @@ class QueueTests(unittest.TestCase):
         self.env.start()
         bridge.init(self.db)
         health.set_health(self.db, "READY")
+        approve_mode(self.db, "OPEN")
 
     def tearDown(self):
         self.env.stop()

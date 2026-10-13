@@ -18,6 +18,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 import dp_live_health
+import dp_live_admission
 
 
 def _request_key(manufacturer: str, oem: str) -> tuple[str, str]:
@@ -170,6 +171,7 @@ def init(db_file: Path | str) -> None:
             singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
             blocked_status TEXT, blocked_at TEXT)""")
         conn.execute("INSERT OR IGNORE INTO dp_live_coordination(singleton_id) VALUES(1)")
+        dp_live_admission.initialize(conn)
         conn.commit()
 
 
@@ -205,6 +207,9 @@ def request_live_dp(
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         # Lookup and insert must share the write lock across all bot processes.
         conn.execute("BEGIN IMMEDIATE")
+        if not dp_live_admission.is_open(conn):
+            conn.commit()
+            return {"status": "ADMISSION_CLOSED", "error_code": "dp_live_admission_closed"}
         _expire_pending(conn, now)
         if _quarantine_claims(conn, now):
             conn.commit()
@@ -280,8 +285,14 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             return None
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if _quarantine_claims(conn, _now()):
+            conn.commit()
+            return None
+        if not dp_live_admission.is_open(conn):
+            conn.commit()
+            return None
         _expire_pending(conn, _now())
-        if _quarantine_claims(conn, _now()) or _breaker_status(conn) or _blocked_health(conn) or conn.execute(
+        if _breaker_status(conn) or _blocked_health(conn) or conn.execute(
             "SELECT 1 FROM dp_live_requests WHERE status='claimed' LIMIT 1"
         ).fetchone():
             conn.commit()

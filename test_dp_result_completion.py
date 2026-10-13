@@ -26,6 +26,7 @@ import dp_live_health as health
 import dp_result_completion as completion
 import dp_sync_protocol as protocol
 import dp_claim_recovery as recovery
+from dcp_admission_test_support import approve_mode
 
 ROOT=Path(__file__).resolve().parent
 KEY=b"isolated-producer-key-not-a-production-secret"
@@ -66,6 +67,7 @@ class CompletionFixture(unittest.TestCase):
         self.network=patch.object(socket.socket,"connect",side_effect=AssertionError("external network forbidden"))
         self.network.start();self.addCleanup(self.network.stop)
         bridge.init(self.db);health.set_health(self.db,"READY")
+        approve_mode(self.db,"OPEN")
         with sqlite3.connect(self.db) as c:
             completion._write_cache(c,"Arctic Cat","2670-265",99,"verified_local_dcp:"+RAW_SOURCE,health._now())
             completion._write_identity(c,"Honda","91303-PA9-004","91303-PA9-004","fixture","fixture",health._now())

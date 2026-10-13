@@ -10,6 +10,7 @@ from pathlib import Path
 
 import dp_live_bridge
 import dp_live_health
+from dcp_admission_test_support import approve_mode
 
 
 class DCPHealthCoreTests(unittest.TestCase):
@@ -129,6 +130,9 @@ class DCPHealthCoreTests(unittest.TestCase):
     def test_bridge_guard_ready_keeps_existing_queue_contract(self) -> None:
         os.environ["EXTREMIZER_DP_HEALTH_ENFORCE"] = "1"
         dp_live_health.set_health(self.db, "READY")
+
+        dp_live_bridge.init(self.db)
+        approve_mode(self.db, "OPEN")
 
         result = dp_live_bridge.request_live_dp(
             self.db,
