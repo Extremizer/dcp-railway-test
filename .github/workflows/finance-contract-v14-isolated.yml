@@ -38,6 +38,8 @@ jobs:
           import internal_order_terms_v01
           import internal_order_persistence_v01
           import internal_payment_eligibility_v01
+          import internal_order_persistence_v01
+          import internal_payment_eligibility_v01
           import oemixibot_finance
           import oemixibot_store
           import client_finance_adapter
