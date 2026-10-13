@@ -1,0 +1,43 @@
+WEB2 UI ISOLATED REGRESSION — FINANCE v1.4 ROLE PREVIEW
+Date: 2026-10-13
+Branch: web2-ui-finance-v14-20261013
+Implementation commit: 920fa211ecef7cfe6221ef24d90ea2922b0d09dc
+
+Command:
+py -3 -m unittest -v test_web2_finance_role_ui.py
+
+Result:
+Ran 7 tests in 26.925s
+OK
+
+PASS:
+1. Acting-As fixture banner shows actual admin, effective subject, effective role; local-only exit does not alter a real session.
+2. Client INFO_DIRECT_WAREHOUSE_PAYMENT / INFO_DIRECT_WAREHOUSE_REFUND render real external amount while wallet delta remains 0 ₽; no fake ORDER_CHARGE.
+3. Dealer negative USD balance is allowed; order status and DCP Financial Gate are separate; ORDER_CHARGE shown once; no credit-limit UI; repayment to 0 changes fixture gate to READY.
+4. Mobile warehouse history renders structured cards preserving the five required fields and has no horizontal overflow.
+5. ADMIN order-number order is EXTREMIZER / warehouse; SKLAD is warehouse / EXTREMIZER; either number opens the same order-card fixture.
+6. Exact row palette verified:
+   Новый #FFFFFF
+   Собран, не оплачен #FF6B65
+   Собран, оплачен #FFF176
+   Отгружен #BFF803
+   System Error #FF3030
+   Status text remains present.
+7. Desktop warehouse contract verified:
+   exactly five columns;
+   default 15 rows;
+   20-row option;
+   posted 3 425 ₽ / reserved 1 000 ₽ / available 2 425 ₽;
+   full-history balance 3 425 ₽ stays unchanged by search/filter;
+   control order I17J-5675 / 5241 renders struck 10 000 ₽, partner 8 500 ₽, balance −8 500 ₽;
+   unpaid balance cell is blank;
+   search works for both order numbers, client, OEM and date.
+
+Safety:
+- fixtures only;
+- no production imports or DB;
+- no finance/order writes;
+- no real payment route;
+- no real Acting-As user session;
+- no DCP supplier submission;
+- no merge or deploy.
