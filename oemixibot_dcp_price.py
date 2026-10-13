@@ -5,8 +5,10 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import urllib.request
+from urllib.parse import parse_qs, urlsplit
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any
@@ -50,10 +52,17 @@ def _tabs() -> list[dict[str, Any]]:
     with urllib.request.urlopen(CDP_HTTP + "/json", timeout=5) as response:
         return json.load(response)
 
+def _is_dcp_page(tab: dict[str, Any]) -> bool:
+    """Match the actual origin, never a host name inside a query string."""
+    return (
+        tab.get("type") == "page"
+        and urlsplit(str(tab.get("url") or "")).hostname == DCP_HOST
+    )
+
 def _pick_authorized_dcp_tab() -> dict[str, Any]:
     pages = [
         x for x in _tabs()
-        if x.get("type") == "page" and DCP_HOST in str(x.get("url") or "")
+        if _is_dcp_page(x)
     ]
     usable = [
         x for x in pages
@@ -98,11 +107,12 @@ def _runtime_evaluate(tab: dict[str, Any], expression: str) -> Any:
 def _money(value: str | None) -> float | None:
     if not value:
         return None
-    match = re.search(r"-?\d[\d,]*(?:\.\d{1,2})?", value.replace(" ", ""))
+    match = re.search(r"-?\d[\d,]*(?:\.\d{1,2})?", value.replace(" ", "").replace("$", ""))
     if not match:
         return None
     try:
-        return float(match.group(0).replace(",", ""))
+        price = float(match.group(0).replace(",", ""))
+        return price if math.isfinite(price) and price > 0 else None
     except ValueError:
         return None
 
@@ -111,6 +121,11 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
     canonical, slug = _parts_slug(manufacturer)
     normalized_oem = _normalize_oem(oem)
 
+    if not LOCAL_HEALTH_FILE.exists():
+        return DealerPriceResult(
+            "TECHNICAL_ERROR", canonical, normalized_oem,
+            message="DCP health guard blocked live lookup: health_file_missing",
+        )
     if LOCAL_HEALTH_FILE.exists():
         health = dp_live_health.read_local_health(LOCAL_HEALTH_FILE)
         if not health.get("live_allowed"):
@@ -131,15 +146,14 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
     # First prefer an already-open exact DCP page. This avoids an extra request
     # and keeps working when Cloudflare blocks background fetches but the user's
     # authorized browser page is already loaded.
-    exact_query_marker = f"partsearch={normalized_oem}"
     expected_parts_path = f"/oemparts/partsearch/{slug}"
     for candidate in _tabs():
         candidate_url = str(candidate.get("url") or "")
+        parsed_url = urlsplit(candidate_url)
         if (
-            candidate.get("type") != "page"
-            or DCP_HOST not in candidate_url
-            or expected_parts_path not in candidate_url
-            or exact_query_marker not in candidate_url
+            not _is_dcp_page(candidate)
+            or parsed_url.path != expected_parts_path
+            or parse_qs(parsed_url.query).get("partsearch") != [normalized_oem]
         ):
             continue
         live_expression = f"""(()=>{{
@@ -172,6 +186,11 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                 http_status=live_data.get("http_status"),
                 authorized=live_data.get("authorized"),
                 message="Open DCP page is waiting for human verification.",
+            )
+        if not live_data.get("authorized"):
+            return DealerPriceResult(
+                "AUTH_REQUIRED", canonical, normalized_oem, authorized=False,
+                message="Open DCP page no longer has an authorized session.",
             )
         if live_data.get("authorized") and live_data.get("found"):
             live_price = _money(live_data.get("dealer_price_text"))
@@ -225,51 +244,13 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
     data = _runtime_evaluate(tab, expression)
 
     if data.get("challenged"):
-        # Background fetch may be challenged although visible Chrome already
-        # passed CF. Retry as normal top-level navigation in the SAME session.
-        nav_url = f"https://{DCP_HOST}{url}"
-        _runtime_evaluate(tab, "location.href=" + json.dumps(nav_url) + "; true")
-        import time
-        deadline = time.time() + 15
-        while time.time() < deadline:
-            time.sleep(0.75)
-            try:
-                current = _pick_authorized_dcp_tab()
-                probe = _runtime_evaluate(current, f"""(()=>{{
-                  const body=(document.body?.innerText||'');
-                  const lower=body.toLowerCase();
-                  const challenged=['just a moment','verify you are human',
-                    'checking your browser','performing security verification',
-                    'enable javascript and cookies to continue'].some(x=>lower.includes(x));
-                  const authorized=/sign out/i.test(body);
-                  const form=document.querySelector('#add_{normalized_oem}');
-                  if(!form) return {{authorized,challenged,found:false}};
-                  return {{authorized,challenged,found:true,
-                    matched_sku:form.querySelector('input[name="sku"]')?.value||null,
-                    current_oem:form.querySelector('.itemnumnew')?.textContent.trim()
-                      ||form.querySelector('.itemnum')?.textContent.trim()||null,
-                    name:form.querySelector('.c1a')?.textContent.trim()||null,
-                    dealer_price_text:form.querySelector('.c2 .dbl')?.textContent.trim()
-                      ||form.querySelector('.dbl')?.textContent.trim()||null}};
-                }})()""")
-                if probe.get("authorized") and probe.get("found") and not probe.get("challenged"):
-                    price = _money(probe.get("dealer_price_text"))
-                    if price is not None:
-                        return DealerPriceResult(
-                            "FOUND", canonical, normalized_oem,
-                            matched_sku=probe.get("matched_sku"),
-                            current_oem=probe.get("current_oem"),
-                            name=probe.get("name"), dealer_price_usd=price,
-                            source=f"live_dom_after_navigation:#add_{normalized_oem} .c2 .dbl",
-                            http_status=200, authorized=True,
-                        )
-            except Exception:
-                continue
+        # A challenge is a stop signal. Never navigate/reload the owner's tab,
+        # retry a search, or try to solve verification automatically.
         return DealerPriceResult(
             "CLOUDFLARE", canonical, normalized_oem,
             http_status=data.get("http_status"),
             authorized=data.get("authorized"),
-            message="DCP top-level navigation is still waiting for human verification.",
+            message="DCP background search blocked; manual session recovery required.",
         )
     if not data.get("authorized"):
         return DealerPriceResult(
@@ -303,6 +284,8 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
 
           if(sr.status===403||cf(sb))
             return {{http_status:sr.status,authorized:sa,challenged:true,found:false}};
+          if(!sa)
+            return {{http_status:sr.status,authorized:false,challenged:false,found:false}};
 
           const links=[...new Set(
             [...sd.querySelectorAll('#CategoryItems a[href*="/oemcatalogs/p/"]')]
@@ -374,6 +357,13 @@ def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
                 http_status=accessories_data.get("http_status"),
                 authorized=accessories_data.get("authorized"),
                 message="DCP Accessories search is waiting for human verification.",
+            )
+
+        if not accessories_data.get("authorized"):
+            return DealerPriceResult(
+                "AUTH_REQUIRED", canonical, normalized_oem,
+                http_status=accessories_data.get("http_status"), authorized=False,
+                message="DCP Accessories no longer has an authorized session.",
             )
 
         if accessories_data.get("authorized") and accessories_data.get("found"):
