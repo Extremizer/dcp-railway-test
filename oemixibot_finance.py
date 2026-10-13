@@ -84,7 +84,7 @@ class FinanceEngine:
             if f.tzinfo is None: f=f.replace(tzinfo=__import__('datetime').timezone.utc)
             if t.tzinfo is None: t=t.replace(tzinfo=__import__('datetime').timezone.utc)
             if f>t: raise ValueError('from_at must be <= to_at')
-        sql='SELECT id,buyer_type,buyer_id,wallet_currency,event_type,amount,description,reference_type,reference_id,order_id,item_slice_id,arrival_id,actor,reason,idempotency_key,created_at FROM finance_ledger WHERE buyer_type=? AND buyer_id=? AND wallet_currency=?'
+        sql='SELECT id,buyer_type,buyer_id,wallet_currency,event_type,amount,description,reference_type,reference_id,order_id,item_slice_id,arrival_id,actor,reason,idempotency_key,created_at,payment_method,source_amount,source_currency,fx_code,fx_rate FROM finance_ledger WHERE buyer_type=? AND buyer_id=? AND wallet_currency=?'
         args=[buyer_type,buyer_id,currency]
         if from_at is not None: sql+=' AND created_at>=?'; args.append(from_at)
         if to_at is not None: sql+=' AND created_at<=?'; args.append(to_at)
@@ -115,7 +115,7 @@ class FinanceEngine:
         except (TypeError,ValueError) as e: raise ValueError('invalid event_id') from e
         if event_id<1: raise ValueError('invalid event_id')
         with self._db() as c:
-            r=c.execute('SELECT id,buyer_type,buyer_id,wallet_currency,event_type,amount,description,reference_type,reference_id,order_id,item_slice_id,arrival_id,actor,reason,idempotency_key,created_at FROM finance_ledger WHERE id=? AND buyer_type=? AND buyer_id=? AND wallet_currency=?',(event_id,buyer_type,buyer_id,currency)).fetchone()
+            r=c.execute('SELECT id,buyer_type,buyer_id,wallet_currency,event_type,amount,description,reference_type,reference_id,order_id,item_slice_id,arrival_id,actor,reason,idempotency_key,created_at,payment_method,source_amount,source_currency,fx_code,fx_rate FROM finance_ledger WHERE id=? AND buyer_type=? AND buyer_id=? AND wallet_currency=?',(event_id,buyer_type,buyer_id,currency)).fetchone()
             if not r: return None
             d=dict(r); d['amount']=money(r['amount'])
             if r['item_slice_id'] is not None:
