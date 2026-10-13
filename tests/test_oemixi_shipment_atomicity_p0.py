@@ -76,7 +76,7 @@ class AtomicityRegression(unittest.TestCase):
         with patch.object(self.s, "_set_status_conn", side_effect=after_status_sql):
             with self.assertRaises(RuntimeError): self.s.assign_tracking(self.item, tracking)
         self.assertEqual(self.rows("SELECT supplier_tracking_id FROM item_slices WHERE id=?", (self.item,)), [(None,)])
-        self.assertEqual(self.rows("SELECT COUNT(*) FROM item_status_history"), [(0,)])
+        self.assertEqual(self.rows("SELECT * FROM item_status_history"), history_before)
 
     def test_concurrent_allocations_are_serialized(self):
         import concurrent.futures
