@@ -229,6 +229,7 @@ def run():
                     "offer_source": "warehouse",
                     "warehouse_id": 1,
                     "warehouse_public_name": "склад МСК",
+                    "payment_route": "extremizer_balance",
                 },
                 "warehouse_direct": {
                     "manufacturer": "Test",
