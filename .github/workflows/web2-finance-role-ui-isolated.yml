@@ -55,3 +55,11 @@ jobs:
 
       - name: WEB2 role consistency and safe-render browser regression
         run: python -B -m unittest -v test_web2_finance_role_ui.py
+
+      - name: Upload Theme 2 handoff package
+        uses: actions/upload-artifact@v4
+        with:
+          name: theme2-web2-role-consistent-readmodel
+          path: EXTREMIZER_THEME2_WEB2_ROLE_CONSISTENT_READMODEL_20261013.zip
+          if-no-files-found: error
+          retention-days: 14
