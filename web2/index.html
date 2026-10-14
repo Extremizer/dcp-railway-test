@@ -10,9 +10,8 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/web2" aria-label="EXTREMIZER">
-      <span class="brand-mark">E</span>
-      <span>EXTREMIZER</span>
+    <a class="brand-slot" href="/web2" aria-label="EXTREMIZER — CANONICAL LOGO ASSET REQUIRED">
+      <span class="visually-hidden">EXTREMIZER — CANONICAL LOGO ASSET REQUIRED</span>
     </a>
     <button id="cartButton" class="cart-button" type="button" aria-label="Открыть корзину">
       <span class="cart-icon">🛒</span>
@@ -30,14 +29,14 @@
         Оригинальные запчасти, аксессуары и складские остатки в одном окне.
         Введи каталожный номер — без регистрации.
       </p>
-      <form id="searchForm" class="search-box">
+      <form id="searchForm" class="search-box" aria-busy="false">
         <input id="oemInput" name="oem" autocomplete="off"
                placeholder="Например, 417224332" aria-label="OEM номер">
-        <button type="submit">Найти</button>
+        <button id="searchButton" type="submit">Найти</button>
       </form>
+      <div id="state" class="state hidden" aria-live="polite" role="status"></div>
       <div id="searchHint" class="hint">Единый поиск EXTREMIZER: США + наличие на складах РФ</div>
     </section>
-    <section id="state" class="state hidden" aria-live="polite"></section>
 
     <section id="product" class="product hidden">
       <div class="product-head">
@@ -48,12 +47,13 @@
           <div id="replacement" class="replacement hidden"></div>
         </div>
         <div class="price-panel">
-          <div class="price-label">Цена из США</div>
-          <div id="customerPrice" class="price"></div>
+          <div class="usa-title">🇺🇸 склад США:</div>
+          <div class="customer-price-line">Ваша цена — <strong id="customerPrice"></strong><span class="price-star" aria-hidden="true">*</span></div>
           <div id="msrpBlock" class="msrp hidden">
-            РРЦ <span id="msrpPrice"></span>
-            <b id="benefit"></b>
+            <div class="price-detail">РРЦ — <span id="msrpPrice"></span></div>
+            <div id="benefitLine" class="benefit-line hidden">Ваша выгода — <strong id="benefit"></strong></div>
           </div>
+          <p id="usaDeliveryNotice" class="usa-delivery hidden"></p>
         </div>
       </div>
 
