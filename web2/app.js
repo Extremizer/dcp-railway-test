@@ -14,6 +14,9 @@ let cart = JSON.parse(localStorage.getItem("extremizer_web2_cart") || "[]");
 const rub = (value) => value == null
   ? "Цена уточняется"
   : new Intl.NumberFormat("ru-RU").format(value) + " ₽";
+const usaRub = (value) => value == null
+  ? "Цена уточняется"
+  : new Intl.NumberFormat("ru-RU").format(value) + "* ₽";
 const qtyText = (value) => new Intl.NumberFormat(
   "ru-RU", { maximumFractionDigits: 3 }
 ).format(value);
@@ -73,7 +76,7 @@ function renderOffers(offers = []) {
       : `В наличии: ${qtyText(offer.available_quantity)} шт.`;
     const price = offer.price_rub == null
       ? "Цена уточняется"
-      : (offer.source === "usa" ? `${rub(offer.price_rub)}*` : rub(offer.price_rub));
+      : (offer.source === "usa" ? usaRub(offer.price_rub) : rub(offer.price_rub));
     const disabled = offer.can_add ? "" : " disabled";
     const cartKey = `${currentProduct?.manufacturer || ""}|${currentProduct?.oem || ""}|${offer.key}`;
     const existingQty = cart.find((x) => x.key === cartKey)?.qty || 0;
@@ -142,7 +145,7 @@ function renderProduct(card) {
   pricePanel?.classList.toggle("hidden", Boolean(card.warehouse_only));
   $("customerPrice").textContent = card.price.customer_rub == null
     ? rub(null)
-    : rub(card.price.customer_rub);
+    : usaRub(card.price.customer_rub);
 
   const replacement = $("replacement");
   if (card.requested_oem && card.requested_oem !== card.oem) {
@@ -206,13 +209,8 @@ function renderProduct(card) {
   }
 
   const deliveryNotice = $("deliveryNotice");
-  if (card.warehouse_only && card.delivery_notice) {
-    deliveryNotice.textContent = card.delivery_notice;
-    deliveryNotice.classList.remove("hidden");
-  } else {
-    deliveryNotice.textContent = "";
-    deliveryNotice.classList.add("hidden");
-  }
+  deliveryNotice.textContent = "";
+  deliveryNotice.classList.add("hidden");
   product.classList.remove("hidden");
   product.scrollIntoView({ behavior: "smooth", block: "start" });
 }
