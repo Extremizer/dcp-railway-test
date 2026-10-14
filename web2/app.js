@@ -146,7 +146,9 @@ function renderProduct(card) {
   const msrp = $("msrpBlock");
   if (card.price.customer_rub != null && card.price.msrp_rub != null && card.price.msrp_rub > card.price.customer_rub) {
     $("msrpPrice").textContent = rub(card.price.msrp_rub);
-    $("benefit").textContent = `Ваша выгода — ${card.price.benefit_pct ?? Math.round((card.price.msrp_rub - card.price.customer_rub) / card.price.msrp_rub * 1000) / 10}%`;
+    $("benefit").textContent = card.price.benefit_pct == null
+      ? ""
+      : `Ваша выгода — ${card.price.benefit_pct}%`;
     msrp.classList.remove("hidden");
   } else {
     msrp.classList.add("hidden");
