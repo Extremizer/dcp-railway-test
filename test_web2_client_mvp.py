@@ -115,6 +115,80 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
             self.assertIn("2", item.inner_text())
             self.assertIn("69 400 ₽", item.inner_text().replace("\xa0", " "))
 
+    def test_visual_review_cart_desktop(self):
+        with staging_server() as url:
+            page = self.browser.new_page(viewport={"width": 1440, "height": 1000})
+            page.goto(url)
+            page.locator("#oemInput").fill("417300574")
+            page.locator("#searchForm button").click()
+            page.wait_for_selector("#product:not(.hidden)")
+
+            page.locator('[data-offer-key="usa"]').click()
+            page.locator("#cartClose").click()
+            page.locator("#qtyPlus").click()
+            page.locator('[data-offer-key="warehouse:1"]').click()
+
+            self.assertEqual(page.locator("#cartItems .cart-item").count(), 2)
+            self.assertEqual(page.locator("#cartCount").inner_text(), "3")
+            self.assertEqual(
+                page.locator("#cartTotal").inner_text().replace("\xa0", " "),
+                "98 600 ₽",
+            )
+            Path("artifacts").mkdir(exist_ok=True)
+            page.screenshot(
+                path="artifacts/web2-client-mvp-cart-desktop.png",
+                full_page=False,
+            )
+
+    def test_visual_review_cart_mobile(self):
+        with staging_server() as url:
+            page = self.browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(url)
+            page.locator("#oemInput").fill("417300574")
+            page.locator("#searchForm button").click()
+            page.wait_for_selector("#product:not(.hidden)")
+
+            page.locator('[data-offer-key="usa"]').click()
+            page.locator("#cartClose").click()
+            page.locator("#qtyPlus").click()
+            page.locator('[data-offer-key="warehouse:1"]').click()
+
+            self.assertEqual(page.locator("#cartItems .cart-item").count(), 2)
+            self.assertEqual(page.locator("#cartCount").inner_text(), "3")
+            self.assertEqual(
+                page.locator("#cartTotal").inner_text().replace("\xa0", " "),
+                "98 600 ₽",
+            )
+            self.assertEqual(
+                page.evaluate("document.documentElement.scrollWidth"),
+                390,
+            )
+            Path("artifacts").mkdir(exist_ok=True)
+            page.screenshot(
+                path="artifacts/web2-client-mvp-cart-mobile.png",
+                full_page=False,
+            )
+
+    def test_visual_review_search_states_mobile(self):
+        with staging_server() as url:
+            page = self.browser.new_page(viewport={"width": 390, "height": 844})
+            page.goto(url)
+            Path("artifacts").mkdir(exist_ok=True)
+
+            page.evaluate("showState('Ищем OEM в БАЗЕ…')")
+            page.screenshot(
+                path="artifacts/web2-client-mvp-loading-mobile.png",
+                full_page=True,
+            )
+
+            page.evaluate(
+                "showState('Этот OEM пока не найден в проверенной БАЗЕ.', true)"
+            )
+            page.screenshot(
+                path="artifacts/web2-client-mvp-error-mobile.png",
+                full_page=True,
+            )
+
     def test_no_client_side_benefit_recalculation(self):
         with staging_server() as url:
             page = self.browser.new_page(viewport={"width": 1280, "height": 900})
