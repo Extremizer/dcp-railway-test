@@ -10,6 +10,7 @@ import hashlib
 from pathlib import Path
 
 import client_checkout_callback_adapter as callback_adapter
+from dcp_reliability_scope_guard import require_web_admin_unchanged
 
 
 ROOT = Path(__file__).resolve().parent
@@ -136,10 +137,7 @@ def run():
     # Combined #25 + #28 release guards. Probnik may differ only inside the
     # approved _compose UI body; WEB ADMIN and FinanceEngine remain exact.
     require_probnik_non_ui_unchanged(PROBNIK.read_text(encoding="utf-8"))
-    require(
-        file_git_blob(WEB_APP) == POINT10_WEB_APP_BLOB,
-        "web_app.py differs from approved Point 10 candidate",
-    )
+    require_web_admin_unchanged(WEB_APP.read_text(encoding="utf-8"))
     require(
         hashlib.sha256(ENGINE.read_bytes()).hexdigest()
         == PROVEN_ENGINE_SHA256,
@@ -259,7 +257,7 @@ def run():
     print("PASS production finance switch port regression")
     print("legacy production checkout body: byte-identical")
     print("probnik_app.py outside _compose body: byte-identical to original checkpoint")
-    print("web_app.py: exact Point 10 candidate blob")
+    print("web_app.py: Point 10 bytes preserved outside authorized DCP control scope")
     print("FinanceEngine SHA256:", PROVEN_ENGINE_SHA256)
     print("pricing analytics preserved after core commit")
     print("shared transaction + payment_route + fulfillment_route present")

@@ -39,7 +39,7 @@ def resolve_identity(oem):
 def confirm_identity(oem,manufacturer,item_type=None,source="dcp_confirmed"):
     ref=oem_reference_service.lookup_oem(oem) or {}
     return oem_identity_service.remember(oem,manufacturer,item_type or ref.get("item_type"),source)
-def resolve_offer(oem,manufacturer=None):
+def resolve_offer(oem,manufacturer=None,*,price_gateway=None):
     ident=resolve_identity(oem); ref=oem_reference_service.lookup_oem(ident["oem"]) or {}
     if manufacturer:
         canonical=finder.manufacturer_alias(manufacturer)
@@ -48,7 +48,10 @@ def resolve_offer(oem,manufacturer=None):
     if not ident.get("manufacturer"):
         return {**ident,"status":"IDENTITY_REQUIRED","actual_weight_kg":ref.get("actual_weight_kg"),
                 "volume_weight_kg":ref.get("volume_weight_kg")}
-    try: dp=oemixibot_dcp_price.get_dealer_price_dict(ident["manufacturer"],ident["oem"])
+    # A future rollout can explicitly inject the shared price adapter.
+    # Default runtime behavior remains unchanged; no environment auto-switch.
+    price_source = price_gateway if price_gateway is not None else oemixibot_dcp_price
+    try: dp=price_source.get_dealer_price_dict(ident["manufacturer"],ident["oem"])
     except Exception as exc:
         return {**ident,"status":"PRICE_UNAVAILABLE","actual_weight_kg":ref.get("actual_weight_kg"),
                 "volume_weight_kg":ref.get("volume_weight_kg"),"price_error":type(exc).__name__}
