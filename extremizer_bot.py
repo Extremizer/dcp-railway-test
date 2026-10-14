@@ -1550,6 +1550,7 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
 
         if (
             live_status == "FOUND"
+            and live.get("server_cache_committed") is True
             and isinstance(live.get("dealer_price_usd"), (int, float))
             and float(live["dealer_price_usd"]) > 0
         ):
@@ -1559,14 +1560,11 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
             )
             result["_dealer_price_usd"] = dealer_price_usd
             result["_dealer_price_source"] = dealer_price_source
-            upsert_dealer_price_cache(
-                manufacturer,
-                oem,
-                dealer_price_usd,
-                dealer_price_source,
-                checked_at,
-            )
+            result["_dealer_price_checked_at"] = str(live.get("cache_committed_at") or checked_at)
 
+        if live_status == "FOUND" and live.get("server_cache_committed") is not True:
+            result["_dealer_price_status"] = "TECHNICAL_ERROR"
+            result["_dealer_price_live_status"] = "TECHNICAL_ERROR"
         return result
 
     live_status = None
@@ -1587,24 +1585,18 @@ async def enrich_found_result_with_dealer_price(result: dict) -> dict:
 
     if live_status is None:
         try:
-            private = await asyncio.to_thread(get_dealer_price, manufacturer, oem)
-            live_status = str(private.status or "").upper()
+            live = await asyncio.to_thread(dp_live_bridge.request_live_dp, ORDERS_DB_FILE, manufacturer, oem, wait_seconds=10.0)
+            live_status = str(live.get("status") or "TECHNICAL_ERROR").upper()
             result["_dealer_price_status"] = live_status
             result["_dealer_price_checked_at"] = checked_at
-
-            if live_status == "FOUND" and private.dealer_price_usd is not None:
-                dealer_price_usd = float(private.dealer_price_usd)
-                dealer_price_source = str(private.source or "")
-                result["_dealer_price_usd"] = dealer_price_usd
-                result["_dealer_price_source"] = dealer_price_source
-                upsert_dealer_price_cache(
-                    manufacturer,
-                    oem,
-                    dealer_price_usd,
-                    dealer_price_source,
-                    checked_at,
-                )
+            if live_status == "FOUND" and live.get("server_cache_committed") is True:
+                result["_dealer_price_usd"] = float(live["dealer_price_usd"])
+                result["_dealer_price_source"] = str(live["source"])
+                result["_dealer_price_checked_at"] = str(live.get("cache_committed_at") or checked_at)
                 return result
+            if live_status == "FOUND":
+                live_status = "TECHNICAL_ERROR"
+                result["_dealer_price_status"] = live_status
         except Exception:
             live_status = "TECHNICAL_ERROR"
             result["_dealer_price_status"] = live_status
@@ -8679,9 +8671,8 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             _source=("dp_cache:"+str(_cache.get("source") or "verified_live_dp")) if _dp is not None else None
             if _dp is None and _m:
                 _live=await asyncio.to_thread(dp_live_bridge.request_live_dp,ORDERS_DB_FILE,_m,x["oem"],wait_seconds=10.0)
-                if str(_live.get("status") or "").upper()=="FOUND" and _live.get("dealer_price_usd") is not None:
+                if str(_live.get("status") or "").upper()=="FOUND" and _live.get("server_cache_committed") is True and _live.get("dealer_price_usd") is not None:
                     _dp=float(_live["dealer_price_usd"]); _source=str(_live.get("source") or "verified_live_dp")
-                    upsert_dealer_price_cache(_m,x["oem"],_dp,_source)
             if _dp is not None:
                 _unit=customer_rub_price_from_dp(_dp,coefficient=load_price_coefficient(),rate=load_usd_rub_rate())
                 if _unit is not None:
