@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - web2-procenka-checkout-integration-20261014
+      - web2-unified-procenka-owner-staging-20261014
   workflow_dispatch:
 
 permissions:
