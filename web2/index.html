@@ -10,7 +10,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="EXTREMIZER">
+    <a class="brand" href="/web2" aria-label="EXTREMIZER">
       <span class="brand-mark">E</span>
       <span>EXTREMIZER</span>
     </a>
@@ -59,8 +59,18 @@
 
       <section class="offers-section">
         <div class="offers-head">
-          <h3>Варианты покупки</h3>
-          <span>Выбери откуда добавить позицию в корзину</span>
+          <div>
+            <h3>Варианты покупки</h3>
+            <span>Выбери предложение США или РФ и добавь его в корзину</span>
+          </div>
+          <div class="offer-qty">
+            <span class="qty-label">Количество</span>
+            <div class="qty" aria-label="Количество для добавления в корзину">
+              <button id="qtyMinus" type="button" aria-label="Уменьшить количество">−</button>
+              <span id="qtyValue">1</span>
+              <button id="qtyPlus" type="button" aria-label="Увеличить количество">+</button>
+            </div>
+          </div>
         </div>
         <div id="offers" class="offers"></div>
       </section>
@@ -76,14 +86,6 @@
         </article>
       </div>
 
-      <div class="actions">
-        <span class="qty-label">Количество</span>
-        <div class="qty">
-          <button id="qtyMinus" type="button">−</button>
-          <span id="qtyValue">1</span>
-          <button id="qtyPlus" type="button">+</button>
-        </div>
-      </div>
       <p id="deliveryNotice" class="delivery"></p>
     </section>
   </main>
