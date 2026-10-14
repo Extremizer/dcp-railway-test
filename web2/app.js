@@ -3,6 +3,7 @@ const state = $("state");
 const product = $("product");
 const form = $("searchForm");
 const input = $("oemInput");
+const searchButton = $("searchButton");
 const cartPanel = $("cartPanel");
 const scrim = $("scrim");
 let currentProduct = null;
@@ -17,14 +18,22 @@ const qtyText = (value) => new Intl.NumberFormat(
   "ru-RU", { maximumFractionDigits: 3 }
 ).format(value);
 
-function showState(text, error = false) {
+function showState(text, kind = "info") {
   state.textContent = text;
-  state.classList.remove("hidden", "error");
-  if (error) state.classList.add("error");
+  state.classList.remove("hidden", "error", "loading");
+  if (kind === "error") state.classList.add("error");
+  if (kind === "loading") state.classList.add("loading");
 }
 
 function hideState() {
   state.classList.add("hidden");
+  state.classList.remove("error", "loading");
+}
+
+function setSearchBusy(busy) {
+  form.setAttribute("aria-busy", busy ? "true" : "false");
+  searchButton.disabled = busy;
+  searchButton.textContent = busy ? "Ищем…" : "Найти";
 }
 
 function renderStock(stockData) {
@@ -64,7 +73,7 @@ function renderOffers(offers = []) {
       : `В наличии: ${qtyText(offer.available_quantity)} шт.`;
     const price = offer.price_rub == null
       ? "Цена уточняется"
-      : (offer.source === "usa" ? rub(offer.price_rub).replace(" ₽", "* ₽") : rub(offer.price_rub));
+      : (offer.source === "usa" ? `${rub(offer.price_rub)}*` : rub(offer.price_rub));
     const disabled = offer.can_add ? "" : " disabled";
     const cartKey = `${currentProduct?.manufacturer || ""}|${currentProduct?.oem || ""}|${offer.key}`;
     const existingQty = cart.find((x) => x.key === cartKey)?.qty || 0;
@@ -133,7 +142,7 @@ function renderProduct(card) {
   pricePanel?.classList.toggle("hidden", Boolean(card.warehouse_only));
   $("customerPrice").textContent = card.price.customer_rub == null
     ? rub(null)
-    : rub(card.price.customer_rub).replace(" ₽", "* ₽");
+    : rub(card.price.customer_rub);
 
   const replacement = $("replacement");
   if (card.requested_oem && card.requested_oem !== card.oem) {
@@ -144,14 +153,32 @@ function renderProduct(card) {
   }
 
   const msrp = $("msrpBlock");
-  if (card.price.customer_rub != null && card.price.msrp_rub != null && card.price.msrp_rub > card.price.customer_rub) {
+  const benefitLine = $("benefitLine");
+  const usaDeliveryNotice = $("usaDeliveryNotice");
+  const showUsaTerms = !card.warehouse_only && card.price.customer_rub != null;
+  if (showUsaTerms && card.price.msrp_rub != null && card.price.msrp_rub > card.price.customer_rub) {
     $("msrpPrice").textContent = rub(card.price.msrp_rub);
-    $("benefit").textContent = card.price.benefit_pct == null
-      ? ""
-      : `Ваша выгода — ${card.price.benefit_pct}%`;
     msrp.classList.remove("hidden");
+    if (card.price.benefit_pct != null) {
+      $("benefit").textContent = `${card.price.benefit_pct}%`;
+      benefitLine.classList.remove("hidden");
+    } else {
+      $("benefit").textContent = "";
+      benefitLine.classList.add("hidden");
+    }
   } else {
+    $("msrpPrice").textContent = "";
+    $("benefit").textContent = "";
+    benefitLine.classList.add("hidden");
     msrp.classList.add("hidden");
+  }
+
+  if (showUsaTerms && card.delivery_notice) {
+    usaDeliveryNotice.textContent = card.delivery_notice;
+    usaDeliveryNotice.classList.remove("hidden");
+  } else {
+    usaDeliveryNotice.textContent = "";
+    usaDeliveryNotice.classList.add("hidden");
   }
 
   stockPollSerial += 1;
@@ -177,9 +204,14 @@ function renderProduct(card) {
     weight.textContent = "Вес неизвестен.";
   }
 
-  $("deliveryNotice").textContent = card.delivery_notice?.startsWith("* -")
-    ? card.delivery_notice
-    : "🚚 " + card.delivery_notice;
+  const deliveryNotice = $("deliveryNotice");
+  if (card.warehouse_only && card.delivery_notice) {
+    deliveryNotice.textContent = card.delivery_notice;
+    deliveryNotice.classList.remove("hidden");
+  } else {
+    deliveryNotice.textContent = "";
+    deliveryNotice.classList.add("hidden");
+  }
   product.classList.remove("hidden");
   product.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -191,8 +223,10 @@ function escapeHtml(value) {
 }
 
 async function searchOem(oem) {
+  if (form.getAttribute("aria-busy") === "true") return;
   product.classList.add("hidden");
-  showState("Ищем OEM в БАЗЕ…");
+  setSearchBusy(true);
+  showState("Ищем…", "loading");
   try {
     const response = await fetch(`/api/v1/oem/${encodeURIComponent(oem)}`);
     if (!response.ok) {
@@ -204,7 +238,9 @@ async function searchOem(oem) {
     hideState();
     renderProduct(card);
   } catch (error) {
-    showState(error.message || "Ошибка поиска.", true);
+    showState(error.message || "Ошибка поиска.", "error");
+  } finally {
+    setSearchBusy(false);
   }
 }
 
@@ -306,11 +342,13 @@ function renderCart() {
 }
 
 function openCart() {
+  document.body.classList.add("cart-open");
   cartPanel.classList.add("open");
   cartPanel.setAttribute("aria-hidden", "false");
   scrim.classList.remove("hidden");
 }
 function closeCart() {
+  document.body.classList.remove("cart-open");
   cartPanel.classList.remove("open");
   cartPanel.setAttribute("aria-hidden", "true");
   scrim.classList.add("hidden");
