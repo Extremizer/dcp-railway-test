@@ -126,7 +126,7 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
             self.assertEqual(page.locator("#productOem").inner_text(), "417300574")
             self.assertEqual(
                 page.locator(".customer-price-line").inner_text().replace("\xa0", " "),
-                "Ваша цена — 29 200 ₽*",
+                "Ваша цена — 29 200* ₽",
             )
             self.assertEqual(
                 page.locator(".price-detail").inner_text().replace("\xa0", " "),
@@ -241,7 +241,8 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
                 "() => document.querySelector('#productOem').textContent === 'WAREHOUSE-ONLY'"
             )
             self.assertTrue(page.locator(".price-panel").get_attribute("class").endswith("hidden"))
-            self.assertTrue(page.locator("#deliveryNotice").is_visible())
+            self.assertTrue(page.locator("#usaDeliveryNotice").get_attribute("class").endswith("hidden"))
+            self.assertTrue(page.locator("#deliveryNotice").get_attribute("class").endswith("hidden"))
             self.assertEqual(page.locator('[data-offer-key="warehouse:1"]').count(), 1)
 
     def test_08_no_client_side_benefit_recalculation(self):
