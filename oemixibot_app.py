@@ -6,6 +6,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Cont
 from oemixibot_store import OemixiStore
 from oemixibot_telegram import DealerAccess, ACCESS_DENIED, WELCOME, price_card, cart_message, normalize_oem
 from oemixibot_catalog import resolve_offer
+from dcp_price_gateway import SharedDealerPriceAdapter
 from oemixibot_finance import FinanceEngine
 from supplier_admin_auth import is_telegram_admin, telegram_admin_ids
 from oemixibot_analytics_client import send_oem_request_async
@@ -21,6 +22,32 @@ import oem_identity_service
 STORE=OemixiStore()
 ACCESS=DealerAccess(STORE)
 FINANCE=FinanceEngine(STORE.path)
+
+_LEGACY_PRICE_PATH = object()
+_SHARED_PRICE_ADAPTER_KEY = 'oemixi_shared_dealer_price_adapter'
+
+
+def bind_shared_price_gateway(application, gateway, *, dealer_max_age_hours):
+    """Explicit application-local injection; no environment/runtime auto-switch."""
+    if getattr(application, 'running', False):
+        raise ValueError('shared_price_gateway_bind_after_start_denied')
+    if _SHARED_PRICE_ADAPTER_KEY in application.bot_data:
+        raise ValueError('shared_price_gateway_already_bound')
+    adapter = SharedDealerPriceAdapter(gateway, max_age_hours=dealer_max_age_hours)
+    application.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter
+    return adapter
+
+
+async def _resolve_runtime_offer(oem, context):
+    data = context.application.bot_data
+    if _SHARED_PRICE_ADAPTER_KEY not in data:
+        return resolve_offer(oem)  # Unchanged legacy mode; activation is a separate GO.
+    adapter = data[_SHARED_PRICE_ADAPTER_KEY]
+    if not isinstance(adapter, SharedDealerPriceAdapter):
+        return {'status': 'TECHNICAL_ERROR', 'oem': oem, 'dl_usd': None,
+                'price_error': 'shared_price_adapter_not_configured'}
+    # The broker may wait for producer completion. Do not block the Telegram loop.
+    return await asyncio.to_thread(resolve_offer, oem, price_gateway=adapter)
 
 def _dealer(update):
     u=update.effective_user
@@ -226,7 +253,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
     oem=normalize_oem(update.effective_message.text)
     if not oem:
         await update.effective_message.reply_text("Введите OEM одним сообщением."); return
-    offer=resolve_offer(oem)
+    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -245,7 +272,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -264,7 +291,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -283,7 +310,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -302,7 +329,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -321,7 +348,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -340,7 +367,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -359,7 +386,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -378,7 +405,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -397,7 +424,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -416,7 +443,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -435,7 +462,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -454,7 +481,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -473,7 +500,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -492,7 +519,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")=="IDENTITY_REQUIRED":
         try:
             shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
@@ -511,7 +538,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
             else:
                 if saved:
-                    offer=resolve_offer(oem)
+                    offer=await _resolve_runtime_offer(oem, context)
     if offer.get("status")!="FOUND" or offer.get("dl_usd") is None:
         if u:
             context.application.create_task(send_oem_request_async(
@@ -911,11 +938,17 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(cart_message(cart) if cart["items"] else "🛒 Корзина пуста.",reply_markup=_cart_keyboard(cart))
 
 
-def build_application(token=None):
+def build_application(token=None, *, shared_price_gateway=_LEGACY_PRICE_PATH, dealer_max_age_hours=None):
+    if shared_price_gateway is _LEGACY_PRICE_PATH and dealer_max_age_hours is not None:
+        raise ValueError('dealer_freshness_without_explicit_gateway')
+    adapter = (None if shared_price_gateway is _LEGACY_PRICE_PATH else
+               SharedDealerPriceAdapter(shared_price_gateway, max_age_hours=dealer_max_age_hours))
     STORE.init(); STORE.ensure_cart_schema()
     token=token or os.getenv("OEMIXIBOT_TOKEN","").strip()
     if not token: raise RuntimeError("OEMIXIBOT_TOKEN is not configured")
     app=Application.builder().token(token).build()
+    if adapter is not None:
+        app.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter
     app.add_handler(CommandHandler("start",start))
     app.add_handler(CommandHandler("cart",cart_command))
     app.add_handler(CommandHandler("orders",orders_command))

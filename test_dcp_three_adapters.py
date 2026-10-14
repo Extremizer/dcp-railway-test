@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, AsyncMock
 import unittest
 
 import dcp_price_gateway as gateway
@@ -67,12 +67,41 @@ class ThreeAdapterTests(CompletionFixture):
             "oem_identity_service":SimpleNamespace(lookup=lambda o:{"manufacturer":"Arctic Cat","item_type":"parts"}),
             "oemixibot_dcp_price":self.browser,"confirm_identity":Mock(),
         })
-        dealer_adapter=gateway.SharedDealerPriceAdapter(lookup,max_age_hours=168)
+        runtime=actual_functions('oemixibot_app.py',
+            {'bind_shared_price_gateway','_resolve_runtime_offer','oem_message'}, {
+                'SharedDealerPriceAdapter':gateway.SharedDealerPriceAdapter,
+                '_SHARED_PRICE_ADAPTER_KEY':'oemixi_shared_dealer_price_adapter',
+                'ContextTypes':SimpleNamespace(DEFAULT_TYPE=object),'Update':object,
+                'asyncio':asyncio,'resolve_offer':dealer['resolve_offer'],
+                '_dealer':lambda update:{'id':'mock-dealer','price_coefficient':1},
+                'normalize_oem':self.finder.normalize_oem,'logging':logging,
+                'STORE':SimpleNamespace(cart_view=lambda d:{'items':[],'total_usd':0}),
+                'price_card':lambda m,o,n,p,*a:'dealer USD '+str(p),
+                'InlineKeyboardButton':lambda *a,**kw:None,
+                'InlineKeyboardMarkup':lambda rows:rows,
+            })
+        application=SimpleNamespace(bot_data={})
+        runtime['bind_shared_price_gateway'](application,lookup,dealer_max_age_hours=168)
+        context=SimpleNamespace(application=application,user_data={})
+        self.dealer_context=context
+        self.dealer_reply=AsyncMock()
+        update=SimpleNamespace(effective_user=None,
+            effective_message=SimpleNamespace(text='2670-265',reply_text=self.dealer_reply))
+        async def dealer_handler():
+            await runtime['oem_message'](update,context)
+            return context.user_data.get('offer:2670-265') or {'status':'NO_PRICE','dl_usd':None}
+        # Preserve raw statuses on non-FOUND replies while invoking the actual handler.
+        original=runtime['_resolve_runtime_offer']
+        async def recording(oem,ctx):
+            value=await original(oem,ctx);self.dealer_result=value;return value
+        runtime['_resolve_runtime_offer']=recording
+        def resolve_dealer():
+            asyncio.run(dealer_handler());return self.dealer_result
         return (
             lambda:probnik["_identity_and_price"]("2670-265"),
             lambda:asyncio.run(procenka["enrich_found_result_with_dealer_price"]({
                 "status":"FOUND","catalog":"Parts","manufacturer":"Arctic Cat","oem":"2670-265","msrp_usd":999})),
-            lambda:dealer["resolve_offer"]("2670-265",price_gateway=dealer_adapter),
+            resolve_dealer,
         )
 
     def pipeline(self,status,*,expected_requests=1):
@@ -120,6 +149,8 @@ class ThreeAdapterTests(CompletionFixture):
         self.assertEqual(results[0]["customer_rub"],3200)
         self.assertEqual(results[1]["_dealer_price_usd"],31.25)
         self.assertEqual(results[2]["dl_usd"],31.25)
+        self.assertEqual(self.dealer_context.user_data['offer:2670-265']['dl_usd'],31.25)
+        self.assertIn('USD 31.25',self.dealer_reply.call_args.args[0])
         with sqlite3.connect(self.db) as c:
             self.assertEqual(c.execute("SELECT dealer_price_usd FROM dealer_price_cache").fetchall(),[(31.25,)])
 
@@ -132,6 +163,15 @@ class ThreeAdapterTests(CompletionFixture):
         self.assertEqual(results[2]["status"],"CLOUDFLARE")
         self.assertIsNone(bridge.claim_next(self.db))
         with sqlite3.connect(self.db) as c:self.assertEqual(c.execute("SELECT COUNT(*) FROM dealer_price_cache").fetchone()[0],0)
+        count=len(self.snapshot()['dp_live_requests'])
+        def lookup(m,o,*,max_age_hours=168):
+            return gateway.request_price(self.db,m,o,wait_seconds=0,max_age_hours=max_age_hours)
+        later=[fn() for fn in self.adapters(lookup)]
+        self.assertIsNone(later[0]['dp_usd'])
+        self.assertEqual(later[1]['_dealer_price_status'],'CLOUDFLARE')
+        self.assertEqual(later[2]['status'],'CLOUDFLARE')
+        self.assertEqual(len(self.snapshot()['dp_live_requests']),count)
+        self.browser.get_dealer_price_dict.assert_not_called()
 
     def test_all_adapters_auth_required_stop(self):
         results,_=self.pipeline("AUTH_REQUIRED")
@@ -139,6 +179,43 @@ class ThreeAdapterTests(CompletionFixture):
         self.assertNotIn("_dealer_price_usd",results[1])
         self.assertEqual(results[2]["status"],"AUTH_REQUIRED")
         self.assertIsNone(bridge.claim_next(self.db))
+
+    def test_all_runtime_adapters_closed_miss_has_no_browser_fallback(self):
+        from dcp_admission_test_support import approve_mode
+        approve_mode(self.db,'CLOSED')
+        before=self.snapshot()
+        def lookup(m,o,*,max_age_hours=168):
+            return gateway.request_price(self.db,m,o,wait_seconds=0,max_age_hours=max_age_hours)
+        results=[fn() for fn in self.adapters(lookup)]
+        self.assertIsNone(results[0]['dp_usd'])
+        self.assertNotIn('_dealer_price_usd',results[1])
+        self.assertEqual(results[2]['status'],'ADMISSION_CLOSED')
+        self.browser.get_dealer_price_dict.assert_not_called()
+        self.assertEqual(self.snapshot(),before)
+
+    def test_runtime_dealer_gateway_error_has_no_browser_fallback(self):
+        bad=Mock(side_effect=TimeoutError('mock gateway down'))
+        dealer=self.adapters(bad)[2]
+        result=dealer()
+        self.assertEqual(result['status'],'TECHNICAL_ERROR')
+        self.assertIsNone(result['dl_usd'])
+        self.browser.get_dealer_price_dict.assert_not_called()
+        self.assertEqual(len(self.snapshot()['dp_live_requests']),0)
+
+    def test_runtime_dealer_unverified_gateway_prices_never_found(self):
+        base={'status':'FOUND','manufacturer':'Arctic Cat','query_oem':'2670-265',
+              'currency':'USD','last_verified_at':health._now(),'dealer_price_usd':31.25,
+              'source':'verified_local_dcp:server_html:#add_2670-265 .c2 .dbl'}
+        for change in ({'source':'public_msrp'},{'currency':'RUB'},
+                       {'dealer_price_usd':None,'msrp_usd':999,'rrp':999},
+                       {'last_verified_at':'2020-01-01T00:00:00Z'},{'manufacturer':'Honda'}):
+            dealer=self.adapters(lambda m,o,**kw:{**base,**change})[2]
+            result=dealer()
+            self.assertEqual(result['status'],'NO_PRICE')
+            self.assertIsNone(result['dl_usd'])
+            self.assertNotIn('offer:2670-265',self.dealer_context.user_data)
+            self.browser.get_dealer_price_dict.assert_not_called()
+        self.assertEqual(len(self.snapshot()['dp_live_requests']),0)
 
     def test_all_adapters_fresh_cache_hit_never_call_live(self):
         with sqlite3.connect(self.db) as c:

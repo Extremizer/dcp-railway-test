@@ -30,6 +30,8 @@ jobs:
           PY
       - name: Dealer prepaid regression
         run: python -B -m unittest -v test_dealer_prepaid_finance.py test_oemixibot_prepaid_runtime.py
+      - name: Explicit shared-price runtime binding (no polling or network)
+        run: python -B -m unittest -v test_oemixi_shared_price_runtime.py
       - name: Client RUB and ORDER CORE atomicity regression
         run: |
           python -B _atomic_client_finance_regression.py
