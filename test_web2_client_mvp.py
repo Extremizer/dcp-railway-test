@@ -92,6 +92,7 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
         self.assertEqual(page.locator("#qtyValue").inner_text(), "2")
         page.locator('[data-offer-key="warehouse:1"]').click()
         page.wait_for_selector("#cartPanel.open")
+        page.wait_for_timeout(300)
 
     def assert_cart_layering(self, page):
         layers = page.evaluate(
@@ -105,6 +106,9 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
                 cartTop: cart.top,
                 cartBottom: cart.bottom,
                 viewport: window.innerHeight,
+                cartLeft: cart.left,
+                cartRight: cart.right,
+                viewportWidth: window.innerWidth,
               };
             }"""
         )
@@ -112,6 +116,7 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
         self.assertGreater(layers["cart"], layers["scrim"])
         self.assertAlmostEqual(layers["cartTop"], 0, delta=1)
         self.assertAlmostEqual(layers["cartBottom"], layers["viewport"], delta=2)
+        self.assertAlmostEqual(layers["cartRight"], layers["viewportWidth"], delta=2)
 
     def test_01_product_desktop_approved_usa_format(self):
         with staging_server() as url:
@@ -184,6 +189,10 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
             self.assert_touch_target(page.locator("[data-minus='0']"))
             self.assert_touch_target(page.locator("[data-plus='0']"))
             self.assert_touch_target(page.locator("[data-remove='0']"))
+            cart_box = page.locator("#cartPanel").bounding_box()
+            self.assertIsNotNone(cart_box)
+            self.assertAlmostEqual(cart_box["x"], 0, delta=2)
+            self.assertAlmostEqual(cart_box["width"], 390, delta=2)
             self.assertTrue(page.locator("#telegramButton").is_visible())
             page.screenshot(path=str(ARTIFACTS / "04-open-cart-mobile-390.png"))
 
