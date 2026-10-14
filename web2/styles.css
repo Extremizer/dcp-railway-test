@@ -85,9 +85,10 @@ h1 span::after { content: ""; display: block; width: 76px; height: 3px; margin: 
 .msrp b { margin-left: 8px; color: var(--acid); }
 
 .offers-section { border-top: 1px solid var(--line); padding: 26px 34px; }
-.offers-head { display: flex; justify-content: space-between; gap: 20px; align-items: baseline; margin-bottom: 14px; }
+.offers-head { display: flex; justify-content: space-between; gap: 20px; align-items: center; margin-bottom: 14px; }
 .offers-head h3 { margin: 0; font-size: 18px; }
 .offers-head span { color: var(--muted); font-size: 12px; }
+.offer-qty { display: flex; align-items: center; gap: 10px; }
 .offers { display: grid; gap: 10px; }
 .offer-card { display: flex; justify-content: space-between; gap: 18px; align-items: center;
   padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel2); }
@@ -163,8 +164,9 @@ footer { max-width: 1180px; margin: auto; padding: 30px 24px; border-top: 1px so
   .product-head { grid-template-columns: 1fr; padding: 24px; }
   .price-panel { text-align: left; min-width: 0; }
   .offers-section { padding: 22px 24px; }
-  .offers-head { display: block; }
+  .offers-head { display: grid; gap: 14px; }
   .offers-head span { display: block; margin-top: 5px; }
+  .offer-qty { justify-content: space-between; }
   .offer-card { align-items: stretch; flex-direction: column; }
   .offer-buy { justify-content: space-between; }
   .product-grid { grid-template-columns: 1fr; }
