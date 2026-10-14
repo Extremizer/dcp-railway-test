@@ -43,6 +43,7 @@ EXTREMIZER_DCP_MODE=cache_only
 EXTREMIZER_DISABLE_TELEGRAM_BOT=1
 EXTREMIZER_DISABLE_LIVE_DCP=1
 EXTREMIZER_ORDERS_DB_FILE=/tmp/web2-owner-staging/orders.db
+EXTREMIZER_CANONICAL_LOGO_PATH=/staging-assets/extremizer-canonical-logo.png
 ```
 
 Do NOT set:
@@ -61,6 +62,50 @@ Initial owner preview requires no persistent production-compatible storage.
 Use disposable service-local `/tmp` SQLite only. Restart may reset staging data by design.
 
 If persistence is later required, create a dedicated staging volume and a separate staging DB path; never mount the production volume.
+
+## Railway service configuration
+
+- Builder: `RAILPACK`
+- Start command:
+
+```bash
+python -m uvicorn web2_staging_app:app --host 0.0.0.0 --port $PORT
+```
+
+- Healthcheck path: `/staging-health`
+- Restart policy: on failure
+- No production volume
+- No production database service binding
+- Public domain: Railway-generated HTTPS domain only after Theme 4 approval
+
+## Canonical logo provisioning
+
+Use a NEW staging-only volume or other staging-only filesystem source mounted at:
+
+`/staging-assets`
+
+Place the exact owner file at:
+
+`/staging-assets/extremizer-canonical-logo.png`
+
+The source must be the owner-approved `лого окончательный!(6).png` with SHA-256:
+
+`4448f9d137dff46fa8f9874871e7f9b4cbe68ee9813e927cff9130d2b6418b30`
+
+Verify before launch:
+
+```bash
+python - <<'PY'
+import hashlib
+from pathlib import Path
+p = Path("/staging-assets/extremizer-canonical-logo.png")
+assert p.is_file()
+assert hashlib.sha256(p.read_bytes()).hexdigest() == "4448f9d137dff46fa8f9874871e7f9b4cbe68ee9813e927cff9130d2b6418b30"
+print("canonical logo SHA OK")
+PY
+```
+
+WEB2 itself performs the same SHA check before serving `/web2-brand-logo`. If the file is missing or does not match, the site remains functional and the logo stays hidden; no generated or substitute logo is displayed.
 
 ## HTTPS
 
