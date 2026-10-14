@@ -155,6 +155,7 @@ function renderProduct(card) {
   const msrp = $("msrpBlock");
   const benefitLine = $("benefitLine");
   const usaDeliveryNotice = $("usaDeliveryNotice");
+  const usaDeliveryText = $("usaDeliveryText");
   const showUsaTerms = !card.warehouse_only && card.price.customer_rub != null;
   if (showUsaTerms && card.price.msrp_rub != null && card.price.msrp_rub > card.price.customer_rub) {
     $("msrpPrice").textContent = rub(card.price.msrp_rub);
@@ -174,10 +175,10 @@ function renderProduct(card) {
   }
 
   if (showUsaTerms && card.delivery_notice) {
-    usaDeliveryNotice.textContent = card.delivery_notice;
+    usaDeliveryText.textContent = String(card.delivery_notice).replace(/^\*\s*-\s*/, "");
     usaDeliveryNotice.classList.remove("hidden");
   } else {
-    usaDeliveryNotice.textContent = "";
+    usaDeliveryText.textContent = "";
     usaDeliveryNotice.classList.add("hidden");
   }
 
