@@ -2,7 +2,7 @@ name: Finance Contract v1.4 Isolated
 
 on:
   push:
-    branches: [finance-contract-v14-20261013, finance-v14-internal-routing-p0-p1-20261013, internal-order-core-p2-20261013, internal-order-p3-readmodel-20261013, internal-order-p4-terms-integrity-20261013]
+    branches: [finance-contract-v14-20261013, finance-v14-internal-routing-p0-p1-20261013, internal-order-core-p2-20261013, internal-order-p3-readmodel-20261013, internal-order-p4-terms-integrity-20261013, internal-order-p5-trusted-persistence-20261014]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +36,7 @@ jobs:
           import internal_order_core_v01
           import internal_order_read_v01
           import internal_order_terms_v01
+          import internal_order_p5_boundary
           import oemixibot_finance
           import oemixibot_store
           import client_finance_adapter
@@ -55,7 +56,8 @@ jobs:
             test_partner_routes_checkout_point10.py \
             test_internal_order_core_v01.py \
             test_internal_order_read_v01.py \
-            test_internal_order_p4_terms.py
+            test_internal_order_p4_terms.py \
+            test_internal_order_p5_boundary.py
 
       - name: Existing dealer/OEMixi compatibility regressions
         run: |
