@@ -8021,8 +8021,10 @@ def prepare_customer_delivery_choice_readonly(order_id: str, telegram_user_id: i
     return owner_user_id, "\n".join(lines), InlineKeyboardMarkup(rows)
 
 
-def _restore_web_handoff_cart(token: str) -> dict | None:
-    payload = web_handoff.get_handoff(token, ORDERS_DB_FILE)
+def _restore_web_handoff_cart(token: str, telegram_user_id: int) -> dict | None:
+    payload = web_handoff.claim_handoff(
+        token, int(telegram_user_id), ORDERS_DB_FILE
+    )
     if not payload:
         return None
 
@@ -8111,14 +8113,50 @@ def _restore_web_handoff_cart(token: str) -> dict | None:
             "_dealer_price_status": (
                 "CACHE_FALLBACK" if dp and dp.get("fresh") else "CACHE_MISS"
             ),
+            "_customer_unit_rub_snapshot": (
+                customer_rub_price_from_dp(dp.get("dealer_price_usd"))
+                if source == "usa" and dp and dp.get("fresh")
+                else None
+            ),
             "_origin": "web",
             "_web_handoff_token": token,
             "qty": int(item.get("qty") or 1),
         }
 
-    if not cart or not web_handoff.mark_handoff_used(token, ORDERS_DB_FILE):
+    if not cart:
         return None
     return cart
+
+
+
+def _revalidate_usa_cart_item(item: dict) -> dict:
+    """Re-read trusted DP cache and reject changed/unavailable USA customer price."""
+    manufacturer = str(item.get("manufacturer") or "").strip()
+    oem = str(item.get("oem") or "").strip()
+    old_customer_rub = item.get("_customer_unit_rub_snapshot")
+    if not manufacturer or not oem or old_customer_rub is None:
+        return {"status": "unverified", "customer_rub": None}
+
+    dp = get_dealer_price_cache(manufacturer, oem, mark_used=True)
+    if not (dp and dp.get("fresh")):
+        return {"status": "unverified", "customer_rub": None}
+
+    current_customer_rub = customer_rub_price_from_dp(
+        dp.get("dealer_price_usd")
+    )
+    if current_customer_rub is None:
+        return {"status": "unverified", "customer_rub": None}
+
+    if int(current_customer_rub) != int(old_customer_rub):
+        return {"status": "changed", "customer_rub": int(current_customer_rub)}
+
+    item["_dealer_price_usd"] = dp.get("dealer_price_usd")
+    item["_dealer_price_source"] = (
+        "dp_cache:" + str(dp.get("source") or "verified_live_dp")
+    )
+    item["_dealer_price_checked_at"] = dp.get("last_verified_at")
+    item["_dealer_price_status"] = "CACHE_FALLBACK"
+    return {"status": "ok", "customer_rub": int(current_customer_rub)}
 
 
 def _find_client_warehouse_offer(oem: str, warehouse_id: int) -> dict | None:
@@ -8211,13 +8249,13 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         and not _is_group_chat(update)
     ):
         token = context.args[0][4:]
-        cart = _restore_web_handoff_cart(token)
+        cart = (
+            _restore_web_handoff_cart(token, int(user.id))
+            if user is not None
+            else None
+        )
         if cart:
             context.user_data["cart"] = cart
-            if user:
-                web_handoff.attach_handoff_user(
-                    token, int(user.id), ORDERS_DB_FILE
-                )
             await safe_reply_text(
                 update.effective_message,
                 "🌐 <b>Корзина с сайта загружена</b>\n\n" + format_cart(cart),
@@ -8329,6 +8367,21 @@ async def _shadow_checkout_confirm(
 
     changed_offers = []
     unverified_offers = []
+
+    for key, item in list(cart.items()):
+        if str(item.get("offer_source") or "usa").strip().lower() != "usa":
+            continue
+        validation = _revalidate_usa_cart_item(item)
+        target = (
+            key,
+            "склад США",
+            str(item.get("oem") or "—"),
+        )
+        if validation["status"] == "changed":
+            changed_offers.append(target)
+        elif validation["status"] == "unverified":
+            unverified_offers.append(target)
+
     for key, item in list(cart.items()):
         if str(item.get("offer_source") or "usa") != "warehouse":
             continue
