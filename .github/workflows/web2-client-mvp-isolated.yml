@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - web2-client-mvp-20261014
+      - web2-client-mvp-visual-p0-20261014
   workflow_dispatch:
 
 permissions:
@@ -27,18 +28,21 @@ jobs:
 
       - name: Syntax
         run: |
-          python -B -m py_compile web2_staging_app.py web2_ui_routes.py test_web2_staging.py test_web2_client_mvp.py
+          python -B -m py_compile web2_staging_app.py web2_ui_routes.py web2_runtime_app.py test_web2_staging.py test_web2_client_mvp.py test_web2_real_web1_api_wiring.py
           node --check web2/app.js
 
       - name: Staging API regression
         run: python -B -m unittest -v test_web2_staging.py
 
-      - name: Client MVP browser regression
+      - name: Real WEB1 API wiring regression
+        run: python -B -m unittest -v test_web2_real_web1_api_wiring.py
+
+      - name: Client MVP browser and visual regression
         run: python -B -m unittest -v test_web2_client_mvp.py
 
       - name: Upload MVP screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: web2-client-mvp-screenshots
+          name: web2-client-mvp-visual-p0-screenshots
           path: artifacts/*.png
           if-no-files-found: error
