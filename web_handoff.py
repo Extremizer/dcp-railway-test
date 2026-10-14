@@ -175,6 +175,70 @@ def get_handoff(
     return payload if isinstance(payload, dict) else None
 
 
+
+def claim_handoff(
+    token: str,
+    telegram_user_id: int,
+    db_file: Path | str,
+) -> dict[str, Any] | None:
+    """Atomically claim one valid handoff for exactly one Telegram user."""
+    token = str(token or "").strip()
+    if not token:
+        return None
+    user_id = int(telegram_user_id)
+    init_web_handoff_db(db_file)
+    now = _now()
+    with sqlite3.connect(db_file, timeout=30) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT payload_json, expires_at, used_at, telegram_user_id
+            FROM web_cart_handoffs
+            WHERE token = ?
+            """,
+            (token,),
+        ).fetchone()
+        if not row or row[2]:
+            conn.rollback()
+            return None
+        try:
+            expires_at = datetime.fromisoformat(str(row[1]))
+        except (TypeError, ValueError):
+            conn.rollback()
+            return None
+        if expires_at <= _now_dt():
+            conn.rollback()
+            return None
+        existing_user = row[3]
+        if existing_user is not None and int(existing_user) != user_id:
+            conn.rollback()
+            return None
+        try:
+            payload = json.loads(row[0])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            conn.rollback()
+            return None
+        if not isinstance(payload, dict):
+            conn.rollback()
+            return None
+        changed = conn.execute(
+            """
+            UPDATE web_cart_handoffs
+            SET used_at = ?, telegram_user_id = ?
+            WHERE token = ?
+              AND used_at IS NULL
+              AND expires_at > ?
+              AND (telegram_user_id IS NULL OR telegram_user_id = ?)
+            """,
+            (now, user_id, token, now, user_id),
+        ).rowcount
+        if changed != 1:
+            conn.rollback()
+            return None
+        conn.commit()
+        return payload
+
+
 def mark_handoff_used(
     token: str,
     db_file: Path | str,
@@ -204,9 +268,15 @@ def attach_handoff_user(
             """
             UPDATE web_cart_handoffs
             SET telegram_user_id = ?
-            WHERE token = ? AND used_at IS NOT NULL
+            WHERE token = ?
+              AND used_at IS NOT NULL
+              AND (telegram_user_id IS NULL OR telegram_user_id = ?)
             """,
-            (int(telegram_user_id), str(token or "").strip()),
+            (
+                int(telegram_user_id),
+                str(token or "").strip(),
+                int(telegram_user_id),
+            ),
         ).rowcount
         conn.commit()
     return changed == 1
@@ -223,13 +293,17 @@ def link_handoff_order(
         changed = conn.execute(
             """
             UPDATE web_cart_handoffs
-            SET order_id = ?, telegram_user_id = ?
-            WHERE token = ? AND used_at IS NOT NULL
+            SET order_id = ?
+            WHERE token = ?
+              AND used_at IS NOT NULL
+              AND telegram_user_id = ?
+              AND (order_id IS NULL OR order_id = ?)
             """,
             (
                 str(order_id or "").strip(),
-                int(telegram_user_id),
                 str(token or "").strip(),
+                int(telegram_user_id),
+                str(order_id or "").strip(),
             ),
         ).rowcount
         conn.commit()
