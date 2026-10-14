@@ -5,6 +5,7 @@ on:
     branches:
       - web2-client-mvp-20261014
       - web2-client-mvp-visual-p0-20261014
+      - web2-unified-procenka-owner-staging-20261014
   workflow_dispatch:
 
 permissions:
