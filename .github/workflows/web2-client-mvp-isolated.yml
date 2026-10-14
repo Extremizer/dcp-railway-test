@@ -3,7 +3,7 @@ name: WEB2 Client MVP Isolated
 on:
   push:
     branches:
-      - web2-client-mvp-20261014
+      - web2-client-mvp-20261014\n      - theme3-web2-visual-review-20261014
   workflow_dispatch:
 
 permissions:
@@ -39,6 +39,6 @@ jobs:
       - name: Upload MVP screenshots
         uses: actions/upload-artifact@v4
         with:
-          name: web2-client-mvp-screenshots
+          name: web2-client-mvp-visual-review
           path: artifacts/*.png
           if-no-files-found: error
