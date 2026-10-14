@@ -81,6 +81,8 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
             self.assertEqual(page.locator("#productOem").inner_text(), "417300574")
             self.assertEqual(page.locator("#customerPrice").inner_text().replace("\xa0", " "), "29 200* ₽")
             self.assertEqual(page.locator("#offers .offer-card").count(), 2)
+            Path("artifacts").mkdir(exist_ok=True)
+            page.screenshot(path="artifacts/web2-client-mvp-desktop.png", full_page=True)
 
             usa = page.locator('[data-offer-key="usa"]')
             self.assertTrue(usa.is_visible())
@@ -102,6 +104,7 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
             page.wait_for_selector("#product:not(.hidden)")
             page.locator("#qtyPlus").click()
             self.assertEqual(page.locator("#qtyValue").inner_text(), "2")
+            page.screenshot(path="artifacts/web2-client-mvp-mobile.png", full_page=True)
             page.locator('[data-offer-key="warehouse:1"]').click()
             item = page.locator("#cartItems .cart-item").first
             self.assertIn("Склад 1", item.inner_text())
