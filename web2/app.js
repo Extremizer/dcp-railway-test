@@ -1,3 +1,12 @@
+const brandLogo = document.querySelector(".brand-logo");
+if (brandLogo) {
+  const showBrandLogo = () => { brandLogo.hidden = false; };
+  const hideBrandLogo = () => { brandLogo.hidden = true; };
+  brandLogo.addEventListener("load", showBrandLogo);
+  brandLogo.addEventListener("error", hideBrandLogo);
+  if (brandLogo.complete && brandLogo.naturalWidth > 0) showBrandLogo();
+}
+
 const $ = (id) => document.getElementById(id);
 const state = $("state");
 const product = $("product");
