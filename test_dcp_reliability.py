@@ -256,7 +256,8 @@ class BrowserTests(unittest.TestCase):
         helper = SimpleNamespace(_is_dcp_page=self.producer["_is_dcp_page"], _tabs=Mock(return_value=[
             {"type":"page","url":"https://www.dealerorders.com/product","title":"Just a moment Cloudflare"},
             {"type":"page","url":"https://www.dealercostparts.com/oemparts/partsearch/arctic_cat","title":"Parts"},
-        ]), _runtime_evaluate=Mock(return_value={"authorized":True,"challenged":False}))
+        ]), _runtime_evaluate=Mock(return_value={"authorized":True,"challenged":False,
+            "href":"https://www.dealercostparts.com/oemparts/partsearch/arctic_cat"}))
         observations=[]
         ns = functions("dp_sync_agent.py", {"_preflight_dcp"}, {"time":time,"oemixibot_dcp_price":helper,"_CF_MARKERS":("cloudflare","just a moment"),"_DCP_STATUS":"UNKNOWN"})
         def observe(status, **kwargs):

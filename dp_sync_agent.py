@@ -378,7 +378,9 @@ def _preflight_dcp() -> str:
         )
         return _DCP_STATUS
 
-    if probe.get("challenged"):
+    if not oemixibot_dcp_price._is_dcp_page({"type": "page", "url": probe.get("href")}):
+        _set_dcp_health("TECHNICAL_ERROR", detail="dcp_document_context_changed")
+    elif probe.get("challenged"):
         _set_dcp_health("CLOUDFLARE", detail="cloudflare_dom_detected")
     elif not probe.get("authorized"):
         _set_dcp_health("AUTH_REQUIRED", detail="dcp_sign_out_not_detected")

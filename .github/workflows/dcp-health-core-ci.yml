@@ -30,6 +30,14 @@ jobs:
       - name: Install isolated HTTP dependencies
         run: pip install 'fastapi>=0.110,<1' 'httpx>=0.27,<1'
 
+      - name: Set up isolated JavaScript execution
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Passive document and HTTP failure regression (mock browser only)
+        run: python -B -m unittest -v test_dcp_passive_guard.py
+
       - name: Stage 4 admission, quiescence and paired release rehearsal
         run: python -B -m unittest -v test_dcp_admission.py test_dcp_release_rehearsal.py
 
