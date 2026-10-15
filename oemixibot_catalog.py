@@ -63,4 +63,9 @@ def resolve_offer(oem,manufacturer=None,*,price_gateway=None):
     return {**ident,"status":dp.get("status"),"oem":dp.get("current_oem") or ident["oem"],
             "requested_oem":ident["oem"],"name":dp.get("name"),"dl_usd":dp.get("dealer_price_usd"),
             "actual_weight_kg":ref.get("actual_weight_kg"),"volume_weight_kg":ref.get("volume_weight_kg"),
-            "price_source":dp.get("source")}
+            "price_source":dp.get("source"),
+            "dealer_verified_at":dp.get("last_verified_at"),
+            "msrp_usd":dp.get("msrp_usd"),
+            "msrp_source":dp.get("msrp_source"),
+            "msrp_verified_at":dp.get("msrp_verified_at"),
+            "price_contract_version":dp.get("price_contract_version")}
