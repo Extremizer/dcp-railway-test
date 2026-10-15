@@ -261,6 +261,82 @@ def from_gateway_and_msrp(
     )
 
 
+class CanonicalPriceGatewayAdapter:
+    """Compose existing Dealer gateway + independent read-only MSRP source.
+
+    dealer_gateway must remain the existing shared gateway path. msrp_reader is
+    read-only and must not enqueue/live-search. Neither side falls back to the
+    other price type.
+    """
+    def __init__(
+        self,
+        dealer_gateway,
+        msrp_reader,
+        *,
+        dealer_max_age_hours,
+        msrp_max_age_hours,
+    ):
+        if not callable(dealer_gateway):
+            raise ValueError("dealer_gateway_required")
+        if not callable(msrp_reader):
+            raise ValueError("msrp_reader_required")
+        for name, value in (
+            ("dealer_max_age_hours", dealer_max_age_hours),
+            ("msrp_max_age_hours", msrp_max_age_hours),
+        ):
+            if type(value) not in (int, float) or not math.isfinite(float(value)) or float(value) <= 0:
+                raise ValueError(f"explicit_valid_{name}_required")
+        self.dealer_gateway = dealer_gateway
+        self.msrp_reader = msrp_reader
+        self.dealer_max_age_hours = float(dealer_max_age_hours)
+        self.msrp_max_age_hours = float(msrp_max_age_hours)
+
+    def resolve(self, manufacturer, requested_oem, *, item_category=None):
+        try:
+            dealer = self.dealer_gateway(
+                manufacturer,
+                requested_oem,
+                max_age_hours=self.dealer_max_age_hours,
+            )
+        except Exception:
+            dealer = {
+                "status": "TECHNICAL_ERROR",
+                "error_code": "shared_gateway_unavailable",
+            }
+        if not isinstance(dealer, dict):
+            dealer = {
+                "status": "TECHNICAL_ERROR",
+                "error_code": "invalid_gateway_response",
+            }
+
+        try:
+            msrp = self.msrp_reader(
+                manufacturer,
+                requested_oem,
+                max_age_hours=self.msrp_max_age_hours,
+            )
+        except Exception:
+            msrp = {
+                "gateway_status": "TECHNICAL_ERROR",
+                "error_code": "msrp_reader_unavailable",
+            }
+        if not isinstance(msrp, dict):
+            msrp = {
+                "gateway_status": "TECHNICAL_ERROR",
+                "error_code": "invalid_msrp_response",
+            }
+
+        return from_gateway_and_msrp(
+            manufacturer=manufacturer,
+            requested_oem=requested_oem,
+            item_category=item_category,
+            dealer_result=dealer,
+            msrp_result=msrp,
+            dealer_max_age_hours=self.dealer_max_age_hours,
+            msrp_max_age_hours=self.msrp_max_age_hours,
+        )
+
+
 def dealer_legacy_offer(contract: dict) -> dict:
     """Compatibility adapter for OEMixi/catalog style dealer offer."""
     if contract.get("dealer_price_status") != STATUS_VERIFIED:
@@ -356,6 +432,7 @@ __all__ = [
     "IDENTITY_MISMATCH",
     "build_contract",
     "from_gateway_and_msrp",
+    "CanonicalPriceGatewayAdapter",
     "dealer_legacy_offer",
     "client_price_inputs",
     "admin_price_view",
