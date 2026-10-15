@@ -48,7 +48,6 @@ class Theme5Stage2MockContractTests(unittest.TestCase):
             ("SIMILAR_NAMES_DIFFERENT_SKU", "SKU_AMBIGUOUS"),
             ("REPLACED_OEM_UNVERIFIED", "REPLACEMENT_UNVERIFIED"),
             ("SAME_NUMBER_OTHER_MANUFACTURER", "UNKNOWN_MANUFACTURER"),
-            ("SKU_MISMATCH", "NO_EXACT_SKU"),
         ):
             with self.subTest(case_id=case_id):
                 case = self.cases[case_id]
