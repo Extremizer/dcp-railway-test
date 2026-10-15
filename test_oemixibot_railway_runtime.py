@@ -39,8 +39,8 @@ from unified_price_contract_v1 import (
     STATUS_STALE,
     STATUS_VERIFIED,
     build_contract,
+    client_price_inputs,
 )
-from unified_price_adapters_v1 import client_price_inputs
 
 
 SECRET = "railway-runtime-isolated-secret-2026"
