@@ -29,6 +29,7 @@ from oemixibot_railway_runtime import (
     start_health_server,
     validate_runtime_config,
     verify_persistent_store,
+    run,
 )
 from oemixi_secure_gateway_transport import (
     HTTPSPriceTransport,
@@ -199,6 +200,61 @@ class RailwaySingletonHealthTests(unittest.TestCase):
                 one.release()
             two.acquire()
             two.release()
+
+    def test_graceful_run_releases_singleton_and_allows_restart(self):
+        import oemixibot_railway_runtime as runtime
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            env = config_env(root)
+            for path in (
+                root / "oemixibot.db",
+                root / "oemixibot_identity.db",
+                root / "oem_reference.db",
+            ):
+                with sqlite3.connect(path) as conn:
+                    conn.execute("CREATE TABLE seed(id INTEGER PRIMARY KEY)")
+                    conn.commit()
+
+            polling_calls = []
+
+            class FakeApplication:
+                def run_polling(self, **kwargs):
+                    polling_calls.append(kwargs)
+
+            class FakeHealthServer:
+                def __init__(self):
+                    self.shutdown_called = False
+                    self.close_called = False
+                def shutdown(self):
+                    self.shutdown_called = True
+                def server_close(self):
+                    self.close_called = True
+
+            fake_server = FakeHealthServer()
+            lock_path = Path(env["OEMIXIBOT_DB_PATH"] + ".polling.lock")
+
+            with patch.object(
+                runtime,
+                "build_railway_application",
+                return_value=FakeApplication(),
+            ), patch.object(
+                runtime,
+                "start_health_server",
+                return_value=(fake_server, SimpleNamespace()),
+            ):
+                run(env)
+
+            self.assertEqual(len(polling_calls), 1)
+            self.assertFalse(polling_calls[0]["drop_pending_updates"])
+            self.assertTrue(fake_server.shutdown_called)
+            self.assertTrue(fake_server.close_called)
+
+            # Graceful exit released the same singleton lock, so a simulated
+            # Railway restart can acquire it immediately.
+            restart_lock = SingletonFileLock(lock_path)
+            restart_lock.acquire()
+            restart_lock.release()
 
     def test_health_and_readiness(self):
         state = RuntimeState(started=True, ready=False)
