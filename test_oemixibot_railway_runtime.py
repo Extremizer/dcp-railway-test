@@ -20,6 +20,14 @@ from fastapi.testclient import TestClient
 from oemixibot_finance import FinanceEngine
 from oemixibot_store import OemixiStore
 from oemixibot_railway_migration import audit_database, backup_database, backup_bundle
+from oemixibot_poller_fence import (
+    OWNER_RAILWAY,
+    OWNER_WINDOWS,
+    PollerFenceClient,
+    build_fence_router,
+    read_fence,
+    transition_to_railway,
+)
 from oemixibot_railway_runtime import (
     DEALER_MAX_AGE_HOURS,
     MSRP_MAX_AGE_HOURS,
@@ -247,7 +255,7 @@ class RailwaySingletonHealthTests(unittest.TestCase):
                 "start_health_server",
                 side_effect=fake_health_server,
             ):
-                runtime.run(env)
+                runtime.run(env, cutover_fence_check=lambda config: {"active_owner": "RAILWAY", "generation": 2})
 
             self.assertFalse(
                 observed["ready_at_polling_entry"],
@@ -296,7 +304,7 @@ class RailwaySingletonHealthTests(unittest.TestCase):
                 "start_health_server",
                 return_value=(fake_server, SimpleNamespace()),
             ):
-                run(env)
+                run(env, cutover_fence_check=lambda config: {"active_owner": "RAILWAY", "generation": 2})
 
             self.assertEqual(len(polling_calls), 1)
             self.assertFalse(polling_calls[0]["drop_pending_updates"])
@@ -308,6 +316,34 @@ class RailwaySingletonHealthTests(unittest.TestCase):
             restart_lock = SingletonFileLock(lock_path)
             restart_lock.acquire()
             restart_lock.release()
+
+    def test_readiness_monitor_waits_for_real_ptb_running_flags(self):
+        import oemixibot_railway_runtime as runtime
+
+        state = RuntimeState(started=True, ready=False)
+        app = SimpleNamespace(
+            running=False,
+            updater=SimpleNamespace(running=False),
+        )
+        stop, thread = runtime.start_polling_readiness_monitor(
+            state,
+            app,
+            interval_seconds=0.005,
+        )
+        try:
+            self.assertFalse(state.ready)
+            app.running = True
+            self.assertFalse(state.ready)
+            app.updater.running = True
+            for _ in range(100):
+                if state.ready:
+                    break
+                import time as _time
+                _time.sleep(0.005)
+            self.assertTrue(state.ready)
+        finally:
+            stop.set()
+            thread.join(timeout=1)
 
     def test_health_and_readiness(self):
         state = RuntimeState(started=True, ready=False)
@@ -437,6 +473,70 @@ class RailwayPrivateGatewayTests(unittest.TestCase):
                 SECRET,
                 allow_railway_private_http=True,
             )
+
+
+class PollerFenceTests(unittest.TestCase):
+    def test_default_fence_blocks_railway_until_explicit_transition(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "coordination.db"
+            initial = read_fence(db)
+            self.assertEqual(initial["active_owner"], OWNER_WINDOWS)
+            self.assertEqual(initial["generation"], 1)
+
+            api = FastAPI()
+            api.include_router(build_fence_router(db_file=db, root_secret=SECRET))
+            client = TestClient(api)
+            self.addCleanup(client.close)
+
+            fence_client = PollerFenceClient(
+                "http://dcp-railway-test.railway.internal:8080",
+                SECRET,
+                opener=local_opener(client),
+                allow_railway_private_http=True,
+            )
+            with self.assertRaisesRegex(RuntimeError, "blocks_railway"):
+                fence_client.require_railway_owner()
+
+            transitioned = transition_to_railway(
+                db,
+                expected_generation=1,
+                windows_stop_evidence="windows-poller-stopped-proof-20261015",
+                actor="release-control",
+            )
+            self.assertEqual(transitioned["active_owner"], OWNER_RAILWAY)
+            self.assertEqual(transitioned["generation"], 2)
+            self.assertEqual(
+                fence_client.require_railway_owner()["active_owner"],
+                OWNER_RAILWAY,
+            )
+
+    def test_transition_requires_stop_evidence_and_compare_and_swap(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "coordination.db"
+            initial = read_fence(db)
+            with self.assertRaisesRegex(ValueError, "windows_stop_evidence_required"):
+                transition_to_railway(
+                    db,
+                    expected_generation=initial["generation"],
+                    windows_stop_evidence="too-short",
+                    actor="release-control",
+                )
+
+            first = transition_to_railway(
+                db,
+                expected_generation=initial["generation"],
+                windows_stop_evidence="verified-windows-stop-evidence",
+                actor="release-control",
+            )
+            self.assertEqual(first["generation"], initial["generation"] + 1)
+
+            with self.assertRaisesRegex(ValueError, "generation_mismatch|not_owned_by_windows"):
+                transition_to_railway(
+                    db,
+                    expected_generation=initial["generation"],
+                    windows_stop_evidence="second-stale-transition-proof",
+                    actor="release-control",
+                )
 
 
 class MigrationAndRestartTests(unittest.TestCase):
