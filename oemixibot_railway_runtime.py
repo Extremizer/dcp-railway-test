@@ -162,7 +162,12 @@ def verify_persistent_store(db_path: Path | str) -> None:
             raise RuntimeError("oemixibot_store_integrity_check_failed")
 
 
-def build_railway_application(config: dict[str, Any]):
+def build_railway_application(
+    config: dict[str, Any],
+    *,
+    transport_factory=None,
+    app_module=None,
+):
     """Build OEMixiBOT with explicit secure Gateway binding before polling."""
     # Delayed imports preserve environment/path configuration before globals
     # in the existing OEMixi modules are constructed.
@@ -170,14 +175,22 @@ def build_railway_application(config: dict[str, Any]):
         HTTPSPriceTransport,
         OEMixiCanonicalSharedPriceAdapter,
     )
-    import oemixibot_app
+    if app_module is None:
+        import oemixibot_app as app_module
 
-    transport = HTTPSPriceTransport(
+    factory = transport_factory or (
+        lambda base_url, root_secret:
+        HTTPSPriceTransport(
+            base_url,
+            root_secret,
+            timeout_seconds=7,
+        )
+    )
+    transport = factory(
         config["gateway_url"],
         config["gateway_secret"],
-        timeout_seconds=7,
     )
-    application = oemixibot_app.build_application(
+    application = app_module.build_application(
         token=config["token"],
         shared_price_gateway=transport,
         dealer_max_age_hours=config["dealer_max_age_hours"],
