@@ -30,6 +30,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 import dp_live_bridge
+from unified_price_contract_v1 import CanonicalPriceGatewayAdapter, dealer_legacy_offer
 
 
 PATH = "/internal/oemixibot/price-gateway/v1"
@@ -105,6 +106,83 @@ def _normalize_identity(manufacturer: str, oem: str) -> tuple[str, str]:
     return dp_live_bridge._request_key(manufacturer, oem)
 
 
+def read_verified_msrp_cache(
+    db_file: Path | str,
+    manufacturer: str,
+    oem: str,
+    *,
+    max_age_hours: float,
+) -> dict[str, Any]:
+    """Read existing catalog MSRP cache only; never enqueue or browse."""
+    manufacturer, oem = _normalize_identity(manufacturer, oem)
+    if not manufacturer or not oem:
+        return {"gateway_status": "INVALID"}
+    if (
+        type(max_age_hours) not in (int, float)
+        or not math.isfinite(float(max_age_hours))
+        or float(max_age_hours) <= 0
+    ):
+        return {"gateway_status": "INVALID"}
+
+    path = Path(db_file)
+    if not path.exists():
+        return {"gateway_status": "NO_PRICE"}
+    uri = path.resolve().as_uri() + "?mode=ro"
+    try:
+        with sqlite3.connect(uri, uri=True, timeout=5) as conn:
+            conn.row_factory = sqlite3.Row
+            tables = {
+                str(r[0]) for r in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                ).fetchall()
+            }
+            if "oem_catalog_cache" not in tables:
+                return {"gateway_status": "NO_PRICE"}
+
+            current_oem = oem
+            if "oem_catalog_aliases" in tables:
+                alias = conn.execute(
+                    """SELECT current_oem FROM oem_catalog_aliases
+                       WHERE manufacturer=? AND alias_oem=?""",
+                    (manufacturer, oem),
+                ).fetchone()
+                if alias and alias[0]:
+                    current_oem = str(alias[0])
+
+            row = conn.execute(
+                """SELECT current_oem,catalog,msrp_usd,msrp_verified,
+                          source_kind,source_ref,last_verified_at
+                     FROM oem_catalog_cache
+                    WHERE manufacturer=? AND current_oem=?""",
+                (manufacturer, current_oem),
+            ).fetchone()
+    except sqlite3.Error:
+        return {"gateway_status": "TECHNICAL_ERROR"}
+
+    if not row or int(row["msrp_verified"] or 0) != 1:
+        return {"gateway_status": "NO_PRICE"}
+    price = row["msrp_usd"]
+    if (
+        type(price) not in (int, float)
+        or isinstance(price, bool)
+        or not math.isfinite(float(price))
+        or float(price) <= 0
+    ):
+        return {"gateway_status": "NO_PRICE"}
+
+    source_kind = str(row["source_kind"] or "catalog").strip()
+    source_ref = str(row["source_ref"] or "unknown").strip()
+    return {
+        "gateway_status": "FOUND",
+        "manufacturer": manufacturer,
+        "current_oem": str(row["current_oem"] or current_oem),
+        "item_category": str(row["catalog"] or "").strip() or None,
+        "msrp_usd": float(price),
+        "source": f"verified_public_msrp:{source_kind}:{source_ref}",
+        "last_verified_at": str(row["last_verified_at"] or ""),
+    }
+
+
 def _init_replay_store(db_file: Path | str) -> None:
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute(
@@ -152,7 +230,8 @@ def _sanitize_gateway_result(result: Any) -> dict[str, Any]:
     for key in (
         "manufacturer", "query_oem", "current_oem", "name", "source",
         "last_verified_at", "currency", "error_code", "request_id",
-        "cache_committed_at",
+        "cache_committed_at", "msrp_source", "msrp_verified_at",
+        "price_contract_version",
     ):
         value = result.get(key)
         if value is not None:
@@ -170,6 +249,14 @@ def _sanitize_gateway_result(result: Any) -> dict[str, Any]:
                 "error_code": "invalid_gateway_dealer_price",
             }
         out["dealer_price_usd"] = float(price)
+        msrp = result.get("msrp_usd")
+        if (
+            type(msrp) in (int, float)
+            and not isinstance(msrp, bool)
+            and math.isfinite(float(msrp))
+            and float(msrp) > 0
+        ):
+            out["msrp_usd"] = float(msrp)
         out["server_cache_committed"] = bool(
             result.get("server_cache_committed")
             or result.get("verified_cache_hit")
@@ -183,7 +270,9 @@ def build_router(
     root_secret: str,
     shared_gateway: Callable[..., dict],
     server_max_age_hours: float,
+    msrp_max_age_hours: float,
     wait_seconds: float = 5.0,
+    msrp_reader: Callable[..., dict] | None = None,
 ) -> APIRouter:
     """Build the disabled-by-default prototype router.
 
@@ -204,10 +293,34 @@ def build_router(
         or not (0 < float(wait_seconds) <= 15)
     ):
         raise ValueError("invalid_gateway_wait_seconds")
+    if (
+        type(msrp_max_age_hours) not in (int, float)
+        or not math.isfinite(float(msrp_max_age_hours))
+        or float(msrp_max_age_hours) <= 0
+    ):
+        raise ValueError("explicit_server_msrp_freshness_required")
     key = derive_consumer_key(root_secret)
     db_file = str(db_file)
     max_age = float(server_max_age_hours)
+    msrp_age = float(msrp_max_age_hours)
     wait = float(wait_seconds)
+    reader = msrp_reader or (
+        lambda manufacturer, oem, *, max_age_hours:
+        read_verified_msrp_cache(
+            db_file, manufacturer, oem, max_age_hours=max_age_hours
+        )
+    )
+    canonical = CanonicalPriceGatewayAdapter(
+        lambda manufacturer, oem, *, max_age_hours: shared_gateway(
+            manufacturer,
+            oem,
+            max_age_hours=max_age_hours,
+            wait_seconds=wait,
+        ),
+        reader,
+        dealer_max_age_hours=max_age,
+        msrp_max_age_hours=msrp_age,
+    )
     router = APIRouter()
 
     @router.post(PATH)
@@ -250,28 +363,14 @@ def build_router(
             raise HTTPException(409, {"code": "replay_rejected"})
 
         # Consumer has no access to producer/claim/finish. The server alone
-        # decides cache/live/admission by calling the existing shared gateway.
+        # decides cache/live/admission through the existing shared gateway.
         try:
-            result = shared_gateway(
+            contract = canonical.resolve(
                 manufacturer,
                 oem,
-                max_age_hours=max_age,
-                wait_seconds=wait,
+                item_category=None,
             )
-        except TypeError:
-            # Compatibility for the accepted gateway callable signature that
-            # may own its wait policy internally.
-            try:
-                result = shared_gateway(
-                    manufacturer,
-                    oem,
-                    max_age_hours=max_age,
-                )
-            except Exception:
-                result = {
-                    "status": "TECHNICAL_ERROR",
-                    "error_code": "shared_gateway_unavailable",
-                }
+            result = dealer_legacy_offer(contract)
         except Exception:
             result = {
                 "status": "TECHNICAL_ERROR",
@@ -399,6 +498,7 @@ __all__ = [
     "derive_consumer_key",
     "canonical_body",
     "sign_request",
+    "read_verified_msrp_cache",
     "build_router",
     "HTTPSPriceTransport",
 ]
