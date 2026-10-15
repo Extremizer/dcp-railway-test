@@ -107,8 +107,16 @@ def validate_runtime_config(env: dict[str, str] | None = None) -> dict[str, Any]
         raise ValueError("OEMIXIBOT_DB_PATH_must_be_absolute")
 
     gateway_url = str(env.get("OEMIXIBOT_GATEWAY_BASE_URL") or "").strip()
-    if not gateway_url.startswith("https://"):
-        raise ValueError("OEMIXIBOT_GATEWAY_BASE_URL_https_required")
+    from urllib.parse import urlparse
+    parsed_gateway = urlparse(gateway_url)
+    private_http = (
+        parsed_gateway.scheme == "http"
+        and str(parsed_gateway.hostname or "").lower().endswith(".railway.internal")
+    )
+    if parsed_gateway.scheme != "https" and not private_http:
+        raise ValueError(
+            "OEMIXIBOT_GATEWAY_BASE_URL_https_or_railway_private_http_required"
+        )
 
     gateway_secret = str(env.get("OEMIXIBOT_GATEWAY_SECRET") or "").strip()
     if len(gateway_secret) < 16:
@@ -184,6 +192,7 @@ def build_railway_application(
             base_url,
             root_secret,
             timeout_seconds=7,
+            allow_railway_private_http=True,
         )
     )
     transport = factory(
