@@ -539,7 +539,7 @@ class HTTPSPriceTransport:
             and str(parsed.hostname or "").lower().endswith(".railway.internal")
         )
         if parsed.scheme != "https" and not private_http and not self.allow_test_http:
-            raise ValueError("https_or_railway_private_http_required")
+            raise ValueError("https_required_outside_railway_private_network")
         if not parsed.netloc:
             raise ValueError("invalid_gateway_url")
         if (
