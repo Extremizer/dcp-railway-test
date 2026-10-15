@@ -17,6 +17,7 @@ from unified_price_contract_v1 import (
     dealer_legacy_offer,
     client_price_inputs,
     admin_price_view,
+    CanonicalPriceGatewayAdapter,
 )
 
 
@@ -249,6 +250,61 @@ class CanonicalPriceContractTests(unittest.TestCase):
         self.assertEqual(view["msrp_usd"], 239.99)
         self.assertEqual(view["dealer_price_status"], STATUS_VERIFIED)
         self.assertEqual(view["msrp_status"], STATUS_VERIFIED)
+
+    def test_canonical_gateway_composes_existing_dealer_and_read_only_msrp(self):
+        calls = []
+        def dealer(m, o, *, max_age_hours):
+            calls.append(("dealer", m, o, max_age_hours))
+            return {
+                "status": "FOUND",
+                "manufacturer": m,
+                "current_oem": o,
+                "dealer_price_usd": 184.07,
+                "source": "verified_local_dcp:cart_line",
+                "last_verified_at": FRESH,
+            }
+        def msrp(m, o, *, max_age_hours):
+            calls.append(("msrp", m, o, max_age_hours))
+            return {
+                "manufacturer": m,
+                "current_oem": o,
+                "msrp_usd": 239.99,
+                "source": "verified_dcp_msrp:search_card",
+                "last_verified_at": FRESH,
+            }
+        adapter = CanonicalPriceGatewayAdapter(
+            dealer, msrp, dealer_max_age_hours=24, msrp_max_age_hours=48
+        )
+        out = adapter.resolve("Polaris", "2206328", item_category="parts")
+        self.assertEqual(out["dealer_price_usd"], 184.07)
+        self.assertEqual(out["msrp_usd"], 239.99)
+        self.assertEqual(
+            calls,
+            [
+                ("dealer", "Polaris", "2206328", 24.0),
+                ("msrp", "Polaris", "2206328", 48.0),
+            ],
+        )
+
+    def test_gateway_failure_does_not_fallback_to_msrp_for_dealer(self):
+        def dealer(*a, **k):
+            raise TimeoutError("gateway down")
+        def msrp(m, o, *, max_age_hours):
+            return {
+                "manufacturer": m,
+                "current_oem": o,
+                "msrp_usd": 10.99,
+                "source": "verified_dcp_msrp:details",
+                "last_verified_at": FRESH,
+            }
+        adapter = CanonicalPriceGatewayAdapter(
+            dealer, msrp, dealer_max_age_hours=24, msrp_max_age_hours=24
+        )
+        out = adapter.resolve("Polaris", "2884109", item_category="accessories")
+        self.assertIsNone(out["dealer_price_usd"])
+        self.assertEqual(out["msrp_usd"], 10.99)
+        self.assertEqual(out["gateway_status"], "TECHNICAL_ERROR")
+        self.assertNotEqual(dealer_legacy_offer(out)["status"], "FOUND")
 
 
 if __name__ == "__main__":
