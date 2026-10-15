@@ -1,0 +1,22 @@
+{
+  "schema": "theme1.dcp.price_evidence.mock.v0.1",
+  "purpose": "test fixtures only; not live DCP evidence",
+  "cases": [
+    {"id":"POLARIS_PARTS_2206328","manufacturer":"Polaris","category":"Parts","requested_oem":"2206328","matched_sku":null,"search":{"price_usd":"239.99","price_kind":"MSRP","evidence":"OWNER_SCREENSHOT"},"cart":{"price_usd":"184.07","price_kind":"DEALER","evidence":"OWNER_SCREENSHOT"},"expected":{"msrp_usd":"239.99","dealer_usd":"184.07","require_exact_sku_for_live_promotion":true}},
+    {"id":"POLARIS_ACCESSORY_2884109","manufacturer":"Polaris","category":"Accessories, exact subcategory UNKNOWN","requested_oem":"2884109","matched_sku":null,"search":{"price_usd":null,"price_kind":"UNKNOWN"},"details":{"price_usd":"10.99","price_kind":"MSRP","evidence":"OWNER_SCREENSHOT"},"expected":{"msrp_usd":"10.99","dealer_usd":null,"no_dealer_quote":true}},
+    {"id":"ARCTIC_CAT_0627_048","manufacturer":"Arctic Cat","category":null,"requested_oem":"0627-048","matched_sku":null,"search":{"price_usd":"85.51","price_kind":"UNVERIFIED"},"cart":{"price_usd":"85.51","price_kind":"DEALER","evidence":"OWNER_SCREENSHOT"},"expected":{"msrp_usd":null,"dealer_usd":"85.51","do_not_infer_msrp":true}},
+    {"id":"SIMILAR_NAMES_DIFFERENT_SKU","synthetic":true,"results":[{"sku":"SKU-A","title":"Sample filter"},{"sku":"SKU-B","title":"Sample filter"}],"expected_status":"SKU_AMBIGUOUS","expected_dealer_usd":null},
+    {"id":"REPLACED_OEM_UNVERIFIED","synthetic":true,"requested_oem":"OLD-A","matched_sku":"NEW-B","replacement_chain_verified":false,"expected_status":"REPLACEMENT_UNVERIFIED","expected_dealer_usd":null},
+    {"id":"SAME_NUMBER_OTHER_MANUFACTURER","synthetic":true,"requested_oem":"123456","candidates":[{"manufacturer":"Brand A"},{"manufacturer":"Brand B"}],"expected_status":"UNKNOWN_MANUFACTURER","expected_dealer_usd":null},
+    {"id":"LONG_CART_NO_LINE_ID","synthetic":true,"cart_lines":40,"stable_line_identity":false,"expected_status":"CART_BASELINE_UNVERIFIED","expected_dealer_usd":null},
+    {"id":"PRICE_MISSING","synthetic":true,"search_price":null,"detail_price":null,"expected_status":"DEALER_PRICE_UNVERIFIED","expected_dealer_usd":null},
+    {"id":"CLOUDFLARE","synthetic":true,"provider_status":"CLOUDFLARE","expected":"STOP_NO_MUTATION"},
+    {"id":"AUTH_REQUIRED","synthetic":true,"provider_status":"AUTH_REQUIRED","expected":"STOP_NO_MUTATION"},
+    {"id":"HTTP_429","synthetic":true,"http_status":429,"expected":"STOP_LIMITED_RETRY"},
+    {"id":"HTTP_5XX","synthetic":true,"http_status":503,"expected":"STOP_LIMITED_RETRY"},
+    {"id":"SKU_MISMATCH","synthetic":true,"requested_sku":"SKU-A","cart_sku":"SKU-B","expected_status":"NO_EXACT_SKU","expected_dealer_usd":null},
+    {"id":"PRICE_KIND_AMBIGUOUS","synthetic":true,"displayed_price_usd":"42.00","label":null,"expected_status":"PRICE_KIND_UNKNOWN","expected_dealer_usd":null},
+    {"id":"NO_OWNER_GO","synthetic":true,"cart_mutation_requested":true,"owner_go":false,"expected_status":"OWNER_GO_REQUIRED","expected":"NO_MUTATION"},
+    {"id":"CONCURRENT_CART_PRODUCER","synthetic":true,"cart_lock_acquired":false,"expected_status":"CART_CONFLICT","expected":"NO_MUTATION"}
+  ]
+}

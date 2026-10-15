@@ -1,0 +1,38 @@
+name: OEMixi Theme5 Readiness Follow-up
+
+on:
+  push:
+    branches:
+      - oemixibot-theme5-readiness-followup-20261015
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted-followup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install isolated dependencies
+        run: pip install 'python-telegram-bot>=22.8,<23' 'fastapi>=0.110,<1' 'httpx>=0.27,<1'
+
+      - name: Syntax smoke
+        run: |
+          python -B -m py_compile             oemixibot_railway_runtime.py             oemixibot_poller_fence.py             test_oemixibot_railway_runtime.py             test_theme5_stage2_mock_contract.py
+
+      - name: Readiness lifecycle targeted regressions
+        run: |
+          python -B -m unittest -v             test_oemixibot_railway_runtime.RailwaySingletonHealthTests.test_ready_is_not_advertised_before_polling_start             test_oemixibot_railway_runtime.RailwaySingletonHealthTests.test_readiness_monitor_waits_for_real_ptb_running_flags             test_oemixibot_railway_runtime.RailwaySingletonHealthTests.test_ready_returns_false_again_when_polling_stops             test_oemixibot_railway_runtime.RailwaySingletonHealthTests.test_readiness_monitor_uses_bounded_wait_and_stays_continuous             test_oemixibot_railway_runtime.RailwaySingletonHealthTests.test_graceful_run_releases_singleton_and_allows_restart
+
+      - name: Dual poller fence targeted regressions
+        run: |
+          python -B -m unittest -v             test_oemixibot_railway_runtime.RailwaySingletonHealthTests.test_singleton_prevents_second_polling_process             test_oemixibot_railway_runtime.PollerFenceTests.test_default_fence_blocks_railway_until_explicit_transition             test_oemixibot_railway_runtime.PollerFenceTests.test_transition_requires_stop_evidence_and_compare_and_swap
+
+      - name: Theme 5 Stage 2 fixture safety
+        run: python -B -m unittest -v test_theme5_stage2_mock_contract.py

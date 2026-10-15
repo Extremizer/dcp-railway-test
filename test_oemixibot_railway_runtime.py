@@ -347,6 +347,85 @@ class RailwaySingletonHealthTests(unittest.TestCase):
             stop.set()
             thread.join(timeout=1)
 
+    def test_ready_returns_false_again_when_polling_stops(self):
+        import oemixibot_railway_runtime as runtime
+        import time as _time
+
+        state = RuntimeState(started=True, ready=False)
+        app = SimpleNamespace(
+            running=False,
+            updater=SimpleNamespace(running=False),
+        )
+        stop, thread = runtime.start_polling_readiness_monitor(
+            state,
+            app,
+            interval_seconds=0.005,
+        )
+        try:
+            app.running = True
+            app.updater.running = True
+            for _ in range(100):
+                if state.ready:
+                    break
+                _time.sleep(0.005)
+            self.assertTrue(state.ready)
+
+            # Telegram updater later stops while the worker process remains.
+            app.updater.running = False
+            for _ in range(100):
+                if not state.ready:
+                    break
+                _time.sleep(0.005)
+
+            self.assertFalse(
+                state.ready,
+                "BASE FAIL: /ready remains true after Telegram polling stops",
+            )
+        finally:
+            stop.set()
+            thread.join(timeout=1)
+
+    def test_readiness_monitor_uses_bounded_wait_and_stays_continuous(self):
+        import oemixibot_railway_runtime as runtime
+        import time as _time
+
+        class CountingStop:
+            def __init__(self):
+                self.calls = []
+                self.done = False
+
+            def is_set(self):
+                return self.done
+
+            def wait(self, timeout):
+                self.calls.append(timeout)
+                _time.sleep(0.001)
+                if len(self.calls) >= 3:
+                    self.done = True
+                return self.done
+
+            def set(self):
+                self.done = True
+
+        state = RuntimeState(started=True, ready=False)
+        app = SimpleNamespace(
+            running=True,
+            updater=SimpleNamespace(running=True),
+        )
+        stop = CountingStop()
+        returned_stop, thread = runtime.start_polling_readiness_monitor(
+            state,
+            app,
+            stop_event=stop,
+            interval_seconds=0.02,
+        )
+        thread.join(timeout=1)
+        self.assertIs(returned_stop, stop)
+        self.assertFalse(thread.is_alive())
+        self.assertGreaterEqual(len(stop.calls), 3)
+        self.assertTrue(all(value == 0.02 for value in stop.calls))
+        self.assertFalse(state.ready)
+
     def test_health_and_readiness(self):
         state = RuntimeState(started=True, ready=False)
         server, thread = start_health_server(state, 0)
