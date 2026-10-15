@@ -160,4 +160,31 @@ def backup_database(source: Path | str, destination: Path | str) -> MigrationAud
     )
 
 
-__all__ = ["MigrationAudit", "audit_database", "backup_database"]
+def backup_bundle(
+    *,
+    oemixibot_db: Path | str,
+    identity_db: Path | str,
+    reference_db: Path | str,
+    destination_dir: Path | str,
+) -> dict[str, MigrationAudit]:
+    """Create a verified three-database Railway volume candidate.
+
+    All sources are opened read-only. Existing destination files are refused.
+    """
+    dest = Path(destination_dir).resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    mapping = {
+        "oemixibot.db": Path(oemixibot_db),
+        "oemixibot_identity.db": Path(identity_db),
+        "oem_reference.db": Path(reference_db),
+    }
+    missing = [name for name, src in mapping.items() if not src.exists()]
+    if missing:
+        raise FileNotFoundError("missing_bundle_sources:" + ",".join(sorted(missing)))
+    return {
+        name: backup_database(src, dest / name)
+        for name, src in mapping.items()
+    }
+
+
+__all__ = ["MigrationAudit", "audit_database", "backup_database", "backup_bundle"]
