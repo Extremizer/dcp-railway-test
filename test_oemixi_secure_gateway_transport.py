@@ -5,6 +5,8 @@ from contextlib import ExitStack
 from datetime import datetime, timezone
 import io
 import json
+import logging
+import math
 from pathlib import Path
 import sqlite3
 import threading
@@ -30,6 +32,7 @@ from oemixi_secure_gateway_transport import (
     canonical_body,
     sign_request,
 )
+from test_dcp_three_adapters import actual_functions
 from test_dp_result_completion import (
     CompletionFixture,
     headers as producer_headers,
@@ -381,6 +384,161 @@ class SecureTransportE2ETests(SecureGatewayFixture):
         cart_add.assert_not_called()
         checkout.assert_not_called()
         finance.assert_not_called()
+
+
+class SecureThreeConsumerTests(SecureGatewayFixture):
+    def test_three_consumers_over_secure_transport_share_one_claim(self):
+        browser = SimpleNamespace(
+            get_dealer_price_dict=Mock(
+                side_effect=AssertionError("direct DCP lookup forbidden")
+            )
+        )
+        finder = SimpleNamespace(
+            manufacturer_alias=lambda m: bridge._request_key(m, "2670-265")[0],
+            normalize_oem=lambda o: bridge._request_key("Arctic Cat", o)[1],
+        )
+
+        probnik = actual_functions(
+            "probnik_app.py",
+            {"_identity_and_price", "_customer_price_rub", "_db_tables"},
+            {
+                "ORDERS_DB": self.db,
+                "DP_MAX_AGE_HOURS": 24,
+                "finder": finder,
+                "sqlite3": sqlite3,
+                "math": math,
+                "normalize_oem": finder.normalize_oem,
+                "PRICE_COEFFICIENT": 1,
+                "USD_RUB_RATE": 100,
+                "dp_live_bridge": SimpleNamespace(
+                    request_live_dp=lambda db, m, o, **kw: self.transport(m, o)
+                ),
+            },
+        )
+        procenka = actual_functions(
+            "extremizer_bot.py",
+            {
+                "enrich_found_result_with_dealer_price",
+                "get_dealer_price_cache",
+                "upsert_dealer_price_cache",
+                "_dealer_price_cache_key",
+            },
+            {
+                "ORDERS_DB_FILE": self.db,
+                "DP_CACHE_MAX_AGE_HOURS": 24,
+                "DCP_CACHE_ONLY": True,
+                "datetime": datetime,
+                "asyncio": asyncio,
+                "sqlite3": sqlite3,
+                "finder": finder,
+                "init_orders_db": lambda: None,
+                "log": logging.getLogger("secure-three-consumer"),
+                "dp_live_bridge": SimpleNamespace(
+                    request_live_dp=lambda db, m, o, **kw: self.transport(m, o)
+                ),
+            },
+        )
+        procenka["upsert_dealer_price_cache"] = Mock(
+            side_effect=AssertionError("consumer cache write forbidden")
+        )
+
+        dealer = actual_functions(
+            "oemixibot_catalog.py",
+            {"resolve_identity", "resolve_offer"},
+            {
+                "finder": finder,
+                "oem_reference_service": SimpleNamespace(lookup_oem=lambda o: {}),
+                "oem_identity_service": SimpleNamespace(
+                    lookup=lambda o: {
+                        "manufacturer": "Arctic Cat",
+                        "item_type": "parts",
+                    }
+                ),
+                "oemixibot_dcp_price": browser,
+                "confirm_identity": Mock(),
+            },
+        )
+        runtime = actual_functions(
+            "oemixibot_app.py",
+            {"bind_shared_price_gateway", "_resolve_runtime_offer", "oem_message"},
+            {
+                "SharedDealerPriceAdapter": gateway.SharedDealerPriceAdapter,
+                "_SHARED_PRICE_ADAPTER_KEY": "oemixi_shared_dealer_price_adapter",
+                "ContextTypes": SimpleNamespace(DEFAULT_TYPE=object),
+                "Update": object,
+                "asyncio": asyncio,
+                "resolve_offer": dealer["resolve_offer"],
+                "_dealer": lambda update: {
+                    "id": "mock-dealer",
+                    "price_coefficient": 1,
+                },
+                "normalize_oem": finder.normalize_oem,
+                "logging": logging,
+                "STORE": SimpleNamespace(
+                    cart_view=lambda d: {"items": [], "total_usd": 0}
+                ),
+                "price_card": lambda m, o, n, p, *a: "dealer USD " + str(p),
+                "InlineKeyboardButton": lambda *a, **kw: None,
+                "InlineKeyboardMarkup": lambda rows: rows,
+            },
+        )
+        application = SimpleNamespace(bot_data={})
+        runtime["bind_shared_price_gateway"](
+            application,
+            self.transport,
+            dealer_max_age_hours=24,
+        )
+        dealer_reply = AsyncMock()
+        dealer_context = SimpleNamespace(application=application, user_data={})
+        update = SimpleNamespace(
+            effective_user=None,
+            effective_message=SimpleNamespace(
+                text="2670-265",
+                reply_text=dealer_reply,
+            ),
+        )
+
+        async def dealer_call():
+            await runtime["oem_message"](update, dealer_context)
+            return dealer_context.user_data.get("offer:2670-265")
+
+        thread, errors = self.producer_once()
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = [
+                pool.submit(probnik["_identity_and_price"], "2670-265"),
+                pool.submit(
+                    lambda: asyncio.run(
+                        procenka["enrich_found_result_with_dealer_price"](
+                            {
+                                "status": "FOUND",
+                                "catalog": "Parts",
+                                "manufacturer": "Arctic Cat",
+                                "oem": "2670-265",
+                                "msrp_usd": 99.99,
+                            }
+                        )
+                    )
+                ),
+                pool.submit(lambda: asyncio.run(dealer_call())),
+            ]
+            results = [future.result(timeout=8) for future in futures]
+
+        thread.join(timeout=6)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results[0]["dp_usd"], 31.25)
+        self.assertEqual(results[1]["_dealer_price_usd"], 31.25)
+        self.assertEqual(results[2]["dl_usd"], 31.25)
+        self.assertEqual(results[2]["msrp_usd"], 99.99)
+        self.assertIn("USD 31.25", dealer_reply.await_args.args[0])
+        browser.get_dealer_price_dict.assert_not_called()
+
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(
+                conn.execute("SELECT COUNT(*) FROM dp_live_requests").fetchone()[0],
+                1,
+            )
 
 
 class SecureTransportSecurityTests(SecureGatewayFixture):
