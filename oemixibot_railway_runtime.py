@@ -289,6 +289,35 @@ def _health_handler(state: RuntimeState):
     return Handler
 
 
+def start_polling_readiness_monitor(
+    state: RuntimeState,
+    application,
+    *,
+    stop_event: threading.Event | None = None,
+    interval_seconds: float = 0.05,
+):
+    """Set readiness only after PTB application and updater are both running."""
+    stop = stop_event or threading.Event()
+
+    def monitor():
+        while not stop.is_set():
+            updater = getattr(application, "updater", None)
+            if bool(getattr(application, "running", False)) and bool(
+                getattr(updater, "running", False)
+            ):
+                state.ready = True
+                return
+            stop.wait(interval_seconds)
+
+    thread = threading.Thread(
+        target=monitor,
+        name="oemixibot-polling-readiness",
+        daemon=True,
+    )
+    thread.start()
+    return stop, thread
+
+
 def start_health_server(state: RuntimeState, port: int):
     server = ThreadingHTTPServer(("0.0.0.0", int(port)), _health_handler(state))
     thread = threading.Thread(
@@ -311,6 +340,8 @@ def run(env: dict[str, str] | None = None) -> None:
     lock = SingletonFileLock(str(config["db_path"]) + ".polling.lock")
     health_server = None
     application = None
+    readiness_stop = None
+    readiness_thread = None
 
     try:
         lock.acquire()
@@ -318,7 +349,10 @@ def run(env: dict[str, str] | None = None) -> None:
         apply_runtime_environment(config)
         application = build_railway_application(config)
         health_server, _thread = start_health_server(state, config["port"])
-        state.ready = True
+        readiness_stop, readiness_thread = start_polling_readiness_monitor(
+            state,
+            application,
+        )
 
         # PTB owns SIGINT/SIGTERM handling in the main thread and performs a
         # graceful updater/application shutdown. Railway restart policy can
@@ -333,6 +367,10 @@ def run(env: dict[str, str] | None = None) -> None:
     finally:
         state.shutting_down = True
         state.ready = False
+        if readiness_stop is not None:
+            readiness_stop.set()
+        if readiness_thread is not None:
+            readiness_thread.join(timeout=1)
         if health_server is not None:
             health_server.shutdown()
             health_server.server_close()
