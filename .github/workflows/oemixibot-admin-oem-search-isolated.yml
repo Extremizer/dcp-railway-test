@@ -1,0 +1,45 @@
+name: OEMixiBOT Admin OEM Search Isolated
+
+on:
+  push:
+    branches:
+      - oemixibot-admin-oem-search-20261015
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  admin-oem-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install isolated runtime dependencies
+        run: pip install 'python-telegram-bot>=22.8,<23' 'websocket-client>=1.9,<2' 'playwright>=1.50'
+
+      - name: Syntax and import smoke
+        run: |
+          python -B - <<'PY'
+          import ast
+          from pathlib import Path
+          for path in (
+              Path('oemixibot_app.py'),
+              Path('test_oemixibot_admin_oem_search.py'),
+          ):
+              ast.parse(path.read_text(encoding='utf-8-sig'), filename=str(path))
+          import oemixibot_app
+          PY
+
+      - name: Admin OEM search RBAC and side-effect regression
+        run: python -B -m unittest -v test_oemixibot_admin_oem_search.py
+
+      - name: Existing shared gateway runtime regression
+        run: python -B -m unittest -v test_oemixi_shared_price_runtime.py
+
+      - name: Existing OEMixi dealer and finance regressions
+        run: python -B -m unittest -v test_dealer_prepaid_finance.py test_oemixibot_prepaid_runtime.py
