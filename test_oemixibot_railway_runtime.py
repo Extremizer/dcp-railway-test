@@ -385,6 +385,47 @@ class RailwaySingletonHealthTests(unittest.TestCase):
             stop.set()
             thread.join(timeout=1)
 
+    def test_readiness_monitor_uses_bounded_wait_and_stays_continuous(self):
+        import oemixibot_railway_runtime as runtime
+        import time as _time
+
+        class CountingStop:
+            def __init__(self):
+                self.calls = []
+                self.done = False
+
+            def is_set(self):
+                return self.done
+
+            def wait(self, timeout):
+                self.calls.append(timeout)
+                _time.sleep(0.001)
+                if len(self.calls) >= 3:
+                    self.done = True
+                return self.done
+
+            def set(self):
+                self.done = True
+
+        state = RuntimeState(started=True, ready=False)
+        app = SimpleNamespace(
+            running=True,
+            updater=SimpleNamespace(running=True),
+        )
+        stop = CountingStop()
+        returned_stop, thread = runtime.start_polling_readiness_monitor(
+            state,
+            app,
+            stop_event=stop,
+            interval_seconds=0.02,
+        )
+        thread.join(timeout=1)
+        self.assertIs(returned_stop, stop)
+        self.assertFalse(thread.is_alive())
+        self.assertGreaterEqual(len(stop.calls), 3)
+        self.assertTrue(all(value == 0.02 for value in stop.calls))
+        self.assertFalse(state.ready)
+
     def test_health_and_readiness(self):
         state = RuntimeState(started=True, ready=False)
         server, thread = start_health_server(state, 0)
