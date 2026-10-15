@@ -254,10 +254,13 @@ class ApprovedFreshnessBoundaryTests(unittest.TestCase):
 class RailwayPrivateGatewayTests(unittest.TestCase):
     def test_private_http_hmac_gateway_is_allowed_and_server_authoritative(self):
         now = datetime.now(timezone.utc).isoformat()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        replay_db = Path(tmp.name) / "gateway.db"
         api = FastAPI()
         api.include_router(
             build_router(
-                db_file=":memory:",
+                db_file=replay_db,
                 root_secret=SECRET,
                 shared_gateway=lambda manufacturer, oem, **kw: {
                     "status": "FOUND",
