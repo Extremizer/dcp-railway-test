@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from oemixibot_finance import FinanceEngine
 from oemixibot_store import OemixiStore
-from oemixibot_railway_migration import audit_database, backup_database
+from oemixibot_railway_migration import audit_database, backup_database, backup_bundle
 from oemixibot_railway_runtime import (
     DEALER_MAX_AGE_HOURS,
     MSRP_MAX_AGE_HOURS,
@@ -28,6 +28,7 @@ from oemixibot_railway_runtime import (
     build_railway_application,
     start_health_server,
     validate_runtime_config,
+    verify_persistent_store,
 )
 from oemixi_secure_gateway_transport import (
     HTTPSPriceTransport,
@@ -131,6 +132,25 @@ class RailwayRuntimeConfigTests(unittest.TestCase):
             env["OEMIXIBOT_SHARED_IDENTITY_ONLY"] = "0"
             with self.assertRaisesRegex(ValueError, "SHARED_IDENTITY_ONLY"):
                 validate_runtime_config(env)
+
+    def test_incomplete_volume_is_rejected_before_polling(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cfg = validate_runtime_config(config_env(root))
+            # Only the main DB exists; identity/reference were not migrated.
+            with sqlite3.connect(cfg["db_path"]) as conn:
+                conn.execute("CREATE TABLE dealers(id TEXT PRIMARY KEY)")
+                conn.commit()
+            with self.assertRaisesRegex(RuntimeError, "required_persistent_db_missing"):
+                verify_persistent_store(cfg)
+
+    def test_runtime_entrypoint_has_no_local_browser_or_agent_dependency(self):
+        source = Path("oemixibot_railway_runtime.py").read_text(encoding="utf-8")
+        lowered = source.lower()
+        self.assertNotIn("playwright", lowered)
+        self.assertNotIn("dp_sync_agent", lowered)
+        self.assertNotIn("oemixibot_dcp_price", lowered)
+        self.assertNotIn("chromium", lowered)
 
     def test_explicit_application_composition_binds_before_polling(self):
         with tempfile.TemporaryDirectory() as td:
@@ -411,6 +431,59 @@ class MigrationAndRestartTests(unittest.TestCase):
             self.assertEqual(FinanceEngine(str(src)).balance("D1"), 260.00)
             src_audit = audit_database(src)
             self.assertEqual(src_audit.finance_ledger_sha256, audit.finance_ledger_sha256)
+
+    def test_three_database_bundle_rehearsal(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            main = root / "source-oemixibot.db"
+            identity = root / "source-identity.db"
+            reference = root / "source-reference.db"
+            dest = root / "railway-volume"
+
+            self._seed(main)
+            with sqlite3.connect(identity) as conn:
+                conn.execute(
+                    "CREATE TABLE oem_identity(oem TEXT PRIMARY KEY, manufacturer TEXT)"
+                )
+                conn.execute("INSERT INTO oem_identity VALUES('2206328','Polaris')")
+                conn.commit()
+            with sqlite3.connect(reference) as conn:
+                conn.execute(
+                    "CREATE TABLE oem_reference(oem TEXT PRIMARY KEY, item_type TEXT)"
+                )
+                conn.execute("INSERT INTO oem_reference VALUES('2206328','part')")
+                conn.commit()
+
+            result = backup_bundle(
+                oemixibot_db=main,
+                identity_db=identity,
+                reference_db=reference,
+                destination_dir=dest,
+            )
+            self.assertEqual(
+                set(result),
+                {"oemixibot.db", "oemixibot_identity.db", "oem_reference.db"},
+            )
+            for name in result:
+                self.assertTrue((dest / name).exists())
+            self.assertEqual(
+                result["oemixibot_identity.db"].row_counts["oem_identity"],
+                1,
+            )
+            self.assertEqual(
+                result["oem_reference.db"].row_counts["oem_reference"],
+                1,
+            )
+
+            cfg = validate_runtime_config(
+                {
+                    **config_env(dest),
+                    "OEMIXIBOT_DB_PATH": str(dest / "oemixibot.db"),
+                    "OEMIXIBOT_IDENTITY_DB": str(dest / "oemixibot_identity.db"),
+                    "EXTREMIZER_OEM_REFERENCE_DB_FILE": str(dest / "oem_reference.db"),
+                }
+            )
+            verify_persistent_store(cfg)
 
     def test_identity_db_can_be_migrated_with_same_verified_copy_mechanism(self):
         with tempfile.TemporaryDirectory() as td:
