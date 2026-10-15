@@ -1,0 +1,53 @@
+name: OEMixi Stage C1 Targeted Corrections
+
+on:
+  push:
+    branches:
+      - oemixi-stage-c1-targeted-corrections-20261015
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated dependencies
+        run: pip install 'python-telegram-bot>=22.8,<23' 'fastapi>=0.110,<1' 'httpx>=0.27,<1' 'python-multipart>=0.0.9' 'websocket-client>=1.9,<2' 'playwright>=1.50'
+      - name: Targeted BASE FAIL / FIX PASS
+        run: python -B -m unittest -v test_oemixi_stage_c1_targeted_corrections.py
+
+      - name: Secure transport runtime E2E and security matrix
+        run: python -B -m unittest -v test_oemixi_secure_gateway_transport.py
+
+      - name: Canonical price contract regressions
+        run: |
+          python -B -m unittest -v             test_unified_price_contract_v1.py             test_unified_price_adapters_v1.py
+
+      - name: Admin OEM search and OEMixi shared gateway regressions
+        run: |
+          python -B -m unittest -v test_oemixibot_admin_oem_search.py
+          python -B -m unittest -v test_oemixi_shared_price_runtime.py
+
+      - name: Existing three consumers and gateway safety
+        run: python -B -m unittest -v test_dcp_three_adapters.py
+
+      - name: Client pricing card regression
+        run: python -B -m unittest -v test_client_offer_card.py
+
+      - name: Dealer and FinanceEngine regressions
+        run: python -B -m unittest -v test_dealer_prepaid_finance.py test_oemixibot_prepaid_runtime.py
+
+      - name: Client checkout regressions
+        run: |
+          python -B _atomic_client_finance_regression.py
+          python -B _save_order_shared_tx_regression.py
+          python -B _client_checkout_orchestrator_regression.py
+          python -B _client_checkout_callback_adapter_regression.py
+          python -B _prod_finance_switch_regression.py

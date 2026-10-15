@@ -1042,11 +1042,25 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(cart_message(cart) if cart["items"] else "🛒 Корзина пуста.",reply_markup=_cart_keyboard(cart))
 
 
-def build_application(token=None, *, shared_price_gateway=_LEGACY_PRICE_PATH, dealer_max_age_hours=None):
+def build_application(
+    token=None,
+    *,
+    shared_price_gateway=_LEGACY_PRICE_PATH,
+    dealer_max_age_hours=None,
+    shared_price_adapter_cls=SharedDealerPriceAdapter,
+):
     if shared_price_gateway is _LEGACY_PRICE_PATH and dealer_max_age_hours is not None:
         raise ValueError('dealer_freshness_without_explicit_gateway')
-    adapter = (None if shared_price_gateway is _LEGACY_PRICE_PATH else
-               SharedDealerPriceAdapter(shared_price_gateway, max_age_hours=dealer_max_age_hours))
+    if shared_price_gateway is not _LEGACY_PRICE_PATH and not callable(shared_price_adapter_cls):
+        raise ValueError('shared_price_adapter_cls_required')
+    adapter = (
+        None
+        if shared_price_gateway is _LEGACY_PRICE_PATH
+        else shared_price_adapter_cls(
+            shared_price_gateway,
+            max_age_hours=dealer_max_age_hours,
+        )
+    )
     STORE.init(); STORE.ensure_cart_schema()
     token=token or os.getenv("OEMIXIBOT_TOKEN","").strip()
     if not token: raise RuntimeError("OEMIXIBOT_TOKEN is not configured")
