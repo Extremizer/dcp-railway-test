@@ -22,6 +22,8 @@ import sqlite3
 import threading
 from typing import Any
 
+from oemixibot_poller_fence import PollerFenceClient
+
 DEALER_MAX_AGE_HOURS = 24.0
 MSRP_MAX_AGE_HOURS = 720.0
 
@@ -227,6 +229,16 @@ def apply_runtime_environment(config: dict[str, Any]) -> None:
 
 
 
+def require_railway_cutover_fence(config: dict[str, Any]) -> dict[str, Any]:
+    client = PollerFenceClient(
+        config["gateway_url"],
+        config["gateway_secret"],
+        timeout_seconds=5,
+        allow_railway_private_http=True,
+    )
+    return client.require_railway_owner()
+
+
 def build_railway_application(
     config: dict[str, Any],
     *,
@@ -329,7 +341,11 @@ def start_health_server(state: RuntimeState, port: int):
     return server, thread
 
 
-def run(env: dict[str, str] | None = None) -> None:
+def run(
+    env: dict[str, str] | None = None,
+    *,
+    cutover_fence_check=None,
+) -> None:
     config = validate_runtime_config(env)
     state = RuntimeState(
         started=True,
@@ -347,6 +363,8 @@ def run(env: dict[str, str] | None = None) -> None:
         lock.acquire()
         verify_persistent_store(config)
         apply_runtime_environment(config)
+        fence_check = cutover_fence_check or require_railway_cutover_fence
+        fence_check(config)
         application = build_railway_application(config)
         health_server, _thread = start_health_server(state, config["port"])
         readiness_stop, readiness_thread = start_polling_readiness_monitor(
