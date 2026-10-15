@@ -106,6 +106,23 @@ def validate_runtime_config(env: dict[str, str] | None = None) -> dict[str, Any]
     if not db_path.is_absolute():
         raise ValueError("OEMIXIBOT_DB_PATH_must_be_absolute")
 
+    identity_db = Path(str(env.get("OEMIXIBOT_IDENTITY_DB") or "").strip())
+    if not str(identity_db):
+        raise ValueError("OEMIXIBOT_IDENTITY_DB_required")
+    if not identity_db.is_absolute():
+        raise ValueError("OEMIXIBOT_IDENTITY_DB_must_be_absolute")
+
+    reference_db = Path(
+        str(env.get("EXTREMIZER_OEM_REFERENCE_DB_FILE") or "").strip()
+    )
+    if not str(reference_db):
+        raise ValueError("EXTREMIZER_OEM_REFERENCE_DB_FILE_required")
+    if not reference_db.is_absolute():
+        raise ValueError("EXTREMIZER_OEM_REFERENCE_DB_FILE_must_be_absolute")
+
+    if str(env.get("OEMIXIBOT_SHARED_IDENTITY_ONLY") or "").strip() != "1":
+        raise ValueError("OEMIXIBOT_SHARED_IDENTITY_ONLY_must_equal_1")
+
     gateway_url = str(env.get("OEMIXIBOT_GATEWAY_BASE_URL") or "").strip()
     from urllib.parse import urlparse
     parsed_gateway = urlparse(gateway_url)
@@ -140,6 +157,8 @@ def validate_runtime_config(env: dict[str, str] | None = None) -> dict[str, Any]
     return {
         "token": token,
         "db_path": db_path,
+        "identity_db": identity_db,
+        "reference_db": reference_db,
         "gateway_url": gateway_url,
         "gateway_secret": gateway_secret,
         "dealer_max_age_hours": dealer_hours,
