@@ -38,6 +38,9 @@ jobs:
       - name: Passive document and HTTP failure regression (mock browser only)
         run: python -B -m unittest -v test_dcp_passive_guard.py
 
+      - name: Windows-OFF autonomy feasibility (mock only; readiness gaps documented)
+        run: python -B -m unittest -v test_dcp_autonomy_feasibility.py
+
       - name: Stage 4 admission, quiescence and paired release rehearsal
         run: python -B -m unittest -v test_dcp_admission.py test_dcp_release_rehearsal.py
 
