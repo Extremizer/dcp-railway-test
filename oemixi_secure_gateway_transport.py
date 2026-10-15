@@ -30,6 +30,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 import dp_live_bridge
+from dcp_price_gateway import SharedDealerPriceAdapter
 from unified_price_contract_v1 import from_gateway_and_msrp, dealer_legacy_offer
 
 
@@ -228,15 +229,41 @@ def _sanitize_gateway_result(result: Any) -> dict[str, Any]:
     if status not in ALLOWED_GATEWAY_STATUSES:
         status = "TECHNICAL_ERROR"
     out: dict[str, Any] = {"status": status}
+
     for key in (
-        "manufacturer", "query_oem", "current_oem", "name", "source",
-        "last_verified_at", "currency", "error_code", "request_id",
-        "cache_committed_at", "msrp_source", "msrp_verified_at",
+        "manufacturer", "query_oem", "requested_oem", "current_oem",
+        "item_category", "name", "source", "last_verified_at", "currency",
+        "error_code", "request_id", "cache_committed_at",
         "price_contract_version",
     ):
         value = result.get(key)
         if value is not None:
             out[key] = value
+
+    # Dealer evidence remains independent. A verified cache read is not proof
+    # that this request atomically committed a new live result.
+    if "verified_cache_hit" in result:
+        out["verified_cache_hit"] = result.get("verified_cache_hit") is True
+    if "server_cache_committed" in result:
+        out["server_cache_committed"] = (
+            result.get("server_cache_committed") is True
+        )
+
+    # Independently verified MSRP survives every dealer/gateway status.
+    # It remains informational metadata and never changes Dealer status.
+    msrp = result.get("msrp_usd")
+    if (
+        type(msrp) in (int, float)
+        and not isinstance(msrp, bool)
+        and math.isfinite(float(msrp))
+        and float(msrp) > 0
+        and result.get("msrp_source")
+        and result.get("msrp_verified_at")
+    ):
+        out["msrp_usd"] = float(msrp)
+        out["msrp_source"] = result.get("msrp_source")
+        out["msrp_verified_at"] = result.get("msrp_verified_at")
+
     if status == "FOUND":
         price = result.get("dealer_price_usd")
         if (
@@ -245,24 +272,77 @@ def _sanitize_gateway_result(result: Any) -> dict[str, Any]:
             or not math.isfinite(float(price))
             or float(price) <= 0
         ):
+            # Preserve independently verified MSRP even when the Dealer FOUND
+            # payload is invalid.
+            preserved = {
+                k: out[k]
+                for k in (
+                    "manufacturer", "requested_oem", "current_oem",
+                    "item_category", "msrp_usd", "msrp_source",
+                    "msrp_verified_at", "price_contract_version",
+                    "verified_cache_hit", "server_cache_committed",
+                )
+                if k in out
+            }
             return {
                 "status": "NO_PRICE",
                 "error_code": "invalid_gateway_dealer_price",
+                **preserved,
             }
         out["dealer_price_usd"] = float(price)
-        msrp = result.get("msrp_usd")
-        if (
-            type(msrp) in (int, float)
-            and not isinstance(msrp, bool)
-            and math.isfinite(float(msrp))
-            and float(msrp) > 0
-        ):
-            out["msrp_usd"] = float(msrp)
-        out["server_cache_committed"] = bool(
-            result.get("server_cache_committed")
-            or result.get("verified_cache_hit")
-        )
     return out
+
+
+class OEMixiCanonicalSharedPriceAdapter(SharedDealerPriceAdapter):
+    """OEMixi-only compatibility boundary for Canonical transport metadata.
+
+    Dealer validation is delegated to the accepted SharedDealerPriceAdapter.
+    On non-FOUND dealer results only independently verified MSRP metadata is
+    retained for informational/admin use.
+    """
+
+    def get_dealer_price_dict(self, manufacturer, oem):
+        try:
+            raw = self.gateway(
+                manufacturer,
+                oem,
+                max_age_hours=self.max_age_hours,
+            )
+        except Exception:
+            return {
+                "status": "TECHNICAL_ERROR",
+                "error_code": "shared_gateway_unavailable",
+            }
+        if not isinstance(raw, dict):
+            return {
+                "status": "TECHNICAL_ERROR",
+                "error_code": "invalid_gateway_response",
+            }
+
+        # Reuse the accepted common Dealer validator without a second network
+        # request by delegating through a one-shot in-memory gateway.
+        delegate = SharedDealerPriceAdapter(
+            lambda _m, _o, *, max_age_hours: raw,
+            max_age_hours=self.max_age_hours,
+        )
+        dealer = delegate.get_dealer_price_dict(manufacturer, oem)
+
+        for key in (
+            "msrp_usd",
+            "msrp_source",
+            "msrp_verified_at",
+            "price_contract_version",
+            "item_category",
+        ):
+            if raw.get(key) is not None:
+                dealer[key] = raw.get(key)
+
+        # Evidence remains separate; never synthesize commit from cache hit.
+        for key in ("verified_cache_hit", "server_cache_committed"):
+            if key in raw:
+                dealer[key] = raw.get(key) is True
+
+        return dealer
 
 
 def build_router(
@@ -411,6 +491,12 @@ def build_router(
                 msrp_max_age_hours=msrp_age,
             )
             result = dealer_legacy_offer(contract)
+            if contract.get("msrp_status") == "VERIFIED":
+                result["msrp_usd"] = contract.get("msrp_usd")
+                result["msrp_source"] = contract.get("msrp_source")
+                result["msrp_verified_at"] = contract.get("msrp_verified_at")
+            if contract.get("item_category"):
+                result["item_category"] = contract.get("item_category")
 
             # Preserve only server-generated compatibility evidence required by
             # existing consumers. Windows never supplies these fields.
@@ -552,5 +638,6 @@ __all__ = [
     "sign_request",
     "read_verified_msrp_cache",
     "build_router",
+    "OEMixiCanonicalSharedPriceAdapter",
     "HTTPSPriceTransport",
 ]
