@@ -159,6 +159,55 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
         self.assertIn("MSRP: $10.99", text)
         self.assertNotIn("Дилерская цена: $10.99", text)
 
+    def test_gateway_error_keeps_independent_msrp_without_masking_error(self):
+        transport = self._transport(
+            {
+                "status": "TECHNICAL_ERROR",
+                "manufacturer": "Polaris",
+                "query_oem": "2884109",
+                "current_oem": "2884109",
+                "error_code": "shared_gateway_unavailable",
+            },
+            {
+                "gateway_status": "FOUND",
+                "manufacturer": "Polaris",
+                "current_oem": "2884109",
+                "item_category": "accessories",
+                "msrp_usd": 10.99,
+                "source": "verified_public_msrp:isolated_fixture",
+                "last_verified_at": "2026-10-15T10:00:00+00:00",
+            },
+        )
+        result = transport("Polaris", "2884109")
+        self.assertEqual(result["status"], "TECHNICAL_ERROR")
+        self.assertEqual(result["msrp_usd"], 10.99)
+        self.assertEqual(
+            result["msrp_source"],
+            "verified_public_msrp:isolated_fixture",
+        )
+        self.assertEqual(
+            result["msrp_verified_at"],
+            "2026-10-15T10:00:00+00:00",
+        )
+        self.assertNotIn("dealer_price_usd", result)
+
+    def test_found_without_atomic_completion_proof_stays_unproven(self):
+        result = _sanitize_gateway_result(
+            {
+                "status": "FOUND",
+                "manufacturer": "Arctic Cat",
+                "query_oem": "2670-265",
+                "current_oem": "2670-265",
+                "dealer_price_usd": 31.25,
+                "source": "verified_local_dcp:live",
+                "last_verified_at": "2026-10-15T10:00:00+00:00",
+                "currency": "USD",
+            }
+        )
+        self.assertEqual(result["status"], "FOUND")
+        self.assertNotIn("server_cache_committed", result)
+        self.assertNotIn("verified_cache_hit", result)
+
     def test_base_fail_cache_hit_is_not_atomic_live_commit(self):
         """BASE FAIL on PR #41: verified_cache_hit is promoted to commit=True."""
         cache = _sanitize_gateway_result(
