@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -19,6 +20,7 @@ from fastapi.testclient import TestClient
 
 from oemixibot_finance import FinanceEngine
 from oemixibot_store import OemixiStore
+from oemixibot_windows_preflight import inspect as inspect_windows_db
 from oemixibot_railway_migration import audit_database, backup_database, backup_bundle
 from oemixibot_poller_fence import (
     OWNER_RAILWAY,
@@ -723,6 +725,46 @@ class MigrationAndRestartTests(unittest.TestCase):
                     ).fetchone()[0],
                     "Arctic Cat",
                 )
+
+
+class WindowsPreflightSafetyTests(unittest.TestCase):
+    def test_read_only_preflight_does_not_change_source_bytes(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "live.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    "CREATE TABLE dealers(id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+                )
+                conn.execute(
+                    """CREATE TABLE finance_ledger(
+                           id INTEGER PRIMARY KEY,
+                           buyer_type TEXT,
+                           buyer_id TEXT,
+                           wallet_currency TEXT,
+                           amount TEXT
+                       )"""
+                )
+                conn.execute("INSERT INTO dealers VALUES('D1','Dealer')")
+                conn.execute(
+                    "INSERT INTO finance_ledger VALUES(1,'dealer','D1','USD','125.50')"
+                )
+                conn.commit()
+
+            before = db.read_bytes()
+            before_hash = hashlib.sha256(before).hexdigest()
+            before_stat = db.stat()
+
+            result = inspect_windows_db(db)
+
+            after = db.read_bytes()
+            after_hash = hashlib.sha256(after).hexdigest()
+            after_stat = db.stat()
+
+            self.assertEqual(result["preflight_status"], "READ_ONLY_OK")
+            self.assertEqual(result["dealer_balances_usd"], {"D1": "125.50"})
+            self.assertEqual(before_hash, after_hash)
+            self.assertEqual(before, after)
+            self.assertEqual(before_stat.st_size, after_stat.st_size)
 
 
 class SharedIdentityIsolationTests(unittest.TestCase):
