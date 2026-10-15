@@ -347,6 +347,44 @@ class RailwaySingletonHealthTests(unittest.TestCase):
             stop.set()
             thread.join(timeout=1)
 
+    def test_ready_returns_false_again_when_polling_stops(self):
+        import oemixibot_railway_runtime as runtime
+        import time as _time
+
+        state = RuntimeState(started=True, ready=False)
+        app = SimpleNamespace(
+            running=False,
+            updater=SimpleNamespace(running=False),
+        )
+        stop, thread = runtime.start_polling_readiness_monitor(
+            state,
+            app,
+            interval_seconds=0.005,
+        )
+        try:
+            app.running = True
+            app.updater.running = True
+            for _ in range(100):
+                if state.ready:
+                    break
+                _time.sleep(0.005)
+            self.assertTrue(state.ready)
+
+            # Telegram updater later stops while the worker process remains.
+            app.updater.running = False
+            for _ in range(100):
+                if not state.ready:
+                    break
+                _time.sleep(0.005)
+
+            self.assertFalse(
+                state.ready,
+                "BASE FAIL: /ready remains true after Telegram polling stops",
+            )
+        finally:
+            stop.set()
+            thread.join(timeout=1)
+
     def test_health_and_readiness(self):
         state = RuntimeState(started=True, ready=False)
         server, thread = start_health_server(state, 0)
