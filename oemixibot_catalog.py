@@ -5,6 +5,8 @@ import oem_reference_service,oemixibot_dcp_price,oem_identity_service
 import dealercostparts_manufacturer_finder_v6_6 as finder
 ORDERS_DB=Path(os.getenv("EXTREMIZER_ORDERS_DB_FILE","").strip() or Path(__file__).with_name("extremizer_orders.db"))
 def _production_candidates(oem):
+    if os.getenv("OEMIXIBOT_SHARED_IDENTITY_ONLY", "").strip() == "1":
+        return []
     values=set()
     if ORDERS_DB.exists():
         with sqlite3.connect(ORDERS_DB) as c:
