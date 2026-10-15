@@ -113,7 +113,7 @@ class RuntimeGatewayTests(unittest.TestCase):
         source=source.replace('    if adapter is not None:\n        app.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter\n','')
         data=source.encode()
         blob=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
-        self.assertEqual(blob,'d8a6180ecb1759d6d225b4c4564e7c2750031cbe')  # PR38 + approved admin OEM-search scope
+        self.assertEqual(blob,'19e9dd9025e2730dd2d016852221e465c2c9f21b')  # PR39 + approved Stage B MSRP-only admin display
 
 
 if __name__=='__main__': unittest.main()

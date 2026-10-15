@@ -156,7 +156,7 @@ class AdminOemSearchTests(unittest.TestCase):
         )
         self.assertIn("Дилерская цена недоступна", msrp_only)
         self.assertIn("MSRP не используется вместо неё", msrp_only)
-        self.assertNotIn("$239.99", msrp_only)
+        self.assertIn("MSRP: $239.99", msrp_only)
 
     def test_identity_retry_reuses_same_runtime_boundary(self):
         context = self._context(admin_search=True)
