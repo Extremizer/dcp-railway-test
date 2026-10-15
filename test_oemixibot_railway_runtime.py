@@ -201,6 +201,59 @@ class RailwaySingletonHealthTests(unittest.TestCase):
             two.acquire()
             two.release()
 
+    def test_ready_is_not_advertised_before_polling_start(self):
+        import oemixibot_railway_runtime as runtime
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            env = config_env(root)
+            for path in (
+                root / "oemixibot.db",
+                root / "oemixibot_identity.db",
+                root / "oem_reference.db",
+            ):
+                with sqlite3.connect(path) as conn:
+                    conn.execute("CREATE TABLE seed(id INTEGER PRIMARY KEY)")
+                    conn.commit()
+
+            observed = {}
+
+            class FakeApplication:
+                running = False
+                updater = SimpleNamespace(running=False)
+
+                def run_polling(self, **kwargs):
+                    observed["ready_at_polling_entry"] = observed["state"].ready
+                    # Simulate a polling lifecycle only after the assertion point.
+                    self.updater.running = True
+                    self.running = True
+
+            class FakeHealthServer:
+                def shutdown(self):
+                    pass
+                def server_close(self):
+                    pass
+
+            def fake_health_server(state, port):
+                observed["state"] = state
+                return FakeHealthServer(), SimpleNamespace()
+
+            with patch.object(
+                runtime,
+                "build_railway_application",
+                return_value=FakeApplication(),
+            ), patch.object(
+                runtime,
+                "start_health_server",
+                side_effect=fake_health_server,
+            ):
+                runtime.run(env)
+
+            self.assertFalse(
+                observed["ready_at_polling_entry"],
+                "BASE FAIL: /ready is advertised before Telegram polling starts",
+            )
+
     def test_graceful_run_releases_singleton_and_allows_restart(self):
         import oemixibot_railway_runtime as runtime
 
