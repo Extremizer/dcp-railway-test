@@ -100,23 +100,26 @@ def validate_runtime_config(env: dict[str, str] | None = None) -> dict[str, Any]
     if not token:
         raise ValueError("OEMIXIBOT_TOKEN_required")
 
-    db_path = Path(str(env.get("OEMIXIBOT_DB_PATH") or "").strip())
-    if not str(db_path):
+    raw_db_path = str(env.get("OEMIXIBOT_DB_PATH") or "").strip()
+    if not raw_db_path:
         raise ValueError("OEMIXIBOT_DB_PATH_required")
+    db_path = Path(raw_db_path)
     if not db_path.is_absolute():
         raise ValueError("OEMIXIBOT_DB_PATH_must_be_absolute")
 
-    identity_db = Path(str(env.get("OEMIXIBOT_IDENTITY_DB") or "").strip())
-    if not str(identity_db):
+    raw_identity_db = str(env.get("OEMIXIBOT_IDENTITY_DB") or "").strip()
+    if not raw_identity_db:
         raise ValueError("OEMIXIBOT_IDENTITY_DB_required")
+    identity_db = Path(raw_identity_db)
     if not identity_db.is_absolute():
         raise ValueError("OEMIXIBOT_IDENTITY_DB_must_be_absolute")
 
-    reference_db = Path(
-        str(env.get("EXTREMIZER_OEM_REFERENCE_DB_FILE") or "").strip()
-    )
-    if not str(reference_db):
+    raw_reference_db = str(
+        env.get("EXTREMIZER_OEM_REFERENCE_DB_FILE") or ""
+    ).strip()
+    if not raw_reference_db:
         raise ValueError("EXTREMIZER_OEM_REFERENCE_DB_FILE_required")
+    reference_db = Path(raw_reference_db)
     if not reference_db.is_absolute():
         raise ValueError("EXTREMIZER_OEM_REFERENCE_DB_FILE_must_be_absolute")
 
@@ -167,26 +170,61 @@ def validate_runtime_config(env: dict[str, str] | None = None) -> dict[str, Any]
     }
 
 
-def verify_persistent_store(db_path: Path | str) -> None:
-    path = Path(db_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    # Initialization is intentionally left to the existing OemixiStore.
-    # This check proves the target directory is writable and SQLite can open it.
-    with sqlite3.connect(path, timeout=10) as conn:
-        conn.execute(
-            """CREATE TABLE IF NOT EXISTS railway_runtime_probe_v1(
-                   id INTEGER PRIMARY KEY CHECK(id=1),
-                   checked_at TEXT NOT NULL
-               )"""
-        )
-        conn.execute(
-            """INSERT INTO railway_runtime_probe_v1(id,checked_at)
-               VALUES(1,strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-               ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at"""
-        )
-        conn.commit()
+def _verify_sqlite(path: Path | str, *, foreign_keys: bool = False) -> None:
+    p = Path(path)
+    if not p.exists() or not p.is_file():
+        raise RuntimeError(f"required_persistent_db_missing:{p.name}")
+    with sqlite3.connect(p, timeout=10) as conn:
         if str(conn.execute("PRAGMA integrity_check").fetchone()[0]).lower() != "ok":
-            raise RuntimeError("oemixibot_store_integrity_check_failed")
+            raise RuntimeError(f"sqlite_integrity_check_failed:{p.name}")
+        if foreign_keys:
+            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise RuntimeError(
+                    f"sqlite_foreign_key_check_failed:{p.name}:{len(violations)}"
+                )
+
+
+def verify_persistent_store(config: dict[str, Any]) -> None:
+    """Fail closed unless the migrated OEMixi volume bundle is present."""
+    main = Path(config["db_path"])
+    parent = main.parent
+    if not parent.exists() or not parent.is_dir():
+        raise RuntimeError("oemixibot_volume_directory_missing")
+
+    # Prove the mounted directory is writable without mutating business DBs.
+    probe = parent / ".oemixibot-runtime-write-probe"
+    try:
+        with probe.open("xb") as fh:
+            fh.write(b"ok")
+            fh.flush()
+            os.fsync(fh.fileno())
+    except FileExistsError:
+        probe.unlink()
+        with probe.open("xb") as fh:
+            fh.write(b"ok")
+            fh.flush()
+            os.fsync(fh.fileno())
+    finally:
+        if probe.exists():
+            probe.unlink()
+
+    _verify_sqlite(config["db_path"], foreign_keys=True)
+    _verify_sqlite(config["identity_db"])
+    _verify_sqlite(config["reference_db"])
+
+
+def apply_runtime_environment(config: dict[str, Any]) -> None:
+    """Pin import-time OEMixi modules to the migrated Railway volume."""
+    os.environ["OEMIXIBOT_DB_PATH"] = str(config["db_path"])
+    os.environ["OEMIXIBOT_IDENTITY_DB"] = str(config["identity_db"])
+    os.environ["EXTREMIZER_OEM_REFERENCE_DB_FILE"] = str(config["reference_db"])
+    os.environ["OEMIXIBOT_SHARED_IDENTITY_ONLY"] = "1"
+    # Existing identity + analytics clients use this base URL. Keep them on
+    # the same Railway private service boundary as the price gateway.
+    os.environ["EXTREMIZER_ANALYTICS_BASE_URL"] = str(config["gateway_url"])
+
+
 
 
 def build_railway_application(
@@ -276,7 +314,8 @@ def run(env: dict[str, str] | None = None) -> None:
 
     try:
         lock.acquire()
-        verify_persistent_store(config["db_path"])
+        verify_persistent_store(config)
+        apply_runtime_environment(config)
         application = build_railway_application(config)
         health_server, _thread = start_health_server(state, config["port"])
         state.ready = True
