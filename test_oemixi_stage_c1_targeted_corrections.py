@@ -18,6 +18,7 @@ import oemixibot_app
 import oemixibot_catalog
 from oemixi_secure_gateway_transport import (
     HTTPSPriceTransport,
+    OEMixiCanonicalSharedPriceAdapter,
     _sanitize_gateway_result,
     build_router,
 )
@@ -137,6 +138,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
                 token="123456:TEST_TOKEN_FOR_ISOLATED_RUNTIME",
                 shared_price_gateway=transport,
                 dealer_max_age_hours=24,
+                shared_price_adapter_cls=OEMixiCanonicalSharedPriceAdapter,
             )
             reply = AsyncMock()
             update = SimpleNamespace(
