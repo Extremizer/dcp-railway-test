@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import dcp_price_gateway
+from oemixibot_poller_fence import build_fence_router
 from oemixi_secure_gateway_transport import build_router
 
 DEALER_MAX_AGE_HOURS = 24.0
@@ -45,7 +46,12 @@ def attach_oemixi_gateway(
         wait_seconds=wait_seconds,
     )
     app.include_router(router)
-    return router
+    fence_router = build_fence_router(
+        db_file=db_file,
+        root_secret=gateway_secret,
+    )
+    app.include_router(fence_router)
+    return {"price_router": router, "fence_router": fence_router}
 
 
 __all__ = [
