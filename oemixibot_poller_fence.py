@@ -131,7 +131,6 @@ def transition_to_railway(
 def build_fence_router(*, db_file: Path | str, root_secret: str) -> APIRouter:
     key = _derive_key(root_secret)
     db_file = str(db_file)
-    init_fence(db_file)
     router = APIRouter()
 
     @router.get(FENCE_PATH)
