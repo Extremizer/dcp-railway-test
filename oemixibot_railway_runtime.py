@@ -314,12 +314,12 @@ def start_polling_readiness_monitor(
     def monitor():
         while not stop.is_set():
             updater = getattr(application, "updater", None)
-            if bool(getattr(application, "running", False)) and bool(
-                getattr(updater, "running", False)
-            ):
-                state.ready = True
-                return
+            state.ready = (
+                bool(getattr(application, "running", False))
+                and bool(getattr(updater, "running", False))
+            )
             stop.wait(interval_seconds)
+        state.ready = False
 
     thread = threading.Thread(
         target=monitor,
