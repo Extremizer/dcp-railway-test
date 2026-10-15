@@ -669,7 +669,7 @@ def _admin_offer_text(requested_oem, offer):
     category=str(offer.get("item_category") or offer.get("item_type") or "не определена")
     if status!="FOUND" or offer.get("dl_usd") is None:
         reason=str(offer.get("price_error") or status)
-        return "\n".join([
+        lines=[
             "🔎 OEM-поиск",
             "",
             f"OEM: {requested_oem}",
@@ -678,7 +678,11 @@ def _admin_offer_text(requested_oem, offer):
             f"Причина: {reason}",
             "",
             "Дилерская цена недоступна. MSRP не используется вместо неё.",
-        ])
+        ]
+        msrp=offer.get("msrp_usd")
+        if isinstance(msrp,(int,float)) and not isinstance(msrp,bool) and float(msrp)>0:
+            lines.append(f"MSRP: ${float(msrp):.2f}")
+        return "\n".join(lines)
     lines=[
         "🔎 OEM-поиск",
         "",
