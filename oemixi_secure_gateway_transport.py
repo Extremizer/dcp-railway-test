@@ -30,7 +30,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 import dp_live_bridge
-from unified_price_contract_v1 import CanonicalPriceGatewayAdapter, dealer_legacy_offer
+from unified_price_contract_v1 import from_gateway_and_msrp, dealer_legacy_offer
 
 
 PATH = "/internal/oemixibot/price-gateway/v1"
@@ -311,17 +311,6 @@ def build_router(
             db_file, manufacturer, oem, max_age_hours=max_age_hours
         )
     )
-    canonical = CanonicalPriceGatewayAdapter(
-        lambda manufacturer, oem, *, max_age_hours: shared_gateway(
-            manufacturer,
-            oem,
-            max_age_hours=max_age_hours,
-            wait_seconds=wait,
-        ),
-        reader,
-        dealer_max_age_hours=max_age,
-        msrp_max_age_hours=msrp_age,
-    )
     router = APIRouter()
 
     @router.post(PATH)
@@ -374,12 +363,66 @@ def build_router(
         # Consumer has no access to producer/claim/finish. The server alone
         # decides cache/live/admission through the existing shared gateway.
         try:
-            contract = canonical.resolve(
-                manufacturer,
-                oem,
-                item_category=None,
+            try:
+                dealer = shared_gateway(
+                    manufacturer,
+                    oem,
+                    max_age_hours=max_age,
+                    wait_seconds=wait,
+                )
+            except TypeError:
+                dealer = shared_gateway(
+                    manufacturer,
+                    oem,
+                    max_age_hours=max_age,
+                )
+            if not isinstance(dealer, dict):
+                dealer = {
+                    "status": "TECHNICAL_ERROR",
+                    "error_code": "invalid_gateway_response",
+                }
+            try:
+                msrp = reader(
+                    manufacturer,
+                    oem,
+                    max_age_hours=msrp_age,
+                )
+            except Exception:
+                msrp = {
+                    "gateway_status": "TECHNICAL_ERROR",
+                    "error_code": "msrp_reader_unavailable",
+                }
+            if not isinstance(msrp, dict):
+                msrp = {
+                    "gateway_status": "TECHNICAL_ERROR",
+                    "error_code": "invalid_msrp_response",
+                }
+
+            contract = from_gateway_and_msrp(
+                manufacturer=manufacturer,
+                requested_oem=oem,
+                item_category=(
+                    dealer.get("item_category")
+                    or msrp.get("item_category")
+                ),
+                dealer_result=dealer,
+                msrp_result=msrp,
+                dealer_max_age_hours=max_age,
+                msrp_max_age_hours=msrp_age,
             )
             result = dealer_legacy_offer(contract)
+
+            # Preserve only server-generated compatibility evidence required by
+            # existing consumers. Windows never supplies these fields.
+            for key in (
+                "server_cache_committed",
+                "verified_cache_hit",
+                "cache_committed_at",
+                "request_id",
+                "name",
+            ):
+                if dealer.get(key) is not None:
+                    result[key] = dealer.get(key)
         except Exception:
             result = {
                 "status": "TECHNICAL_ERROR",
