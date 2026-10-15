@@ -340,8 +340,14 @@ class CanonicalPriceGatewayAdapter:
 def dealer_legacy_offer(contract: dict) -> dict:
     """Compatibility adapter for OEMixi/catalog style dealer offer."""
     if contract.get("dealer_price_status") != STATUS_VERIFIED:
+        gateway_status = str(contract.get("gateway_status") or "").upper()
+        safe_status = (
+            gateway_status
+            if gateway_status not in ("", "OK", "FOUND")
+            else "NO_PRICE"
+        )
         return {
-            "status": contract.get("gateway_status") if contract.get("gateway_status") not in (None, "", "OK") else "NO_PRICE",
+            "status": safe_status,
             "manufacturer": contract.get("manufacturer"),
             "requested_oem": contract.get("requested_oem"),
             "current_oem": contract.get("matched_oem"),
