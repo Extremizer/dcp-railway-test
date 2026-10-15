@@ -208,6 +208,24 @@ def _fcp_keyboard(state):
 
 async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
     u=update.effective_user
+    if context.user_data.get("admin_oem_search"):
+        if not u or not is_telegram_admin(u.id):
+            context.user_data.pop("admin_oem_search",None)
+            await update.effective_message.reply_text(ACCESS_DENIED)
+            return
+        oem=normalize_oem(update.effective_message.text)
+        if not oem:
+            await update.effective_message.reply_text(
+                "Введите один OEM-номер.",
+                reply_markup=_admin_search_keyboard(),
+            )
+            return
+        offer=await _resolve_admin_oem_offer(oem,context)
+        await update.effective_message.reply_text(
+            _admin_offer_text(oem,offer),
+            reply_markup=_admin_search_keyboard(),
+        )
+        return
     state=context.user_data.get("admin_topup")
     if state and u and is_telegram_admin(u.id):
         raw=(update.effective_message.text or "").strip().replace(",",".")
@@ -631,9 +649,77 @@ def _admin_dealers():
 
 def _admin_root_keyboard(dealers):
     rows=[
+        [InlineKeyboardButton("🔎 Поиск по OEM",callback_data="admsearch")],
     ]
     rows += [[InlineKeyboardButton(f"👤 {d['name']}",callback_data=f"admdealer:{d['id']}")] for d in dealers]
-    return InlineKeyboardMarkup(rows) if rows else None
+    return InlineKeyboardMarkup(rows)
+
+
+def _admin_search_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔎 Искать ещё", callback_data="admsearch")],
+        [InlineKeyboardButton("← В ADMIN", callback_data="admhome")],
+    ])
+
+
+def _admin_offer_text(requested_oem, offer):
+    status=str(offer.get("status") or "NOT_FOUND")
+    matched=str(offer.get("oem") or offer.get("current_oem") or requested_oem)
+    manufacturer=str(offer.get("manufacturer") or "не определён")
+    category=str(offer.get("item_category") or offer.get("item_type") or "не определена")
+    if status!="FOUND" or offer.get("dl_usd") is None:
+        reason=str(offer.get("price_error") or status)
+        return "\n".join([
+            "🔎 OEM-поиск",
+            "",
+            f"OEM: {requested_oem}",
+            f"Производитель: {manufacturer}",
+            f"Статус: {status}",
+            f"Причина: {reason}",
+            "",
+            "Дилерская цена недоступна. MSRP не используется вместо неё.",
+        ])
+    lines=[
+        "🔎 OEM-поиск",
+        "",
+        f"OEM: {requested_oem}",
+        f"Совпадение: {matched}",
+        f"Производитель: {manufacturer}",
+        f"Категория: {category}",
+        f"Дилерская цена: ${float(offer['dl_usd']):.2f}",
+    ]
+    msrp=offer.get("msrp_usd")
+    if isinstance(msrp,(int,float)) and float(msrp)>0:
+        lines.append(f"MSRP: ${float(msrp):.2f}")
+    source=str(offer.get("price_source") or offer.get("source") or "").strip()
+    verified=str(offer.get("verified_at") or offer.get("last_verified_at") or "").strip()
+    if source: lines.append(f"Источник dealer price: {source}")
+    if verified: lines.append(f"Проверено: {verified}")
+    return "\n".join(lines)
+
+
+async def _resolve_admin_oem_offer(oem, context):
+    offer=await _resolve_runtime_offer(oem,context)
+    if offer.get("status")!="IDENTITY_REQUIRED":
+        return offer
+    try:
+        shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
+    except Exception:
+        logging.exception("OEMixiBOT admin identity lookup failed oem=%s",oem)
+        return offer
+    if not shared_identity:
+        return offer
+    try:
+        saved=oem_identity_service.remember(
+            oem,
+            shared_identity.get("manufacturer"),
+            item_type=shared_identity.get("item_type"),
+            source="shared_production_identity",
+        )
+    except Exception:
+        logging.exception("OEMixiBOT admin identity save failed oem=%s",oem)
+        return offer
+    return await _resolve_runtime_offer(oem,context) if saved else offer
 
 
 def _admin_finance_text(dealer_id):
@@ -694,8 +780,9 @@ async def admin_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
     u=update.effective_user
     if not u or not is_telegram_admin(u.id):
         await update.effective_message.reply_text(ACCESS_DENIED); return
+    context.user_data.pop("admin_oem_search",None)
     dealers=_admin_dealers()
-    await update.effective_message.reply_text("⚙️ OEMixiBOT ADMIN\n\n👥 Дилеры",reply_markup=_admin_root_keyboard(dealers))
+    await update.effective_message.reply_text("⚙️ OEMixiBOT ADMIN",reply_markup=_admin_root_keyboard(dealers))
 
 async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer()
@@ -703,6 +790,19 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if data.startswith("adm"):
         u=update.effective_user
         if not u or not is_telegram_admin(u.id): await q.edit_message_text(ACCESS_DENIED); return
+        if data=="admsearch":
+            context.user_data["admin_oem_search"]=True
+            await q.edit_message_text(
+                "🔎 Поиск по OEM\n\nВведите один OEM-номер.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← В ADMIN",callback_data="admhome")]]),
+            )
+            return
+        if data=="admhome":
+            context.user_data.pop("admin_oem_search",None)
+            context.user_data.pop("admin_topup",None)
+            context.user_data.pop("admin_debit",None)
+            await q.edit_message_text("⚙️ OEMixiBOT ADMIN",reply_markup=_admin_root_keyboard(_admin_dealers()))
+            return
         if data.startswith("admdealer:"):
             did=data.split(":",1)[1]; d=next((x for x in _admin_dealers() if x["id"]==did),None)
             if not d: await q.edit_message_text("Дилер не найден."); return
@@ -954,7 +1054,7 @@ def build_application(token=None, *, shared_price_gateway=_LEGACY_PRICE_PATH, de
     app.add_handler(CommandHandler("orders",orders_command))
     app.add_handler(CommandHandler("balance",balance_command))
     app.add_handler(CommandHandler("admin",admin_command))
-    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhome$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admdealer:|admdealers$|admfin:(?:view|history|topup|debit):|admfinevent:|admdebit:|admtopup:|noop$)"))
+    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhome$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admsearch$|admhome$|admdealer:|admdealers$|admfin:(?:view|history|topup|debit):|admfinevent:|admdebit:|admtopup:|noop$)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,oem_message))
     return app
 
