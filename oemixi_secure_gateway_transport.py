@@ -414,15 +414,15 @@ def build_router(
 
             # Preserve only server-generated compatibility evidence required by
             # existing consumers. Windows never supplies these fields.
-            for key in (
+            for evidence_key in (
                 "server_cache_committed",
                 "verified_cache_hit",
                 "cache_committed_at",
                 "request_id",
                 "name",
             ):
-                if dealer.get(key) is not None:
-                    result[key] = dealer.get(key)
+                if dealer.get(evidence_key) is not None:
+                    result[evidence_key] = dealer.get(evidence_key)
         except Exception:
             result = {
                 "status": "TECHNICAL_ERROR",
