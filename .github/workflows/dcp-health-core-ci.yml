@@ -25,8 +25,31 @@ jobs:
 
       - name: Syntax check
         run: |
-          python -m py_compile             dp_live_health.py             dp_live_bridge.py             web_app.py             oemixibot_dcp_price.py             extremizer_bot.py             dp_sync_agent.py             test_dcp_health_core.py             test_procenka_dp_bridge.py             test_procenka_partial_parts_bridge.py             test_procenka_delivery_text.py             test_client_delivery_text_unified.py
+          python -m py_compile             dp_live_health.py             dp_live_bridge.py             web_app.py             oemixibot_dcp_price.py             extremizer_bot.py             dp_sync_agent.py             test_dcp_health_core.py             test_dcp_reliability.py             test_procenka_dp_bridge.py             test_procenka_partial_parts_bridge.py             test_procenka_delivery_text.py             test_client_delivery_text_unified.py
+
+      - name: Install isolated HTTP dependencies
+        run: pip install 'fastapi>=0.110,<1' 'httpx>=0.27,<1'
+
+      - name: Set up isolated JavaScript execution
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Passive document and HTTP failure regression (mock browser only)
+        run: python -B -m unittest -v test_dcp_passive_guard.py
+
+      - name: Windows-OFF autonomy feasibility (mock only; readiness gaps documented)
+        run: python -B -m unittest -v test_dcp_autonomy_feasibility.py
+
+      - name: Stage 4 admission, quiescence and paired release rehearsal
+        run: python -B -m unittest -v test_dcp_admission.py test_dcp_release_rehearsal.py
+
+      - name: Stage 3 producer protocol and single-writer consistency
+        run: python -B -m unittest -v test_dcp_producer_v2.py test_dcp_stage3_consistency.py
+
+      - name: Stage 2 atomic completion, recovery and actual adapters
+        run: python -B -m unittest -v test_dp_result_completion.py test_dcp_three_adapters.py test_dcp_stage2_scope.py
 
       - name: DCP health regression
         run: |
-          python -m unittest -v test_dcp_health_core.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_procenka_delivery_text.py test_client_delivery_text_unified.py test_client_offer_card.py
+          python -m unittest -v test_dcp_reliability.py test_dcp_health_core.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_procenka_delivery_text.py test_client_delivery_text_unified.py test_client_offer_card.py
