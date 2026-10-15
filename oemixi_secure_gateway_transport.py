@@ -529,11 +529,17 @@ class HTTPSPriceTransport:
     max_response_bytes: int = MAX_RESPONSE_BYTES
     opener: Callable[..., Any] = urllib.request.urlopen
     allow_test_http: bool = False
+    allow_railway_private_http: bool = False
 
     def __post_init__(self):
         parsed = urlparse(str(self.base_url or ""))
-        if parsed.scheme != "https" and not self.allow_test_http:
-            raise ValueError("https_required")
+        private_http = (
+            parsed.scheme == "http"
+            and self.allow_railway_private_http
+            and str(parsed.hostname or "").lower().endswith(".railway.internal")
+        )
+        if parsed.scheme != "https" and not private_http and not self.allow_test_http:
+            raise ValueError("https_required_outside_railway_private_network")
         if not parsed.netloc:
             raise ValueError("invalid_gateway_url")
         if (

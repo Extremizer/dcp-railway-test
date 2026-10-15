@@ -86,7 +86,9 @@ def _fresh(
     age = (now - checked).total_seconds()
     if age < -60:
         return False, STATUS_INVALID
-    if age > max_age * 3600:
+    # Approved policy: a price is stale at the exact TTL boundary.
+    # Example: Dealer 24h -> age < 24h valid, age >= 24h stale.
+    if age >= max_age * 3600:
         return False, STATUS_STALE
     return True, STATUS_VERIFIED
 
