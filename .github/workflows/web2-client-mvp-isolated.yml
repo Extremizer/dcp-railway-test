@@ -6,6 +6,7 @@ on:
       - web2-client-mvp-20261014
       - web2-client-mvp-visual-p0-20261014
       - web2-unified-procenka-owner-staging-20261014
+      - web2-powersports-integration-prep-20261015
   workflow_dispatch:
 
 permissions:
