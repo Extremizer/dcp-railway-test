@@ -26,8 +26,8 @@ import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, Header, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Header, HTTPException, Request
+from pydantic import BaseModel, ConfigDict, Field
 
 import dp_live_bridge
 from unified_price_contract_v1 import CanonicalPriceGatewayAdapter, dealer_legacy_offer
@@ -47,6 +47,7 @@ ALLOWED_GATEWAY_STATUSES = {
 
 
 class SecurePriceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     manufacturer: str = Field(min_length=2, max_length=64)
     oem: str = Field(min_length=4, max_length=40)
 
@@ -325,11 +326,19 @@ def build_router(
 
     @router.post(PATH)
     def price_gateway(
+        request: Request,
         payload: SecurePriceRequest,
         x_oemixi_gateway_ts: str | None = Header(default=None),
         x_oemixi_gateway_nonce: str | None = Header(default=None),
         x_oemixi_gateway_sig: str | None = Header(default=None),
     ) -> dict[str, Any]:
+        raw_length = str(request.headers.get("content-length") or "").strip()
+        if raw_length:
+            try:
+                if int(raw_length) > MAX_BODY_BYTES:
+                    raise HTTPException(413, {"code": "request_too_large"})
+            except ValueError:
+                raise HTTPException(400, {"code": "invalid_content_length"})
         try:
             ts = int(str(x_oemixi_gateway_ts or "").strip())
         except ValueError:
