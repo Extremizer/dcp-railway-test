@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import json
 import os
 from datetime import datetime, timedelta, timezone
@@ -19,7 +20,16 @@ from fastapi.testclient import TestClient
 
 from oemixibot_finance import FinanceEngine
 from oemixibot_store import OemixiStore
+from oemixibot_windows_preflight import inspect as inspect_windows_db
 from oemixibot_railway_migration import audit_database, backup_database, backup_bundle
+from oemixibot_poller_fence import (
+    OWNER_RAILWAY,
+    OWNER_WINDOWS,
+    PollerFenceClient,
+    build_fence_router,
+    read_fence,
+    transition_to_railway,
+)
 from oemixibot_railway_runtime import (
     DEALER_MAX_AGE_HOURS,
     MSRP_MAX_AGE_HOURS,
@@ -201,6 +211,59 @@ class RailwaySingletonHealthTests(unittest.TestCase):
             two.acquire()
             two.release()
 
+    def test_ready_is_not_advertised_before_polling_start(self):
+        import oemixibot_railway_runtime as runtime
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            env = config_env(root)
+            for path in (
+                root / "oemixibot.db",
+                root / "oemixibot_identity.db",
+                root / "oem_reference.db",
+            ):
+                with sqlite3.connect(path) as conn:
+                    conn.execute("CREATE TABLE seed(id INTEGER PRIMARY KEY)")
+                    conn.commit()
+
+            observed = {}
+
+            class FakeApplication:
+                running = False
+                updater = SimpleNamespace(running=False)
+
+                def run_polling(self, **kwargs):
+                    observed["ready_at_polling_entry"] = observed["state"].ready
+                    # Simulate a polling lifecycle only after the assertion point.
+                    self.updater.running = True
+                    self.running = True
+
+            class FakeHealthServer:
+                def shutdown(self):
+                    pass
+                def server_close(self):
+                    pass
+
+            def fake_health_server(state, port):
+                observed["state"] = state
+                return FakeHealthServer(), SimpleNamespace()
+
+            with patch.object(
+                runtime,
+                "build_railway_application",
+                return_value=FakeApplication(),
+            ), patch.object(
+                runtime,
+                "start_health_server",
+                side_effect=fake_health_server,
+            ):
+                runtime.run(env, cutover_fence_check=lambda config: {"active_owner": "RAILWAY", "generation": 2})
+
+            self.assertFalse(
+                observed["ready_at_polling_entry"],
+                "BASE FAIL: /ready is advertised before Telegram polling starts",
+            )
+
     def test_graceful_run_releases_singleton_and_allows_restart(self):
         import oemixibot_railway_runtime as runtime
 
@@ -243,7 +306,7 @@ class RailwaySingletonHealthTests(unittest.TestCase):
                 "start_health_server",
                 return_value=(fake_server, SimpleNamespace()),
             ):
-                run(env)
+                run(env, cutover_fence_check=lambda config: {"active_owner": "RAILWAY", "generation": 2})
 
             self.assertEqual(len(polling_calls), 1)
             self.assertFalse(polling_calls[0]["drop_pending_updates"])
@@ -255,6 +318,34 @@ class RailwaySingletonHealthTests(unittest.TestCase):
             restart_lock = SingletonFileLock(lock_path)
             restart_lock.acquire()
             restart_lock.release()
+
+    def test_readiness_monitor_waits_for_real_ptb_running_flags(self):
+        import oemixibot_railway_runtime as runtime
+
+        state = RuntimeState(started=True, ready=False)
+        app = SimpleNamespace(
+            running=False,
+            updater=SimpleNamespace(running=False),
+        )
+        stop, thread = runtime.start_polling_readiness_monitor(
+            state,
+            app,
+            interval_seconds=0.005,
+        )
+        try:
+            self.assertFalse(state.ready)
+            app.running = True
+            self.assertFalse(state.ready)
+            app.updater.running = True
+            for _ in range(100):
+                if state.ready:
+                    break
+                import time as _time
+                _time.sleep(0.005)
+            self.assertTrue(state.ready)
+        finally:
+            stop.set()
+            thread.join(timeout=1)
 
     def test_health_and_readiness(self):
         state = RuntimeState(started=True, ready=False)
@@ -384,6 +475,70 @@ class RailwayPrivateGatewayTests(unittest.TestCase):
                 SECRET,
                 allow_railway_private_http=True,
             )
+
+
+class PollerFenceTests(unittest.TestCase):
+    def test_default_fence_blocks_railway_until_explicit_transition(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "coordination.db"
+            initial = read_fence(db)
+            self.assertEqual(initial["active_owner"], OWNER_WINDOWS)
+            self.assertEqual(initial["generation"], 1)
+
+            api = FastAPI()
+            api.include_router(build_fence_router(db_file=db, root_secret=SECRET))
+            client = TestClient(api)
+            self.addCleanup(client.close)
+
+            fence_client = PollerFenceClient(
+                "http://dcp-railway-test.railway.internal:8080",
+                SECRET,
+                opener=local_opener(client),
+                allow_railway_private_http=True,
+            )
+            with self.assertRaisesRegex(RuntimeError, "blocks_railway"):
+                fence_client.require_railway_owner()
+
+            transitioned = transition_to_railway(
+                db,
+                expected_generation=1,
+                windows_stop_evidence="windows-poller-stopped-proof-20261015",
+                actor="release-control",
+            )
+            self.assertEqual(transitioned["active_owner"], OWNER_RAILWAY)
+            self.assertEqual(transitioned["generation"], 2)
+            self.assertEqual(
+                fence_client.require_railway_owner()["active_owner"],
+                OWNER_RAILWAY,
+            )
+
+    def test_transition_requires_stop_evidence_and_compare_and_swap(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "coordination.db"
+            initial = read_fence(db)
+            with self.assertRaisesRegex(ValueError, "windows_stop_evidence_required"):
+                transition_to_railway(
+                    db,
+                    expected_generation=initial["generation"],
+                    windows_stop_evidence="too-short",
+                    actor="release-control",
+                )
+
+            first = transition_to_railway(
+                db,
+                expected_generation=initial["generation"],
+                windows_stop_evidence="verified-windows-stop-evidence",
+                actor="release-control",
+            )
+            self.assertEqual(first["generation"], initial["generation"] + 1)
+
+            with self.assertRaisesRegex(ValueError, "generation_mismatch|not_owned_by_windows"):
+                transition_to_railway(
+                    db,
+                    expected_generation=initial["generation"],
+                    windows_stop_evidence="second-stale-transition-proof",
+                    actor="release-control",
+                )
 
 
 class MigrationAndRestartTests(unittest.TestCase):
@@ -570,6 +725,46 @@ class MigrationAndRestartTests(unittest.TestCase):
                     ).fetchone()[0],
                     "Arctic Cat",
                 )
+
+
+class WindowsPreflightSafetyTests(unittest.TestCase):
+    def test_read_only_preflight_does_not_change_source_bytes(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "live.db"
+            with sqlite3.connect(db) as conn:
+                conn.execute(
+                    "CREATE TABLE dealers(id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+                )
+                conn.execute(
+                    """CREATE TABLE finance_ledger(
+                           id INTEGER PRIMARY KEY,
+                           buyer_type TEXT,
+                           buyer_id TEXT,
+                           wallet_currency TEXT,
+                           amount TEXT
+                       )"""
+                )
+                conn.execute("INSERT INTO dealers VALUES('D1','Dealer')")
+                conn.execute(
+                    "INSERT INTO finance_ledger VALUES(1,'dealer','D1','USD','125.50')"
+                )
+                conn.commit()
+
+            before = db.read_bytes()
+            before_hash = hashlib.sha256(before).hexdigest()
+            before_stat = db.stat()
+
+            result = inspect_windows_db(db)
+
+            after = db.read_bytes()
+            after_hash = hashlib.sha256(after).hexdigest()
+            after_stat = db.stat()
+
+            self.assertEqual(result["preflight_status"], "READ_ONLY_OK")
+            self.assertEqual(result["dealer_balances_usd"], {"D1": "125.50"})
+            self.assertEqual(before_hash, after_hash)
+            self.assertEqual(before, after)
+            self.assertEqual(before_stat.st_size, after_stat.st_size)
 
 
 class SharedIdentityIsolationTests(unittest.TestCase):

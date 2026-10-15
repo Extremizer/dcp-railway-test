@@ -1,0 +1,108 @@
+{
+  "candidate": "oemixibot-release-control-20261015",
+  "generated_from": "oemixibot-release-prep-20261015",
+  "theme1_chain": [
+    {
+      "pr": 38,
+      "sha": "4469af37b40acfe70a5ec7030acc0f023bdec6d4",
+      "role": "shared price gateway runtime",
+      "ci": [
+        38555160902,
+        38555160830,
+        38555160924,
+        38555160762,
+        38555160885,
+        38555160784,
+        38555160810
+      ]
+    },
+    {
+      "pr": 39,
+      "sha": "f19921878d3a3664946f537f702154870a20e9c2",
+      "role": "admin OEM search",
+      "ci": [
+        38707249796
+      ]
+    },
+    {
+      "pr": 40,
+      "sha": "868efd70f56ddba70ce79e9e1705d51f1aec6007",
+      "role": "canonical dealer/MSRP contract",
+      "ci": [
+        38717965381
+      ]
+    },
+    {
+      "pr": 41,
+      "sha": "46199eb5adc88c358240e9ebf28af60682a96a6f",
+      "role": "secure shared gateway transport",
+      "ci": [
+        38724191302
+      ]
+    },
+    {
+      "pr": 42,
+      "sha": "ce6927c88689f1a13c382e6909061edc5cdd9659",
+      "role": "Stage C1 targeted corrections",
+      "ci": [
+        38755968522
+      ]
+    },
+    {
+      "pr": 43,
+      "sha": "9fc7d69f60d1cba8ae3008c79c983c74402846c7",
+      "role": "Railway 24/7 isolated runtime",
+      "ci": [
+        38761029757
+      ]
+    }
+  ],
+  "theme6_dependencies": [
+    {
+      "pr": 32,
+      "sha": "2ed283ac68ac1cfbc1252bd9120f98d7d9494fd5",
+      "role": "challenge stop + shared request coordination"
+    },
+    {
+      "pr": 33,
+      "sha": "3325f30925ddbb662507cc95b6322625098bb90f",
+      "role": "atomic completion + fenced recovery"
+    },
+    {
+      "pr": 34,
+      "sha": "e8d45e2f46bda0267b8595283befb704786142a9",
+      "role": "producer v2 + single-writer cache"
+    },
+    {
+      "pr": 35,
+      "sha": "16e3fa34f1e2659aa6c1e6d85b914371253bfe6d",
+      "role": "admission freeze + paired release gates"
+    },
+    {
+      "pr": 36,
+      "sha": "2a2d64184465e66ef817f2f6e4dda8b414d3c467",
+      "role": "legacy bootstrap + release evidence"
+    },
+    {
+      "pr": 37,
+      "sha": "5a26ab78ebb8eb7862da7816580a577000d8579d",
+      "role": "passive document guard + transport failure isolation"
+    }
+  ],
+  "release_constraints": {
+    "merge": false,
+    "deploy": false,
+    "production_db_migration": false,
+    "windows_poller_stop": false,
+    "live_dcp": false
+  },
+  "integration_order": [
+    "Theme 6 dependency chain accepted and integrated by Release Control",
+    "Theme 1 PR #38 -> #39 -> #40 -> #41 -> #42 -> #43",
+    "Current release-prep PR",
+    "Exact-head combined CI",
+    "OWNER GO for Windows stop and real database snapshot",
+    "Poller fence WINDOWS -> RAILWAY",
+    "Single Railway polling start"
+  ]
+}

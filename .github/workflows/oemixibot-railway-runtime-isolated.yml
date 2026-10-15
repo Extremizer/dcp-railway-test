@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - oemixibot-railway-runtime-20261015
+      - oemixibot-release-prep-20261015
   workflow_dispatch:
 
 permissions:
@@ -24,7 +25,7 @@ jobs:
 
       - name: Syntax and import smoke
         run: |
-          python -B -m py_compile             oemixibot_railway_runtime.py             oemixibot_railway_migration.py             oemixibot_railway_gateway_mount.py             oemixi_secure_gateway_transport.py             unified_price_contract_v1.py             test_oemixibot_railway_runtime.py
+          python -B -m py_compile             oemixibot_railway_runtime.py             oemixibot_railway_migration.py             oemixibot_railway_gateway_mount.py             oemixibot_poller_fence.py             oemixibot_windows_preflight.py             oemixi_secure_gateway_transport.py             unified_price_contract_v1.py             test_oemixibot_railway_runtime.py
 
       - name: Railway runtime migration freshness singleton E2E
         run: python -B -m unittest -v test_oemixibot_railway_runtime.py
