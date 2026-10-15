@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - oemixibot-railway-runtime-20261015
+      - oemixibot-release-prep-20261015
   workflow_dispatch:
 
 permissions:
