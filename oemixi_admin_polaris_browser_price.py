@@ -38,14 +38,14 @@ def _category(oem,resolver,now):
     return evidence
 
 def _single_tab(tabs):
-    import oemixibot_dcp_price as dcp
     found=[]
     for tab in tabs():
-        if not dcp._is_dcp_page(tab):
+        if not isinstance(tab,dict) or tab.get("type")!="page":
             continue
         u=urlsplit(str(tab.get("url") or ""))
         title=str(tab.get("title") or "").lower()
-        if (u.scheme,u.netloc)==("https","www.dealercostparts.com") and            "just a moment" not in title and "один момент" not in title:
+        if (u.scheme,u.netloc)==("https","www.dealercostparts.com") and \
+           "just a moment" not in title and "один момент" not in title:
             found.append(tab)
     if len(found)!=1:
         raise PermissionError("DCP_TAB_UNAVAILABLE")
