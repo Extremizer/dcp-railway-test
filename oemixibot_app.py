@@ -25,6 +25,19 @@ FINANCE=FinanceEngine(STORE.path)
 
 _LEGACY_PRICE_PATH = object()
 _SHARED_PRICE_ADAPTER_KEY = 'oemixi_shared_dealer_price_adapter'
+_ADMIN_POLARIS_PRICE_RESOLVER_KEY = 'oemixi_admin_polaris_price_resolver'
+
+
+def bind_admin_polaris_price_resolver(application, resolver):
+    """Explicit ADMIN-only opt-in. Does not alter dealer/global price runtime."""
+    if getattr(application, 'running', False):
+        raise ValueError('admin_polaris_bind_after_start_denied')
+    if _ADMIN_POLARIS_PRICE_RESOLVER_KEY in application.bot_data:
+        raise ValueError('admin_polaris_resolver_already_bound')
+    if not callable(resolver):
+        raise ValueError('admin_polaris_resolver_required')
+    application.bot_data[_ADMIN_POLARIS_PRICE_RESOLVER_KEY] = resolver
+    return resolver
 
 
 def bind_shared_price_gateway(application, gateway, *, dealer_max_age_hours):
@@ -664,11 +677,26 @@ def _admin_search_keyboard():
 
 def _admin_offer_text(requested_oem, offer):
     status=str(offer.get("status") or "NOT_FOUND")
-    matched=str(offer.get("oem") or offer.get("current_oem") or requested_oem)
+    matched=str(offer.get("resolved_oem") or offer.get("oem") or offer.get("current_oem") or requested_oem)
     manufacturer=str(offer.get("manufacturer") or "не определён")
     category=str(offer.get("item_category") or offer.get("item_type") or "не определена")
+    if status=="ADMIN_DEALER_CART_PRICE_VERIFIED" and offer.get("admin_unit_price_usd") is not None:
+        lines=[
+            "🔎 OEM-поиск",
+            "",
+            f"OEM: {requested_oem}",
+            f"Совпадение: {matched}",
+            f"Производитель: {manufacturer}",
+            f"Категория: {category}",
+            f"Дилерская цена: ${float(offer['admin_unit_price_usd']):.2f}",
+        ]
+        if matched!=requested_oem:
+            lines.append(f"Замена OEM: {requested_oem} → {matched}")
+        source=str(offer.get("source") or "").strip()
+        if source: lines.append(f"Источник dealer price: {source}")
+        return "\n".join(lines)
     if status!="FOUND" or offer.get("dl_usd") is None:
-        reason=str(offer.get("price_error") or status)
+        reason=str(offer.get("reason") or offer.get("price_error") or status)
         lines=[
             "🔎 OEM-поиск",
             "",
@@ -703,6 +731,25 @@ def _admin_offer_text(requested_oem, offer):
 
 
 async def _resolve_admin_oem_offer(oem, context):
+    admin_resolver=context.application.bot_data.get(_ADMIN_POLARIS_PRICE_RESOLVER_KEY)
+    if admin_resolver is not None:
+        if not callable(admin_resolver):
+            return {"status":"DEALER_PRICE_UNVERIFIED","oem":oem,
+                    "admin_unit_price_usd":None,"dealer_price_usd":None,
+                    "production_found":False,"reason":"admin_polaris_resolver_invalid"}
+        try:
+            result=await asyncio.to_thread(admin_resolver,oem)
+        except Exception:
+            logging.exception("OEMixiBOT ADMIN Polaris resolver failed oem=%s",oem)
+            return {"status":"DEALER_PRICE_UNVERIFIED","oem":oem,
+                    "admin_unit_price_usd":None,"dealer_price_usd":None,
+                    "production_found":False,"reason":"admin_polaris_resolver_error"}
+        if isinstance(result,dict):
+            return result
+        return {"status":"DEALER_PRICE_UNVERIFIED","oem":oem,
+                "admin_unit_price_usd":None,"dealer_price_usd":None,
+                "production_found":False,"reason":"admin_polaris_resolver_invalid_result"}
+
     offer=await _resolve_runtime_offer(oem,context)
     if offer.get("status")!="IDENTITY_REQUIRED":
         return offer
