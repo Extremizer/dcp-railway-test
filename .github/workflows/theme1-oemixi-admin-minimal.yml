@@ -1,0 +1,23 @@
+name: Theme1 OEMixi ADMIN Minimal Integration
+on:
+  push:
+    branches:
+      - theme1-oemixi-admin-minimal-integration-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  admin-reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax and static contracts
+        run: |
+          python -B -m py_compile reconciliation/oemixibot_app.py reconciliation/test_admin_reconciliation.py reconciliation/test_admin_handlers.py reconciliation/test_finance_navigation.py
+          python -B -m unittest -v reconciliation.test_admin_reconciliation
+      - name: Mocked Telegram ADMIN handler and finance navigation regressions
+        run: python -B -m unittest -v reconciliation.test_admin_handlers reconciliation.test_finance_navigation
