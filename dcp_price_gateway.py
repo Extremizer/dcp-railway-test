@@ -22,23 +22,8 @@ def _verified_price(result, manufacturer, oem, max_age_hours):
 
 
 def _read_cache(db_file, manufacturer, oem, max_age_hours):
-    # Stage 2 HOLD: legacy cache has no accepted independent Dealer semantics.
-    # Never promote it to positive Dealer FOUND, regardless of numeric price.
+    """Stage 2 HOLD: no legacy Dealer cache entry can be positive FOUND."""
     return None
-    if not Path(db_file).exists():
-        return None
-    with closing(sqlite3.connect(Path(db_file).resolve().as_uri()+"?mode=ro",uri=True)) as conn:
-        conn.execute("PRAGMA query_only=ON")
-        if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='dealer_price_cache'").fetchone():
-            return None
-        row = conn.execute("""SELECT dealer_price_usd,source,last_verified_at
-            FROM dealer_price_cache WHERE manufacturer=? AND oem=?""",(manufacturer,oem)).fetchone()
-    if row is None:
-        return None
-    result = {"status":"FOUND","manufacturer":manufacturer,"query_oem":oem,"current_oem":oem,
-              "dealer_price_usd":row[0],"source":row[1],"last_verified_at":row[2],"currency":"USD",
-              "verified_cache_hit":True}
-    return result if _verified_price(result,manufacturer,oem,max_age_hours) else None
 
 
 def request_price(db_file, manufacturer, oem, *, max_age_hours=168.0, wait_seconds=10.0,
@@ -83,6 +68,9 @@ class SharedDealerPriceAdapter:
             return {"status":"TECHNICAL_ERROR","error_code":"invalid_gateway_response"}
         if result.get("status") != "FOUND":
             return {k:v for k,v in result.items() if k not in {"dealer_price_usd","msrp_usd","retail","rrp"}}
+        # Independently accepted Dealer Price semantics are still on HOLD.
+        # A source label or a numeric quote cannot authorize Dealer FOUND.
+        return {"status":"DEALER_PRICE_UNVERIFIED"}
         if not _verified_price(result,manufacturer,oem,self.max_age_hours):
             return {"status":"NO_PRICE","error_code":"invalid_gateway_dealer_price"}
         return result
