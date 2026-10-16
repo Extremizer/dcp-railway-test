@@ -229,25 +229,44 @@ function escapeHtml(value) {
   return div.innerHTML;
 }
 
+const SEARCH_TIMEOUT_MS = 15000;
+let lastSearchStatus = "idle";
+
 async function searchOem(oem) {
   if (form.getAttribute("aria-busy") === "true") return;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
   product.classList.add("hidden");
+  stockPollSerial += 1;
+  currentProduct = null;
   setSearchBusy(true);
-  showState("Ищем…", "loading");
+  lastSearchStatus = "loading";
+  showState("Ищем OEM " + oem + "…", "loading");
   try {
-    const response = await fetch(`/api/v1/oem/${encodeURIComponent(oem)}`);
-    if (!response.ok) {
-      throw new Error(response.status === 404
-        ? "Этот OEM пока не найден в проверенной БАЗЕ."
-        : "Не удалось выполнить поиск. Попробуй чуть позже.");
+    const response = await fetch(`/api/v1/oem/${encodeURIComponent(oem)}`, {
+      signal: controller.signal,
+    });
+    if (response.status === 404) {
+      lastSearchStatus = "not_found";
+      showState("OEM " + oem + " не найден в проверенной базе. Проверь номер и попробуй ещё раз.", "error");
+      return;
     }
+    if (!response.ok) throw new Error("search_api_unavailable");
     const card = await response.json();
-    if (!card || !card.price || !card.stock || !Array.isArray(card.offers)) throw new Error("Некорректный ответ сервера.");
+    if (!card || !card.price || !card.stock || !Array.isArray(card.offers)) {
+      throw new Error("invalid_search_response");
+    }
+    lastSearchStatus = "found";
     hideState();
     renderProduct(card);
   } catch (error) {
-    showState(error.message || "Ошибка поиска.", "error");
+    lastSearchStatus = "technical_error";
+    const timedOut = error?.name === "AbortError";
+    showState(timedOut
+      ? "Поиск занял слишком много времени. Проверь подключение и повтори запрос."
+      : "Техническая ошибка поиска. Повтори запрос чуть позже.", "error");
   } finally {
+    window.clearTimeout(timeout);
     setSearchBusy(false);
   }
 }
