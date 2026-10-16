@@ -10,6 +10,7 @@ on:
       - web2-client-functional-hardening-20261016
       - web2-oem-search-ux-m1-20261017
       - web2-product-card-ux-m2-20261017
+      - web2-cart-ux-m3-20261017
   workflow_dispatch:
 
 permissions:
@@ -33,7 +34,7 @@ jobs:
 
       - name: Syntax
         run: |
-          python -B -m py_compile web2_staging_app.py web2_ui_routes.py web2_runtime_app.py test_web2_staging.py test_web2_client_mvp.py test_web2_host_integration.py test_web2_functional_hardening.py test_web2_search_ux_m1.py test_web2_product_card_m2.py
+          python -B -m py_compile web2_staging_app.py web2_ui_routes.py web2_runtime_app.py test_web2_staging.py test_web2_client_mvp.py test_web2_host_integration.py test_web2_functional_hardening.py test_web2_search_ux_m1.py test_web2_product_card_m2.py test_web2_cart_m3.py
           node --check web2/app.js
 
       - name: Staging API regression
@@ -53,6 +54,9 @@ jobs:
 
       - name: Product Card M2 browser regression
         run: python -B -m unittest -v test_web2_product_card_m2.py
+
+      - name: Cart UX M3 browser regression
+        run: python -B -m unittest -v test_web2_cart_m3.py
 
       - name: Upload MVP screenshots
         uses: actions/upload-artifact@v4
