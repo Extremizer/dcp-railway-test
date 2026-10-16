@@ -228,6 +228,8 @@ def _claim() -> dict | None:
     if lease.tzinfo is None or lease <= datetime.now(timezone.utc):
         raise ValueError("invalid_claim_lease")
     manufacturer, oem = _identity(item.get("manufacturer"), item.get("oem"))
+    if not all(item.get(key) for key in ("item_category","category_source_kind","category_source_ref","category_verified_at")):
+        raise ValueError("category_claim_evidence_missing")
     if item["oem"] != oem or item["manufacturer"] != manufacturer:
         raise ValueError("noncanonical_claim_identity")
     return item
@@ -438,7 +440,7 @@ def run_once() -> bool:
             return False
         _journal("lookup_inflight", item)
         try:
-            raw = oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"])
+            raw = oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"], category_evidence=item)
         except Exception:
             raw = {"status": "TECHNICAL_ERROR"}
         result = _validated_result(item, raw)
