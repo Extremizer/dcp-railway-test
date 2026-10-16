@@ -81,6 +81,37 @@ class Stage9LinuxMockTests(unittest.TestCase):
         self.assertEqual(r.fake_lookup("Arctic Cat", "2670-265")["status"], "TECHNICAL_ERROR")
         self.assertNotIn("dealer_price_usd", r.fake_lookup("Arctic Cat", "2670-265"))
 
+
+    def test_identity_guard_rejects_auto_unknown_and_unapproved(self):
+        approved = {("Arctic Cat", "2670-265")}
+        for manufacturer in ("__AUTO__", "AUTO", "UNKNOWN", "", "Honda"):
+            with self.subTest(manufacturer=manufacturer):
+                self.assertFalse(r.identity_approved(
+                    {"manufacturer": manufacturer, "oem": "2670-265"}, approved))
+        self.assertTrue(r.identity_approved(
+            {"manufacturer": "Arctic Cat", "oem": "2670-265"}, approved))
+        self.assertFalse(r.identity_approved(
+            {"manufacturer": "Arctic Cat", "oem": "other"}, approved))
+
+    def test_unverified_claim_quarantines_without_supplier_call(self):
+        for manufacturer in ("__AUTO__", "UNKNOWN", "Honda"):
+            with self.subTest(manufacturer=manufacturer):
+                if self.cfg["journal"].exists():
+                    self.cfg["journal"].unlink()
+                supplier = Mock()
+                def claim():
+                    self.cfg["journal"].write_text('{"phase":"claim_delivery_uncertain"}')
+                    return {"manufacturer": manufacturer, "oem": "2670-265"}
+                fake = SimpleNamespace(
+                    _claim=claim,
+                    oemixibot_dcp_price=SimpleNamespace(),
+                    run_once=lambda: fake._claim() and fake.oemixibot_dcp_price.get_dealer_price_dict(manufacturer, "2670-265"))
+                self.assertEqual(r.execute(self.cfg, agent=fake, lookup=supplier,
+                    approved_identities={("Arctic Cat", "2670-265")}), 24)
+                supplier.assert_not_called()
+                self.assertTrue(self.cfg["journal"].exists())
+                self.assertEqual(json.loads(self.cfg["status"].read_text())["runner"], "quarantined")
+
     def test_no_windows_fallback(self):
         with patch.object(r.sys, "platform", "win32"):
             with self.assertRaises(r.UnsafeConfiguration):
