@@ -95,5 +95,33 @@ class Stage2ServerCategoryTests(unittest.TestCase):
             self.assertFalse(conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='dealer_price_cache'").fetchone())
             self.assertEqual(conn.execute("SELECT status FROM dp_live_requests").fetchone()[0],"claimed")
 
+    def test_previous_alias_and_conflicts(self):
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("UPDATE oem_catalog_cache SET current_oem='NEW-1'")
+            conn.execute("UPDATE oem_catalog_aliases SET current_oem='NEW-1',alias_kind='previous'")
+            conn.execute("ALTER TABLE oem_catalog_cache ADD COLUMN previous_oems_json TEXT DEFAULT '[]'")
+            conn.execute("UPDATE oem_catalog_cache SET previous_oems_json='[\"2206328\"]'")
+            self.assertEqual(authority.resolve(conn,"Polaris","2206328")["resolved_oem"],"NEW-1")
+            conn.execute("UPDATE oem_catalog_cache SET previous_oems_json='[]'")
+            self.assertIsNone(authority.resolve(conn,"Polaris","2206328"))
+            conn.execute("UPDATE oem_catalog_cache SET previous_oems_json='[\"2206328\"]'")
+            conn.execute("INSERT INTO oem_catalog_cache (manufacturer,current_oem,catalog,msrp_verified,source_kind,source_ref,last_verified_at) SELECT manufacturer,'2206328','Accessories',1,source_kind,source_ref,last_verified_at FROM oem_catalog_cache LIMIT 1")
+            self.assertIsNone(authority.resolve(conn,"Polaris","2206328"))
+
+    def test_invalid_source_kinds(self):
+        with sqlite3.connect(self.db) as conn:
+            for kind in ("verified_public_msrp","verified_public_catalog","arbitrary"):
+                conn.execute("UPDATE oem_catalog_cache SET source_kind=?",(kind,))
+                self.assertIsNone(authority.resolve(conn,"Polaris","2206328"))
+            conn.execute("UPDATE oem_catalog_cache SET source_kind='live_public_form_metadata'")
+            self.assertEqual(authority.resolve(conn,"Polaris","2206328")["item_category"],"Parts")
+
+    def test_legacy_dealer_cache_cannot_bypass_hold(self):
+        import dcp_price_gateway
+        with sqlite3.connect(self.db) as conn:
+            conn.execute("CREATE TABLE dealer_price_cache(manufacturer TEXT,oem TEXT,dealer_price_usd REAL,source TEXT,last_verified_at TEXT)")
+            conn.execute("INSERT INTO dealer_price_cache VALUES (?,?,?,?,?)",("Polaris","2206328",184.07,"verified_local_dcp:live_dom:#add_2206328 .c2 .dbl",datetime.now(timezone.utc).isoformat()))
+        self.assertIsNone(dcp_price_gateway._read_cache(self.db,"Polaris","2206328",24))
+
 if __name__=="__main__":
     unittest.main()
