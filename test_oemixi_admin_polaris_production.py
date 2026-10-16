@@ -1,153 +1,185 @@
+import io
+import json
 import os
-import sqlite3
-import tempfile
 import unittest
-from pathlib import Path
+import urllib.error
 from unittest.mock import patch
 
-import dcp_category_authority
 import oemixi_admin_polaris_production as prod
-import polaris_production_authority_seed as seedmod
+import oemixi_category_authority_client as client
+from polaris_probe_errors import ProbeFailure
 
 
-def create_authority_tables(path):
-    with sqlite3.connect(path) as conn:
-        conn.execute("""CREATE TABLE oem_catalog_cache(
-            manufacturer TEXT NOT NULL,
-            current_oem TEXT NOT NULL,
-            name TEXT,
-            catalog TEXT,
-            msrp_usd REAL,
-            msrp_verified INTEGER NOT NULL DEFAULT 0,
-            previous_oems_json TEXT,
-            source_kind TEXT,
-            source_ref TEXT,
-            first_seen_at TEXT,
-            last_verified_at TEXT,
-            PRIMARY KEY(manufacturer,current_oem)
-        )""")
-        conn.execute("""CREATE TABLE oem_catalog_aliases(
-            manufacturer TEXT NOT NULL,
-            alias_oem TEXT NOT NULL,
-            current_oem TEXT NOT NULL,
-            alias_kind TEXT NOT NULL,
-            PRIMARY KEY(manufacturer,alias_oem)
-        )""")
-        conn.commit()
+VECTOR_SECRET="0123456789abcdef0123456789abcdef"
+VECTOR_TS="1760640000"
+VECTOR_SIG="18ba501685a5550122c50f1795795ae4c01fcd4221e48e48dcc2491cfc90efe5"
+
+
+class FakeResponse:
+    def __init__(self,payload):
+        self.raw=json.dumps(payload).encode("utf-8")
+    def __enter__(self):
+        return self
+    def __exit__(self,*args):
+        return False
+    def read(self,n=-1):
+        return self.raw if n<0 else self.raw[:n]
 
 
 class ProductionWiringTests(unittest.TestCase):
-    def test_01_resolver_requires_explicit_existing_db(self):
-        with patch.dict(os.environ, {}, clear=True):
-            with self.assertRaisesRegex(RuntimeError, "EXTREMIZER_ORDERS_DB_FILE_REQUIRED"):
-                prod.make_category_resolver()
-        with self.assertRaisesRegex(RuntimeError, "EXTREMIZER_ORDERS_DB_FILE_NOT_FOUND"):
-            prod.make_category_resolver(Path("definitely-missing.db"))
+    def test_01_signature_vector(self):
+        body=client.canonical_body("Polaris","2205250")
+        self.assertEqual(
+            body,
+            b'{"manufacturer":"Polaris","oem":"2205250"}',
+        )
+        self.assertEqual(
+            client.sign_request(VECTOR_SECRET,timestamp=VECTOR_TS,body=body),
+            VECTOR_SIG,
+        )
 
-    def test_02_resolver_reads_production_authority_read_only(self):
-        with tempfile.TemporaryDirectory() as d:
-            db=Path(d)/"orders.db"
-            create_authority_tables(db)
-            with sqlite3.connect(db) as conn:
-                conn.execute("""INSERT INTO oem_catalog_cache(
-                    manufacturer,current_oem,name,catalog,msrp_usd,msrp_verified,
-                    previous_oems_json,source_kind,source_ref,first_seen_at,last_verified_at
-                ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                ("Polaris","2206328","QUICKDRIVE BELT KIT","Parts",239.99,1,
-                 '["2205250"]',"validated_public_msrp","fixture",
-                 "2026-10-16T18:00:00+00:00","2026-10-16T18:00:00+00:00"))
-                conn.execute("""INSERT INTO oem_catalog_aliases VALUES(?,?,?,?)""",
-                             ("Polaris","2206328","2206328","current"))
-                conn.execute("""INSERT INTO oem_catalog_aliases VALUES(?,?,?,?)""",
-                             ("Polaris","2205250","2206328","previous"))
-                conn.commit()
+    def test_02_https_required(self):
+        with self.assertRaisesRegex(ValueError,"https_authority_url_required"):
+            client.HTTPSCategoryAuthorityResolver(
+                "http://example.test",VECTOR_SECRET
+            )
 
-            resolver=prod.make_category_resolver(db)
-            old=resolver("Polaris","2205250")
-            current=resolver("Polaris","2206328")
-            self.assertEqual(old["resolved_oem"],"2206328")
-            self.assertEqual(current["resolved_oem"],"2206328")
-            self.assertEqual(old["item_category"],"Parts")
+    def test_03_verified_response_parsed(self):
+        seen={}
+        def opener(req,timeout):
+            seen["url"]=req.full_url
+            seen["method"]=req.get_method()
+            seen["body"]=req.data
+            seen["headers"]={k.lower():v for k,v in req.header_items()}
+            return FakeResponse({
+                "status":"CATEGORY_VERIFIED",
+                "manufacturer":"Polaris",
+                "requested_oem":"2205250",
+                "resolved_oem":"2206328",
+                "item_category":"Parts",
+                "category_source_kind":"validated_public_msrp",
+                "category_source_ref":"fixture",
+                "category_verified_at":"2026-10-16T18:00:00+00:00",
+            })
+        resolver=client.HTTPSCategoryAuthorityResolver(
+            "https://authority.example",VECTOR_SECRET,opener=opener
+        )
+        result=resolver("Polaris","2205250")
+        self.assertEqual(result["resolved_oem"],"2206328")
+        self.assertEqual(result["item_category"],"Parts")
+        self.assertEqual(seen["method"],"POST")
+        self.assertTrue(seen["url"].endswith(client.PATH))
+        self.assertIn("x-oemixi-authority-ts",seen["headers"])
+        self.assertIn("x-oemixi-authority-sig",seen["headers"])
 
-            with self.assertRaises(sqlite3.OperationalError):
-                with prod._connect_read_only(db) as conn:
-                    conn.execute("DELETE FROM oem_catalog_aliases")
+    def test_04_unverified_response_is_none(self):
+        resolver=client.HTTPSCategoryAuthorityResolver(
+            "https://authority.example",VECTOR_SECRET,
+            opener=lambda req,timeout:FakeResponse({
+                "status":"CATEGORY_UNVERIFIED",
+                "manufacturer":"Polaris",
+                "requested_oem":"9999999",
+            }),
+        )
+        self.assertIsNone(resolver("Polaris","9999999"))
 
-    def test_03_provider_is_admin_only_and_preserves_global_fields(self):
-        with tempfile.TemporaryDirectory() as d:
-            db=Path(d)/"orders.db"
-            create_authority_tables(db)
-            with patch.object(prod, "admin_browser_price") as call:
-                call.return_value={
-                    "status":"ADMIN_DEALER_CART_PRICE_VERIFIED",
-                    "admin_unit_price_usd":"184.07",
-                    "dealer_price_usd":None,
-                    "production_found":False,
-                }
-                provider=prod.make_admin_polaris_provider(db)
-                result=provider("2205250")
-            self.assertEqual(result["admin_unit_price_usd"],"184.07")
-            self.assertIsNone(result["dealer_price_usd"])
-            self.assertIs(result["production_found"],False)
-            self.assertEqual(call.call_count,1)
+    def test_05_auth_http_error_is_stable(self):
+        def opener(req,timeout):
+            raise urllib.error.HTTPError(
+                req.full_url,401,"Unauthorized",{},io.BytesIO(b"")
+            )
+        resolver=client.HTTPSCategoryAuthorityResolver(
+            "https://authority.example",VECTOR_SECRET,opener=opener
+        )
+        with self.assertRaises(client.CategoryAuthorityTransportError) as cm:
+            resolver("Polaris","2205250")
+        self.assertEqual(cm.exception.code,"CATEGORY_AUTHORITY_AUTH_FAILED")
 
-    def test_04_build_application_binds_provider_explicitly(self):
+    def test_06_network_error_is_stable(self):
+        def opener(req,timeout):
+            raise OSError("offline")
+        resolver=client.HTTPSCategoryAuthorityResolver(
+            "https://authority.example",VECTOR_SECRET,opener=opener
+        )
+        with self.assertRaises(client.CategoryAuthorityTransportError) as cm:
+            resolver("Polaris","2205250")
+        self.assertEqual(cm.exception.code,"CATEGORY_AUTHORITY_UNAVAILABLE")
+
+    def test_07_invalid_payload_is_stable(self):
+        resolver=client.HTTPSCategoryAuthorityResolver(
+            "https://authority.example",VECTOR_SECRET,
+            opener=lambda req,timeout:FakeResponse({
+                "status":"CATEGORY_VERIFIED",
+                "resolved_oem":"2206328",
+            }),
+        )
+        with self.assertRaises(client.CategoryAuthorityTransportError) as cm:
+            resolver("Polaris","2205250")
+        self.assertEqual(cm.exception.code,"CATEGORY_AUTHORITY_INVALID_RESPONSE")
+
+    def test_08_production_resolver_maps_transport_failure(self):
+        class Broken:
+            def __init__(self,*a,**k): pass
+            def __call__(self,*a,**k):
+                raise client.CategoryAuthorityTransportError(
+                    "CATEGORY_AUTHORITY_AUTH_FAILED"
+                )
+        with patch.object(prod,"HTTPSCategoryAuthorityResolver",Broken):
+            resolver=prod.make_category_resolver(
+                base_url="https://authority.example",
+                root_secret=VECTOR_SECRET,
+            )
+            with self.assertRaises(ProbeFailure) as cm:
+                resolver("Polaris","2205250")
+        self.assertEqual(cm.exception.code,"CATEGORY_AUTHORITY_AUTH_FAILED")
+
+    def test_09_provider_preserves_admin_only_fields(self):
+        evidence={
+            "resolved_oem":"2206328",
+            "item_category":"Parts",
+            "category_source_kind":"validated_public_msrp",
+            "category_source_ref":"fixture",
+            "category_verified_at":"2026-10-16T18:00:00+00:00",
+        }
+        class Transport:
+            def __init__(self,*a,**k): pass
+            def __call__(self,*a,**k): return evidence
+        with patch.object(prod,"HTTPSCategoryAuthorityResolver",Transport), \
+             patch.object(prod,"admin_browser_price") as price:
+            price.return_value={
+                "status":"ADMIN_DEALER_CART_PRICE_VERIFIED",
+                "admin_unit_price_usd":"184.07",
+                "dealer_price_usd":None,
+                "production_found":False,
+            }
+            provider=prod.make_admin_polaris_provider(
+                base_url="https://authority.example",
+                root_secret=VECTOR_SECRET,
+            )
+            result=provider("2205250")
+        self.assertEqual(result["admin_unit_price_usd"],"184.07")
+        self.assertIsNone(result["dealer_price_usd"])
+        self.assertIs(result["production_found"],False)
+
+    def test_10_build_application_binds_explicit_provider(self):
         fake_app=object()
-        with patch("oemixibot_app.build_application", return_value=fake_app) as build, \
+        with patch("oemixibot_app.build_application",return_value=fake_app) as build, \
              patch("oemixibot_app.bind_admin_polaris_price_resolver") as bind, \
-             patch.object(prod, "make_admin_polaris_provider", return_value="provider"):
-            result=prod.build_application("token", db_path=Path(__file__))
+             patch.object(prod,"make_admin_polaris_provider",return_value="provider"):
+            result=prod.build_application(
+                VECTOR_SECRET,
+                base_url="https://authority.example",
+            )
         self.assertIs(result,fake_app)
-        build.assert_called_once_with("token")
+        build.assert_called_once_with(VECTOR_SECRET)
         bind.assert_called_once_with(fake_app,"provider")
 
-    def test_05_seed_is_idempotent_and_resolves_both_oems(self):
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
-            db=Path(d)/"orders.db"
-            create_authority_tables(db)
-            first=seedmod.seed(db)
-            second=seedmod.seed(db)
-            self.assertEqual(first["status"],"SEEDED")
-            self.assertEqual(second["status"],"SEEDED")
-            with sqlite3.connect(db) as conn:
-                self.assertEqual(
-                    conn.execute("""SELECT COUNT(*) FROM oem_catalog_cache
-                                   WHERE manufacturer='Polaris'""").fetchone()[0],1)
-                self.assertEqual(
-                    conn.execute("""SELECT COUNT(*) FROM oem_catalog_aliases
-                                   WHERE manufacturer='Polaris'""").fetchone()[0],2)
-                self.assertEqual(
-                    dcp_category_authority.resolve(conn,"Polaris","2205250")["resolved_oem"],
-                    "2206328")
-                self.assertEqual(
-                    dcp_category_authority.resolve(conn,"Polaris","2206328")["resolved_oem"],
-                    "2206328")
-
-    def test_06_seed_conflict_blocks_before_write(self):
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as d:
-            db=Path(d)/"orders.db"
-            create_authority_tables(db)
-            with sqlite3.connect(db) as conn:
-                conn.execute("""INSERT INTO oem_catalog_cache(
-                    manufacturer,current_oem,catalog,msrp_verified
-                ) VALUES(?,?,?,?)""",("Polaris","2205250","Accessories",1))
-                conn.commit()
-                before=conn.total_changes
-            with self.assertRaisesRegex(RuntimeError,"AUTHORITY_CONFLICT_OLD_DIRECT"):
-                seedmod.seed(db)
-            with sqlite3.connect(db) as conn:
-                self.assertEqual(
-                    conn.execute("SELECT COUNT(*) FROM oem_catalog_aliases").fetchone()[0],0)
-                self.assertEqual(
-                    conn.execute("""SELECT COUNT(*) FROM oem_catalog_cache
-                                   WHERE current_oem='2206328'""").fetchone()[0],0)
-
-    def test_07_seed_missing_tables_fails_closed(self):
-        with tempfile.TemporaryDirectory() as d:
-            db=Path(d)/"orders.db"
-            sqlite3.connect(db).close()
-            with self.assertRaisesRegex(RuntimeError,"AUTHORITY_TABLES_MISSING"):
-                seedmod.preflight(db)
+    def test_11_default_production_url_is_https(self):
+        with patch.dict(os.environ,{},clear=True):
+            self.assertEqual(
+                prod._base_url(),
+                "https://dcp-railway-test-production.up.railway.app",
+            )
 
 
 if __name__=="__main__":
