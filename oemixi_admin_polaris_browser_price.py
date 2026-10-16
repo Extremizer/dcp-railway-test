@@ -34,8 +34,17 @@ def _category(oem,resolver,now):
     for k in ("category_source_kind","category_source_ref","category_verified_at"):
         if not isinstance(evidence.get(k),str) or not evidence[k].strip():
             raise ProbeFailure("CATEGORY_UNVERIFIED")
+    kind=evidence["category_source_kind"].strip()
+    ttl_seconds={
+        "validated_public_msrp": 720*3600,
+        "validated_public_msrp_cache": 720*3600,
+        "live_public_form_metadata": 24*3600,
+    }.get(kind)
+    if ttl_seconds is None:
+        raise ProbeFailure("CATEGORY_UNVERIFIED")
     stamp=datetime.fromisoformat(evidence["category_verified_at"].replace("Z","+00:00"))
-    if stamp.tzinfo is None or not (0 <= (now-stamp).total_seconds() <= 86400):
+    age=(now-stamp).total_seconds() if stamp.tzinfo is not None else -1
+    if stamp.tzinfo is None or not (0 <= age <= ttl_seconds):
         raise ProbeFailure("CATEGORY_STALE")
     return evidence
 
