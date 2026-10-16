@@ -1,4 +1,4 @@
-import tempfile,unittest
+import tempfile,unittest,json,os
 from pathlib import Path
 from polaris_probe_cart_transaction import run_probe,recover_probe
 from polaris_probe_cart_delta import prove_delta
@@ -50,7 +50,8 @@ class Hardened(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             j=Path(d)/"j";lock=Path(d)/"lock"
             delta=prove_delta({"lines":[]},f.snapshot(),OEM)
-            Journal(j).save({"requested_oem":OEM,"initial_cart_snapshot":{"lines":[]},"delta":delta})
+            Journal(j).save({"probe_id":"dead-probe","owner_instance_id":"dead-instance","mutation_state":"MUTATION_CONFIRMED","requested_oem":OEM,"initial_cart_snapshot":{"lines":[]},"delta":delta})
+            lock.write_text(json.dumps({"probe_id":"dead-probe","owner_instance_id":"dead-instance","pid":999999999,"created_at":"2026-10-16T12:00:00+00:00"}))
             self.assertEqual(recover_probe(f,lock_path=lock,journal_path=j)["status"],"RESTORED")
             self.assertFalse(f.lines)
     def test_08_recovery_after_price(self):self.test_07_recovery_new_line()
