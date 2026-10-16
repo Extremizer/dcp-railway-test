@@ -136,13 +136,14 @@ def execute(config, *, agent=None, lookup=None, approved_identities=()):
         supplier = lookup or fake_lookup
         agent.oemixibot_dcp_price.get_dealer_price_dict = supplier
         agent._auto_identity_price = lambda oem: {"status": "TECHNICAL_ERROR", "error_code": "UNVERIFIED_IDENTITY"}
-        original_claim = agent._claim
-        def guarded_claim():
-            item = original_claim()
-            if item is not None and not identity_approved(item, approved_identities):
-                raise UnsafeConfiguration("unverified_identity")
-            return item
-        agent._claim = guarded_claim
+        if hasattr(agent, '_claim'):
+            original_claim = agent._claim
+            def guarded_claim():
+                item = original_claim()
+                if item is not None and not identity_approved(item, approved_identities):
+                    raise UnsafeConfiguration('unverified_identity')
+                return item
+            agent._claim = guarded_claim
         try:
             completed = agent.run_once()  # existing fenced claim / v2 POST / atomic completion
             if agent.JOURNAL_FILE.exists() or agent._PRODUCER_STOP:
