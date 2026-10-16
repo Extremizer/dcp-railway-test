@@ -18,12 +18,39 @@ const scrim = $("scrim");
 let currentProduct = null;
 let currentQty = 1;
 let stockPollSerial = 0;
+function validCartItem(x) {
+  if (!x || typeof x !== "object" || typeof x.manufacturer !== "string" ||
+      !x.manufacturer.trim() || typeof x.oem !== "string" || !x.oem.trim() ||
+      !["usa", "warehouse"].includes(x.offer_source) ||
+      !Number.isSafeInteger(x.unit_rub) || x.unit_rub < 0 ||
+      !Number.isInteger(x.qty) || x.qty < 1 || x.qty > 99 ||
+      typeof x.key !== "string" || !x.key.startsWith(x.manufacturer + "|" + x.oem + "|")) return false;
+  if (x.offer_source === "warehouse") {
+    if (x.warehouse_id == null || !Number.isInteger(x.available_quantity) ||
+        x.available_quantity < 1 || x.qty > x.available_quantity) return false;
+  } else if (x.warehouse_id != null) return false;
+  return true;
+}
+function normalizeCart(items) {
+  const result = [];
+  if (!Array.isArray(items)) return result;
+  for (const item of items) {
+    if (!validCartItem(item)) continue;
+    const existing = result.find(x => x.key === item.key);
+    if (existing) {
+      // Preserve the first trusted snapshot; reject conflicting persisted duplicates.
+      if (existing.unit_rub !== item.unit_rub ||
+          existing.warehouse_id !== item.warehouse_id) continue;
+      const max = item.offer_source === "warehouse" ? existing.available_quantity : 99;
+      existing.qty = Math.min(max, existing.qty + item.qty);
+    } else result.push({ ...item, currency: "RUB" });
+  }
+  return result;
+}
 let cart = [];
 try {
   const stored = JSON.parse(localStorage.getItem("extremizer_web2_cart") || "[]");
-  if (Array.isArray(stored)) cart = stored.filter((x) =>
-    x && typeof x.key === "string" && Number.isInteger(x.qty) &&
-    x.qty > 0 && x.qty <= 99 && Number.isFinite(x.unit_rub) && x.unit_rub >= 0);
+  cart = normalizeCart(stored);
 } catch (_) { cart = []; }
 
 function node(tag, cls, value) {
@@ -304,7 +331,7 @@ $("offers").addEventListener("click", (event) => {
   if (!offerKey || !currentProduct) return;
 
   const offer = (currentProduct.offers || []).find((x) => x.key === offerKey);
-  if (!usableOffer(offer) || typeof currentProduct.oem !== "string" || !currentProduct.oem.trim() ||
+  if (!usableOffer(offer) || !Number.isSafeInteger(offer.price_rub) || typeof currentProduct.oem !== "string" || !currentProduct.oem.trim() ||
       typeof currentProduct.manufacturer !== "string" || !currentProduct.manufacturer.trim()) return;
 
   const key = `${currentProduct.manufacturer}|${currentProduct.oem}|${offer.key}`;
@@ -327,6 +354,7 @@ $("offers").addEventListener("click", (event) => {
       warehouse_id: offer.warehouse_id,
       source_label: offer.source === "usa" ? "склад США" : offer.label,
       unit_rub: offer.price_rub,
+      currency: "RUB",
       available_quantity: offer.available_quantity,
       qty: Math.min(maxQty, currentQty),
     });
@@ -336,12 +364,14 @@ $("offers").addEventListener("click", (event) => {
 });
 
 function saveCart() {
+  cart = normalizeCart(cart);
   localStorage.setItem("extremizer_web2_cart", JSON.stringify(cart));
   renderCart();
   if (currentProduct) renderOffers(currentProduct.offers || []);
 }
 
 function renderCart() {
+  cart = normalizeCart(cart);
   const itemCount = cart.reduce((sum, x) => sum + x.qty, 0);
   $("cartCount").textContent = itemCount;
   $("cartButton").classList.toggle("has-items", itemCount > 0);
@@ -404,9 +434,11 @@ $("continueSearchButton").addEventListener("click", () => {
 $("cartItems").addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  const remove = target.dataset.remove;
-  const minus = target.dataset.minus;
-  const plus = target.dataset.plus;
+  const button = target.closest("button");
+  if (!button || !$("cartItems").contains(button)) return;
+  const remove = button.dataset.remove;
+  const minus = button.dataset.minus;
+  const plus = button.dataset.plus;
   if (remove !== undefined) cart.splice(Number(remove), 1);
   if (minus !== undefined) {
     const item = cart[Number(minus)];
@@ -428,7 +460,8 @@ $("cartItems").addEventListener("click", (event) => {
 });
 
 $("telegramButton").addEventListener("click", async () => {
-  if (!cart.length) return;
+  cart = normalizeCart(cart);
+  if (!cart.length) { renderCart(); return; }
   const button = $("telegramButton");
   const old = button.textContent;
   button.disabled = true;
