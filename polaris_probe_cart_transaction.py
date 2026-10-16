@@ -1,78 +1,110 @@
-"""Isolated probe-cart transaction, driven ONLY by an injected fake/authorized adapter.
-
-Adapter protocol: snapshot(), verify(), add_one(oem), remove_line(token),
-price(oem,snapshot). No live adapter is provided here.
-"""
+"""Isolated fail-closed probe transaction; adapter is injected, never opened here."""
 import os,uuid
 from datetime import datetime,timezone
-from polaris_cart_snapshot import canonical,digest,exact_new_line
+from decimal import Decimal
+from polaris_cart_snapshot import canonical,digest
+from polaris_probe_cart_delta import prove_delta
 from polaris_probe_cart_recovery import ProbeLock,ProbeBusy,Journal
 
-def run_probe(oem, adapter, *, lock_path, journal_path):
-    def fail(reason,restored=False,mutated=False):
-        return {"status":reason,"admin_unit_price_usd":None,"cart_mutated":mutated,
-                "cart_restored":restored,"production_found":False,"dealer_price_usd":None}
+def _result(status,price=None,mutated=False,restored=False):
+    return dict(status=status,admin_unit_price_usd=price,cart_mutated=mutated,
+        cart_restored=restored,production_found=False,dealer_price_usd=None)
+
+def _safe(adapter):
+    return adapter.verify() is True
+
+def _price(adapter,oem,snapshot,line):
+    value=Decimal(str(adapter.price(oem,snapshot)))
+    if not value.is_finite() or value<=0 or value!=Decimal(line["unit_price"]):
+        raise ValueError("PRICE_UNVERIFIED")
+    return str(value)
+
+def recover_probe(adapter,*,lock_path,journal_path):
+    """Only recover a journal with proven exact delta. Never guess after uncertain add."""
     journal=Journal(journal_path)
     try:
         with ProbeLock(lock_path):
-            if journal.read() is not None:
-                return fail("RECOVERY_REQUIRED")
+            rec=journal.read()
+            if rec is None:return _result("NO_RECOVERY_NEEDED",restored=True)
             try:
-                if adapter.verify() is not True:
-                    return fail("AUTH_REQUIRED")
+                if not _safe(adapter):return _result("RECOVERY_REQUIRED")
+                original=rec["initial_cart_snapshot"]
+                delta=rec.get("delta")
+                if not isinstance(delta,dict):return _result("RECOVERY_REQUIRED")
+                current=adapter.snapshot()
+                proof=prove_delta(original,current,rec["requested_oem"])
+                if proof!=delta:return _result("RECOVERY_REQUIRED")
+                journal.save({**rec,"cleanup_state":"STARTED","last_step":"RECOVERY_CLEANUP"})
+                if not _safe(adapter):return _result("RECOVERY_REQUIRED")
+                if proof["kind"]=="new":adapter.remove_line(proof["token"])
+                else:adapter.decrement_one(proof["token"])
+                if not _safe(adapter) or digest(adapter.snapshot())!=digest(original):
+                    return _result("RECOVERY_REQUIRED")
+                journal.save({**rec,"mutation_state":"RESTORED","cleanup_state":"RESTORED"})
+                journal.clear()
+                return _result("RESTORED",restored=True,mutated=True)
+            except Exception:return _result("RECOVERY_REQUIRED")
+    except ProbeBusy:return _result("BUSY")
+
+def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
+    journal=Journal(journal_path)
+    probe_id=uuid.uuid4().hex
+    try:
+        with ProbeLock(lock_path,probe_id=probe_id):
+            if journal.read() is not None:return _result("RECOVERY_REQUIRED")
+            try:
+                if not _safe(adapter):return _result("AUTH_REQUIRED")
                 initial=adapter.snapshot()
                 base=canonical(initial)
                 matches=[x for x in base["lines"] if x["sku"]==oem]
-                if len(matches)>1:return fail("AMBIGUOUS_SKU")
+                if len(matches)>1:return _result("AMBIGUOUS_SKU")
+                if dry_run:
+                    return _result("DRY_RUN_READY",restored=True)
                 if matches:
-                    price=adapter.price(oem,initial)
-                    if digest(adapter.snapshot())!=digest(initial):
-                        return fail("CART_CHANGED")
-                    if str(price)!=str(matches[0]["unit_price"]):
-                        return fail("PRICE_UNVERIFIED")
-                    return {"status":"ADMIN_DEALER_CART_PRICE_VERIFIED","admin_unit_price_usd":str(price),
-                            "cart_mutated":False,"cart_restored":True,
-                            "production_found":False,"dealer_price_usd":None}
-                record={"probe_id":uuid.uuid4().hex,"requested_oem":oem,
-                        "started_at":datetime.now(timezone.utc).isoformat(),"owner_pid":os.getpid(),
-                        "initial_cart_snapshot":base,"mutation_state":"PREPARED",
-                        "affected_line_token":None,"qty_before":0,"qty_after":1,
-                        "last_step":"PREPARED","cleanup_state":"PENDING"}
-                journal.save(record)
-                added=None; price=None; restored=False
+                    if not _safe(adapter):return _result("AUTH_REQUIRED")
+                    price=_price(adapter,oem,initial,matches[0])
+                    if not _safe(adapter) or digest(adapter.snapshot())!=digest(initial):
+                        return _result("CART_CHANGED")
+                    return _result("ADMIN_DEALER_CART_PRICE_VERIFIED",price,restored=True)
+                rec={"probe_id":probe_id,"owner_pid":os.getpid(),
+                    "started_at":datetime.now(timezone.utc).isoformat(),
+                    "requested_oem":oem,"initial_cart_snapshot":base,
+                    "mutation_state":"PREPARED","last_step":"PREPARED",
+                    "cleanup_state":"PENDING","delta":None}
+                journal.save(rec)
+                delta=None;price=None;restored=False
                 try:
-                    record["mutation_state"]="MUTATION_STARTED";record["last_step"]="ADD_ONE";journal.save(record)
+                    if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
+                    rec.update(mutation_state="MUTATION_STARTED",last_step="ADD_ONE")
+                    journal.save(rec)
                     adapter.add_one(oem)
+                    if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
                     after=adapter.snapshot()
-                    added=exact_new_line(initial,after,oem)
-                    record["affected_line_token"]=added["token"]
-                    record["mutation_state"]="MUTATION_CONFIRMED"
-                    record["last_step"]="AFTER_ADD";journal.save(record)
-                    price=adapter.price(oem,after)
-                    if str(price)!=added["unit_price"]:raise ValueError("PRICE_UNVERIFIED")
-                    record["mutation_state"]="PRICE_CAPTURED";record["last_step"]="PRICE";journal.save(record)
+                    delta=prove_delta(initial,after,oem)
+                    rec.update(delta=delta,mutation_state="MUTATION_CONFIRMED",last_step="AFTER_ADD")
+                    journal.save(rec)
+                    if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
+                    line=next(x for x in canonical(after)["lines"] if x["token"]==delta["token"])
+                    price=_price(adapter,oem,after,line)
+                    rec.update(mutation_state="PRICE_CAPTURED",last_step="PRICE")
+                    journal.save(rec)
                 except Exception:
-                    pass
+                    price=None
                 finally:
-                    record["cleanup_state"]="STARTED";record["last_step"]="CLEANUP";journal.save(record)
+                    rec.update(cleanup_state="STARTED",last_step="CLEANUP")
+                    journal.save(rec)
                     try:
-                        # When ADD outcome is uncertain, never guess the token:
-                        # leave durable recovery marker and block future probes.
-                        if added is not None:
-                            adapter.remove_line(added["token"])
-                        restored=digest(adapter.snapshot())==digest(initial)
-                    except Exception:
-                        restored=False
-                    record["cleanup_state"]="RESTORED" if restored else "RECOVERY_REQUIRED"
-                    record["mutation_state"]=record["cleanup_state"]
-                    journal.save(record)
-                if not restored:return fail("RESTORATION_FAILED",mutated=True)
+                        if delta is not None and _safe(adapter):
+                            if delta["kind"]=="new":adapter.remove_line(delta["token"])
+                            else:adapter.decrement_one(delta["token"])
+                        restored=_safe(adapter) and digest(adapter.snapshot())==digest(initial)
+                    except Exception:restored=False
+                    rec.update(cleanup_state="RESTORED" if restored else "RECOVERY_REQUIRED",
+                               mutation_state="RESTORED" if restored else "RECOVERY_REQUIRED")
+                    journal.save(rec)
+                if not restored:return _result("RESTORATION_FAILED",mutated=True)
                 journal.clear()
-                if price is None or added is None:return fail("PROBE_UNVERIFIED",restored=True,mutated=True)
-                return {"status":"ADMIN_PROBE_CART_PRICE_VERIFIED",
-                        "admin_unit_price_usd":str(price),"cart_mutated":True,
-                        "cart_restored":True,"production_found":False,"dealer_price_usd":None}
-            except Exception:
-                return fail("PROBE_UNVERIFIED")
-    except ProbeBusy:
-        return fail("BUSY")
+                if price is None:return _result("PROBE_UNVERIFIED",mutated=True,restored=True)
+                return _result("ADMIN_PROBE_CART_PRICE_VERIFIED",price,True,True)
+            except Exception:return _result("PROBE_UNVERIFIED")
+    except ProbeBusy:return _result("BUSY")
