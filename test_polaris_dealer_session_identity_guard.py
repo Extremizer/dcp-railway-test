@@ -19,6 +19,29 @@ class GuardTests(unittest.TestCase):
     def test_spaces_normalized(self): self.assertTrue(check(name=' SYNTHETIC ')['dealer_context_verified'])
     def test_no_actual_disclosure(self): self.assertNotIn('OTHER',str(check(name='OTHER')))
     def test_no_expected_disclosure(self): self.assertNotIn('SYNTHETIC',str(check(name='OTHER')))
+    def test_missing_env_config(self):
+        from unittest.mock import patch
+        with patch.dict('os.environ',{},clear=True):
+            result=verify_dealer_session(preflight=lambda:'READY')
+        self.assertEqual(result['status'],'DEALER_IDENTITY_CONFIG_MISSING')
+    def test_conflicting_markers(self):
+        result=verify_dealer_session(expected='SYNTHETIC',preflight=lambda:'READY',
+            tabs=lambda:[TAB],evaluate=lambda tab,script:{'before':URL,'after':URL,'names':['SYNTHETIC','OTHER'],'logout':True})
+        self.assertFalse(result['dealer_context_verified'])
+    def test_actual_not_logged(self):
+        import io
+        from contextlib import redirect_stdout,redirect_stderr
+        stream=io.StringIO()
+        with redirect_stdout(stream),redirect_stderr(stream):
+            check(name='OTHER')
+        self.assertNotIn('OTHER',stream.getvalue())
+    def test_expected_not_logged(self):
+        import io
+        from contextlib import redirect_stdout,redirect_stderr
+        stream=io.StringIO()
+        with redirect_stdout(stream),redirect_stderr(stream):
+            check(expected='SYNTHETIC')
+        self.assertNotIn('SYNTHETIC',stream.getvalue())
     def test_logoff_required(self): self.assertFalse(check(logout=False)['dealer_context_verified'])
 
 if __name__=='__main__': unittest.main()
