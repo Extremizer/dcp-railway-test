@@ -19,7 +19,7 @@ IDENTITY_EXPRESSION = r"""(()=> {
  return {url_before:before,url_after:location.href,names,logoff};
 })()"""
 
-def verify_dealer_identity(*, preflight, expected_account=None, tabs=None, evaluate=None):
+def verify_dealer_identity(*, preflight=None, expected_account=None, tabs=None, evaluate=None):
     """Fail-closed dealer identity, not a replacement for DCP preflight.
 
     preflight: callable invoking existing dp_sync_agent._preflight_dcp.
@@ -29,6 +29,10 @@ def verify_dealer_identity(*, preflight, expected_account=None, tabs=None, evalu
         return {"trusted_preflight":False,"dealer_authenticated":False,
                 "dealer_context_verified":False}
     configured=expected_account if expected_account is not None else os.getenv("EXTREMIZER_DCP_EXPECTED_DEALER_ACCOUNT")
+    if preflight is None:
+        # Use the existing authoritative session preflight, never a parallel one.
+        from dp_sync_agent import _preflight_dcp
+        preflight = _preflight_dcp
     if not isinstance(configured,str) or not configured.strip() or not callable(preflight):
         return reject()
     try:
@@ -65,7 +69,7 @@ def verify_dealer_identity(*, preflight, expected_account=None, tabs=None, evalu
         return reject()
 
 def inspect_verified_dealer_cart(*, requested_oem, category_evidence,
-                                preflight, expected_account=None, tabs=None,
+                                preflight=None, expected_account=None, tabs=None,
                                 evaluate=None, observed_at=None, now=None):
     """One optional read-only composed entry point. No producer hook."""
     from polaris_cart_existing_session_wiring import inspect_existing_cart
