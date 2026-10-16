@@ -194,3 +194,17 @@ footer { max-width: 1180px; margin: auto; padding: 30px 24px; border-top: 1px so
     padding-right: max(20px, env(safe-area-inset-right)); }
   footer { padding: 24px 16px; }
 }
+
+/* Product-card robustness: untrusted long OEM/name/warehouse labels. */
+.product-head > div, .product h2, .oem-line strong, .replacement,
+.stock-row > *, .offer-source, .offer-availability, .cart-item-top > div,
+.cart-item-name, .cart-item-oem, .cart-item-source { min-width: 0; overflow-wrap: anywhere; }
+.stock-row { align-items: flex-start; }
+.stock-row > span { flex: 1 1 auto; }
+.stock-row > b { flex: 0 1 auto; text-align: right; }
+.offer-buy strong, .customer-price-line strong { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 700px) {
+  .stock-row { gap: 10px; }
+  .offer-buy button { min-height: 44px; }
+  .cart-item-top { min-width: 0; }
+}
