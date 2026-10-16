@@ -74,7 +74,7 @@ class RecoveryOwnership:
                 not all(data.get(k) for k in ('probe_id','pid','created_at','owner_instance_id')) or
                 j.get('probe_id')!=data['probe_id'] or
                 j.get('owner_instance_id')!=data['owner_instance_id'] or
-                j.get('mutation_state') in (None,'RESTORED') or
+                j.get('mutation_state') not in ('MUTATION_STARTED','MUTATION_CONFIRMED','PRICE_CAPTURED','RECOVERY_REQUIRED','CLEANUP_STARTED') or
                 _pid_alive(data['pid']) is not False):
                 raise ProbeBusy('RECOVERY_REQUIRED')
             self.owner=data
