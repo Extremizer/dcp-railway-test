@@ -18,7 +18,21 @@ const scrim = $("scrim");
 let currentProduct = null;
 let currentQty = 1;
 let stockPollSerial = 0;
-let cart = JSON.parse(localStorage.getItem("extremizer_web2_cart") || "[]");
+let cart = [];
+try {
+  const stored = JSON.parse(localStorage.getItem("extremizer_web2_cart") || "[]");
+  if (Array.isArray(stored)) cart = stored.filter((x) =>
+    x && typeof x.key === "string" && Number.isInteger(x.qty) &&
+    x.qty > 0 && x.qty <= 99 && Number.isFinite(x.unit_rub) && x.unit_rub >= 0);
+} catch (_) { cart = []; }
+
+function node(tag, cls, value) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (value != null) el.textContent = String(value);
+  return el;
+}
+
 
 const rub = (value) => value == null
   ? "Цена уточняется"
@@ -49,64 +63,50 @@ function setSearchBusy(busy) {
 }
 
 function renderStock(stockData) {
-  const stock = $("stock");
-  stock.innerHTML = "";
-  if (stockData.warehouses.length) {
-    stockData.warehouses.forEach((row) => {
-      const el = document.createElement("div");
-      el.className = "stock-row";
-      const price = row.price_rub == null ? "" : ` • ${rub(row.price_rub)}`;
-      el.innerHTML = `<span>${escapeHtml(row.warehouse)}</span><b>${qtyText(row.quantity)} шт.${price}</b>`;
-      stock.appendChild(el);
-    });
-    if (stockData.refreshing) {
-      stock.insertAdjacentHTML("beforeend", '<div class="stock-note">Проверяем остальные склады…</div>');
-    }
-  } else {
-    stock.textContent = stockData.refreshing
-      ? "Проверяем склады…"
-      : (stockData.known ? "Подтверждённого остатка сейчас нет." : "Остаток уточняется.");
+  const root = $("stock");
+  root.replaceChildren();
+  const warehouses = Array.isArray(stockData?.warehouses) ? stockData.warehouses : [];
+  for (const row of warehouses) {
+    const el = node("div", "stock-row");
+    const price = row.price_rub == null ? "" : " • " + rub(row.price_rub);
+    el.append(node("span", "", row.warehouse), node("b", "", qtyText(row.quantity) + " шт." + price));
+    root.appendChild(el);
+  }
+  if (warehouses.length && stockData.refreshing) {
+    root.appendChild(node("div", "stock-note", "Проверяем остальные склады…"));
+  } else if (!warehouses.length) {
+    root.textContent = stockData?.refreshing ? "Проверяем склады…" :
+      (stockData?.known ? "Подтверждённого остатка сейчас нет." : "Остаток уточняется.");
   }
 }
 
 function renderOffers(offers = []) {
   const root = $("offers");
-  root.innerHTML = "";
-  if (!offers.length) {
-    root.innerHTML = '<div class="offer-empty">Доступные варианты покупки уточняются.</div>';
+  root.replaceChildren();
+  if (!Array.isArray(offers) || !offers.length) {
+    root.appendChild(node("div", "offer-empty", "Доступные варианты покупки уточняются."));
     return;
   }
-  offers.forEach((offer) => {
-    const el = document.createElement("article");
-    el.className = "offer-card";
-    const sourceLabel = offer.source === "usa" ? "🇺🇸 склад США" : `🇷🇺 ${escapeHtml(offer.label)}`;
-    const availability = offer.source === "usa"
-      ? "Заказ из США"
-      : `В наличии: ${qtyText(offer.available_quantity)} шт.`;
-    const price = offer.price_rub == null
-      ? "Цена уточняется"
-      : (offer.source === "usa" ? usaRub(offer.price_rub) : rub(offer.price_rub));
-    const disabled = offer.can_add ? "" : " disabled";
-    const cartKey = `${currentProduct?.manufacturer || ""}|${currentProduct?.oem || ""}|${offer.key}`;
-    const existingQty = cart.find((x) => x.key === cartKey)?.qty || 0;
-    const inCart = existingQty
-      ? `<div class="offer-in-cart">🛒 В корзине: ${existingQty} шт.</div>`
-      : "";
-    const buttonText = offer.can_add
-      ? (existingQty ? "Добавить ещё" : "В корзину")
-      : "Цена уточняется";
-    el.innerHTML = `
-      <div class="offer-meta">
-        <div class="offer-source">${sourceLabel}</div>
-        <div class="offer-availability">${availability}</div>
-        ${inCart}
-      </div>
-      <div class="offer-buy">
-        <strong>${price}</strong>
-        <button type="button" data-offer-key="${escapeHtml(offer.key)}"${disabled}>${buttonText}</button>
-      </div>`;
-    root.appendChild(el);
-  });
+  for (const offer of offers) {
+    const card = node("article", "offer-card");
+    const meta = node("div", "offer-meta");
+    meta.appendChild(node("div", "offer-source", offer.source === "usa"
+      ? "🇺🇸 склад США" : "🇷🇺 " + String(offer.label ?? "")));
+    meta.appendChild(node("div", "offer-availability", offer.source === "usa"
+      ? "Заказ из США" : "В наличии: " + qtyText(offer.available_quantity) + " шт."));
+    const key = String(currentProduct?.manufacturer ?? "") + "|" + String(currentProduct?.oem ?? "") + "|" + String(offer.key);
+    const existing = cart.find((x) => x.key === key)?.qty || 0;
+    if (existing) meta.appendChild(node("div", "offer-in-cart", "🛒 В корзине: " + existing + " шт."));
+    const buy = node("div", "offer-buy");
+    buy.appendChild(node("strong", "", offer.source === "usa" ? usaRub(offer.price_rub) : rub(offer.price_rub)));
+    const button = node("button", "", !offer.can_add ? "Цена уточняется" : existing ? "Добавить ещё" : "В корзину");
+    button.type = "button";
+    button.dataset.offerKey = String(offer.key ?? "");
+    button.disabled = !offer.can_add || offer.price_rub == null;
+    buy.appendChild(button);
+    card.append(meta, buy);
+    root.appendChild(card);
+  }
 }
 
 async function pollStock(card, serial, attempt = 0) {
@@ -201,18 +201,17 @@ function renderProduct(card) {
   if (card.stock.refreshing) pollStock(card, stockSerial);
 
   const weight = $("weight");
-  weight.innerHTML = "";
+  weight.replaceChildren();
   if (card.weight) {
-    if (card.weight.actual_kg) {
-      weight.insertAdjacentHTML("beforeend",
-        `<div class="weight-line">Фактический: <b>${card.weight.actual_kg} кг / шт.</b></div>`);
+    for (const [value, label] of [[card.weight.actual_kg, "Фактический: "],
+      [card.weight.volume_kg, "Объёмный: "]]) {
+      if (value != null && Number(value) > 0) {
+        const line = node("div", "weight-line", label);
+        line.appendChild(node("b", "", String(value) + " кг / шт."));
+        weight.appendChild(line);
+      }
     }
-    if (card.weight.volume_kg) {
-      weight.insertAdjacentHTML("beforeend",
-        `<div class="weight-line">Объёмный: <b>${card.weight.volume_kg} кг / шт.</b></div>`);
-    }
-    weight.insertAdjacentHTML("beforeend",
-      `<div class="weight-note">${escapeHtml(card.weight.notice)}</div>`);
+    weight.appendChild(node("div", "weight-note", card.weight.notice));
   } else {
     weight.textContent = "Вес неизвестен.";
   }
@@ -243,6 +242,7 @@ async function searchOem(oem) {
         : "Не удалось выполнить поиск. Попробуй чуть позже.");
     }
     const card = await response.json();
+    if (!card || !card.price || !card.stock || !Array.isArray(card.offers)) throw new Error("Некорректный ответ сервера.");
     hideState();
     renderProduct(card);
   } catch (error) {
@@ -271,7 +271,7 @@ $("qtyPlus").addEventListener("click", () => {
 $("offers").addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  const offerKey = target.dataset.offerKey;
+  const offerKey = target.closest("button[data-offer-key]")?.dataset.offerKey;
   if (!offerKey || !currentProduct) return;
 
   const offer = (currentProduct.offers || []).find((x) => x.key === offerKey);
@@ -315,38 +315,37 @@ function renderCart() {
   const itemCount = cart.reduce((sum, x) => sum + x.qty, 0);
   $("cartCount").textContent = itemCount;
   $("cartButton").classList.toggle("has-items", itemCount > 0);
-
   const root = $("cartItems");
-  root.innerHTML = "";
+  root.replaceChildren();
   $("cartEmpty").classList.toggle("hidden", cart.length > 0);
   $("cartFooter").classList.toggle("hidden", cart.length === 0);
-
   let total = 0;
   cart.forEach((item, index) => {
-    if (item.unit_rub) total += item.unit_rub * item.qty;
-    const el = document.createElement("div");
-    el.className = "cart-item";
-    el.innerHTML = `
-      <div class="cart-item-top">
-        <div>
-          <div class="cart-item-name">${escapeHtml(item.name || item.manufacturer)}</div>
-          <div class="cart-item-oem">${escapeHtml(item.oem)}</div>
-          <div class="cart-item-source">${item.offer_source === "warehouse" ? "🇷🇺" : "🇺🇸"} ${escapeHtml(item.source_label || "склад США")}</div>
-        </div>
-        <button class="remove" data-remove="${index}" type="button">Удалить</button>
-      </div>
-      <div class="cart-item-bottom">
-        <div class="cart-mini-qty">
-          <button data-minus="${index}" type="button">−</button>
-          <b>${item.qty}</b>
-          <button data-plus="${index}" type="button">+</button>
-        </div>
-        <strong>${item.unit_rub ? rub(item.unit_rub * item.qty) : "Цена уточняется"}</strong>
-      </div>`;
+    total += Number(item.unit_rub) * item.qty;
+    const el = node("div", "cart-item");
+    const top = node("div", "cart-item-top");
+    const details = node("div");
+    details.append(
+      node("div", "cart-item-name", item.name || item.manufacturer),
+      node("div", "cart-item-oem", item.oem),
+      node("div", "cart-item-source", (item.offer_source === "warehouse" ? "🇷🇺 " : "🇺🇸 ") + String(item.source_label || "склад США"))
+    );
+    const remove = node("button", "remove", "Удалить");
+    remove.type = "button"; remove.dataset.remove = String(index);
+    top.append(details, remove);
+    const bottom = node("div", "cart-item-bottom");
+    const qty = node("div", "cart-mini-qty");
+    const minus = node("button", "", "−");
+    minus.type = "button"; minus.dataset.minus = String(index);
+    const plus = node("button", "", "+");
+    plus.type = "button"; plus.dataset.plus = String(index);
+    qty.append(minus, node("b", "", item.qty), plus);
+    bottom.append(qty, node("strong", "", rub(Number(item.unit_rub) * item.qty)));
+    el.append(top, bottom);
     root.appendChild(el);
   });
-  $("cartTotal").textContent = total ? rub(total) : "уточняется";
-  $("cartButtonTotal").textContent = total ? rub(total) : "0 ₽";
+  $("cartTotal").textContent = cart.length ? rub(total) : "уточняется";
+  $("cartButtonTotal").textContent = cart.length ? rub(total) : "0 ₽";
 }
 
 function openCart() {
@@ -421,7 +420,11 @@ $("telegramButton").addEventListener("click", async () => {
     });
     if (!response.ok) throw new Error("Не удалось передать корзину.");
     const data = await response.json();
-    window.location.href = data.telegram_url;
+    const url = new URL(String(data.telegram_url ?? ""));
+    if (url.protocol !== "https:" || !["t.me", "telegram.me"].includes(url.hostname)) {
+      throw new Error("Некорректная ссылка передачи в Telegram.");
+    }
+    window.location.href = url.href;
   } catch (error) {
     alert(error.message || "Не удалось открыть Telegram.");
     button.disabled = false;
