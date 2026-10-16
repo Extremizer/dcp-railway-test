@@ -227,7 +227,7 @@ def _claim() -> dict | None:
     lease = datetime.fromisoformat(str(item.get("lease_expires_at") or ""))
     if lease.tzinfo is None or lease <= datetime.now(timezone.utc):
         raise ValueError("invalid_claim_lease")
-    manufacturer, oem = _identity(item.get("manufacturer"), item.get("oem")) if item.get("manufacturer") != "__AUTO__" else ("__AUTO__", _identity("Honda", item.get("oem"))[1])
+    manufacturer, oem = _identity(item.get("manufacturer"), item.get("oem"))
     if item["oem"] != oem or item["manufacturer"] != manufacturer:
         raise ValueError("noncanonical_claim_identity")
     return item
@@ -245,7 +245,7 @@ def _validated_result(item, result):
         _, current = _identity(manufacturer, result.get("current_oem") or query)
         _, sku = _identity(manufacturer, result.get("matched_sku"))
         price = result.get("dealer_price_usd")
-        if (query != item["oem"] or item["manufacturer"] not in {"__AUTO__", manufacturer}
+        if (query != item["oem"] or item["manufacturer"] != manufacturer
             or sku not in {query, current} or type(price) not in (int, float)
             or not math.isfinite(price) or price <= 0 or result.get("currency", "USD") != "USD"):
             raise ValueError("invalid_producer_identity_or_price")
@@ -438,8 +438,7 @@ def run_once() -> bool:
             return False
         _journal("lookup_inflight", item)
         try:
-            raw = (_auto_identity_price(item["oem"]) if item["manufacturer"] == "__AUTO__"
-                   else oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"]))
+            raw = oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"])
         except Exception:
             raw = {"status": "TECHNICAL_ERROR"}
         result = _validated_result(item, raw)
