@@ -48,6 +48,7 @@ import admin_order_service
 import admin_order_apply_service
 import admin_order_web
 import oem_import_maintenance
+import oemixi_category_authority_transport
 try:
     import oem_reference_service
 except ImportError:
@@ -80,6 +81,14 @@ supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS
 warehouse_partner_settlements.init(core.ORDERS_DB_FILE)
 app.include_router(supplier_api.build_supplier_router(supplier_order_service))
 app.include_router(oem_import_maintenance.router)
+
+if os.getenv("OEMIXIBOT_TOKEN", "").strip():
+    app.include_router(
+        oemixi_category_authority_transport.build_router(
+            db_file=core.ORDERS_DB_FILE,
+            root_secret=os.getenv("OEMIXIBOT_TOKEN", "").strip(),
+        )
+    )
 
 
 def _safe_admin_next(value: str | None) -> str:
