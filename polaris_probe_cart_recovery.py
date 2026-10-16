@@ -23,8 +23,9 @@ def _pid_alive(pid):
 
 
 class ProbeLock:
-    def __init__(self,path,probe_id=None,owner_instance_id=None):
+    def __init__(self,path,probe_id=None,owner_instance_id=None,journal_path=None):
         self.path=Path(path);self.fd=None
+        self.journal_path=Path(journal_path) if journal_path is not None else None
         self.probe_id=probe_id or uuid.uuid4().hex
         self.owner_instance_id=owner_instance_id or uuid.uuid4().hex
     def __enter__(self):
@@ -37,7 +38,8 @@ class ProbeLock:
     def __exit__(self,*args):
         if self.fd is not None:
             os.close(self.fd);self.fd=None
-            self.path.unlink()
+            if self.journal_path is None or not self.journal_path.exists():
+                self.path.unlink()
 
 class Journal:
     def __init__(self,path): self.path=Path(path)
