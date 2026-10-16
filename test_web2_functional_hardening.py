@@ -46,6 +46,7 @@ class HardeningTests(unittest.TestCase):
             page.locator("#product").wait_for(state="visible")
             page.locator('button[data-offer-key="usa"]').click()
             page.locator("#telegramButton").click()
+            page.wait_for_function("() => !document.querySelector('#telegramButton').disabled")
             self.assertTrue(page.locator("#telegramButton").is_enabled())
             self.assertIn("/web2", page.url)
             browser.close()
