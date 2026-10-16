@@ -125,4 +125,125 @@ class ExactAddTests(unittest.TestCase):
             r=run_probe("2205250",A(),lock_path=Path(d)/"lock",journal_path=Path(d)/"journal")
         self.assertEqual(r["status"],"OEM_UNVERIFIED")
 
+
+from polaris_existing_browser_controller import ExistingBrowserProbeAdapter
+
+class BrowserHarness:
+    def __init__(self):
+        self.tab={"url":"https://www.dealercostparts.com/cart","title":"Your Shopping Cart | Dealer Cost Parts"}
+        self.rows=[
+            {"sku":"2206328","qty":"1","unit_price":"184.07","remove_href":"/cart/remove/existing2206328"},
+            {"sku":"3211115","qty":"1","unit_price":"165.19","remove_href":"/cart/remove/existing3211115"},
+        ]
+        self.expressions=[]
+        self.auth=True
+        self.challenge=False
+        self.add_clicks=0
+        self.cart_actions=[]
+
+    def get_tab(self):
+        if self.challenge:
+            return {"url":self.tab["url"],"title":"Just a moment..."}
+        return dict(self.tab)
+
+    def verify(self):
+        return self.auth and not self.challenge
+
+    def authority(self,oem):
+        return {"manufacturer":"Polaris","item_category":"Parts",
+                "requested_oem":oem,"resolved_oem":None,"exact_match":True}
+
+    def evaluate(self,tab,expr):
+        self.expressions.append(expr)
+        if "HTMLFormElement.prototype.submit.call" in expr:
+            self.tab={"url":"https://www.dealercostparts.com/oemparts/partsearch/polaris_atv?partsearch=2205250",
+                      "title":"OEM Parts Part Search Results"}
+            return {"started":True}
+        if "const forms=" in expr:
+            return {"forms":[{
+                "id":"add_2205250","action":"/cart/addoemsinglepart","method":"POST",
+                "manf":"polaris_atv","sku":"2205250","qty":"1",
+                "old_sku":"2205250","new_sku":"2206328"}]}
+        if "const rows=" in expr:
+            return {"rows":[dict(x) for x in self.rows]}
+        if "b.click()" in expr:
+            self.add_clicks+=1
+            return {"clicked":True}
+        if "document.querySelectorAll('a[href^=\"/cart/\"]')" in expr:
+            for row in list(self.rows):
+                if row["remove_href"] in expr:
+                    self.cart_actions.append(row["remove_href"])
+                    self.rows.remove(row)
+                    self.tab={"url":"https://www.dealercostparts.com/cart",
+                              "title":"Your Shopping Cart | Dealer Cost Parts"}
+                    return {"started":True}
+            return {"started":False}
+        if "location.assign(" in expr:
+            if "/oemparts/c/polaris_atv/parts" in expr:
+                self.tab={"url":"https://www.dealercostparts.com/oemparts/c/polaris_atv/parts",
+                          "title":"Polaris ATV OEM Parts, Dealer Cost Parts"}
+            elif "/cart" in expr:
+                self.tab={"url":"https://www.dealercostparts.com/cart",
+                          "title":"Your Shopping Cart | Dealer Cost Parts"}
+            return True
+        raise AssertionError("unexpected expression")
+
+def browser_adapter(h,allow=False):
+    return ExistingBrowserProbeAdapter(
+        get_tab=h.get_tab,evaluate=h.evaluate,verify_session=h.verify,
+        resolve_authority=h.authority,allow_mutation=allow,
+        timeout_seconds=0.05,poll_seconds=0.001)
+
+class BrowserControllerTests(unittest.TestCase):
+    def test_23_normal_search_submit_no_fetch(self):
+        h=BrowserHarness()
+        p=browser_adapter(h).find_exact_oem("2205250")
+        self.assertEqual(p["resolved_oem"],"2206328")
+        joined="\n".join(h.expressions)
+        self.assertIn("HTMLFormElement.prototype.submit.call",joined)
+        self.assertNotIn("fetch(",joined)
+
+    def test_24_zero_mutation_resolved_existing(self):
+        h=BrowserHarness();a=browser_adapter(h)
+        with tempfile.TemporaryDirectory() as d:
+            r=run_probe("2205250",a,lock_path=Path(d)/"lock",journal_path=Path(d)/"journal")
+        self.assertEqual(r["status"],"ADMIN_DEALER_CART_PRICE_VERIFIED")
+        self.assertEqual(r["admin_unit_price_usd"],"184.07")
+        self.assertFalse(r["cart_mutated"])
+        self.assertEqual(h.add_clicks,0)
+
+    def test_25_browser_add_disabled_default(self):
+        h=BrowserHarness()
+        with self.assertRaises(PermissionError):
+            browser_adapter(h).add_one("2205250")
+        self.assertEqual(h.add_clicks,0)
+
+    def test_26_browser_add_click_normal_dom(self):
+        h=BrowserHarness()
+        r=browser_adapter(h,True).add_one("2205250")
+        self.assertTrue(r["submitted"])
+        self.assertEqual(r["resolved_oem"],"2206328")
+        self.assertEqual(h.add_clicks,1)
+        self.assertNotIn("fetch(","\n".join(h.expressions))
+
+    def test_27_snapshot_cart_dom(self):
+        h=BrowserHarness()
+        s=browser_adapter(h).snapshot()
+        self.assertEqual(len(s["lines"]),2)
+        self.assertEqual(s["lines"][0]["currency"],"USD")
+
+    def test_28_remove_exact_href(self):
+        h=BrowserHarness()
+        browser_adapter(h,True).remove_line("existing2206328")
+        self.assertEqual(h.cart_actions,["/cart/remove/existing2206328"])
+        self.assertEqual([x["sku"] for x in h.rows],["3211115"])
+
+    def test_29_cloudflare_fail_closed(self):
+        h=BrowserHarness();h.challenge=True
+        a=browser_adapter(h,True)
+        self.assertFalse(a.verify())
+        with self.assertRaises(PermissionError):
+            a.snapshot()
+        self.assertEqual(h.add_clicks,0)
+
 if __name__=="__main__":unittest.main()
