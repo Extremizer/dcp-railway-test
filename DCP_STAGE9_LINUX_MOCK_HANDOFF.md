@@ -43,3 +43,17 @@ Persistent host advisory `flock` prevents two processes sharing the same lock in
 ## Handoff Theme 6 → Theme 4
 
 Stage 9 artifact is an **isolated mock runner only**, not autonomous production readiness. All release gates remain HOLD. Current Linux process flock addresses only one host/shared inode. Existing v2 components are reused; production URL and state defaults in the legacy agent are not altered globally. CI status must be checked at exact HEAD, not inferred from file creation.
+
+## Stage C2 contract drift boundary (Theme 4 follow-up)
+
+The isolated runner now requires an explicit allowlist of exact manufacturer/OEM
+pairs before its fake supplier can be invoked. An absent allowlist rejects all
+claims. AUTO, UNKNOWN, manufacturer guessing/enumeration and unapproved
+identities are rejected, including claims from an otherwise valid signed v2 broker.
+Rejection leaves the existing uncertain claim journal in place, quarantines
+the runner and requires operator reconciliation. It does not rewrite the
+broker's claim, infer category, route carts, or create a new routing engine.
+
+This is a **mock fixture admission check**, not Theme 1 category routing approval.
+No Parts/Accessories fallback, unverified replacement, or cart-derived dealer
+price is authorized. Theme 1 retains all runtime routing and TTL ownership.
