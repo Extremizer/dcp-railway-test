@@ -31,7 +31,7 @@ class PolarisProductionAuthorityTests(unittest.TestCase):
 
     def _bootstrap_db(self):
         import extremizer_bot as core
-        tmp=tempfile.TemporaryDirectory()
+        tmp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         db=Path(tmp.name)/"orders.db"
         old_db=core.ORDERS_DB_FILE
         old_snapshot=core.PUBLIC_MSRP_CACHE_FILE
