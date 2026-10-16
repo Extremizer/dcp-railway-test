@@ -7,6 +7,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 import re
+import os
+import sqlite3
+from pathlib import Path
 
 from dcp_category_authority import resolve as server_category_resolve
 from polaris_dealer_session_identity_guard import inspect_approved_dealer_cart
@@ -18,6 +21,21 @@ def admin_cart_price(oem, *, catalog_connection=None, category_resolver=None,
                 "production_found":False,"admin_unit_price_usd":None}
     if not isinstance(oem,str) or not re.fullmatch(r"[A-Z0-9-]{4,40}",oem):
         return denied()
+    # Worker-local, read-only connection from protected server runtime config.
+    # Never create/seed the catalog DB; missing file fails closed.
+    if category_resolver is None and catalog_connection is None:
+        configured=os.getenv("EXTREMIZER_DCP_CATEGORY_DB_PATH","").strip()
+        if not configured:
+            return denied()
+        file=Path(configured).expanduser()
+        if not file.is_file():
+            return denied()
+        try:
+            with sqlite3.connect(file.as_uri()+"?mode=ro",uri=True,timeout=5) as conn:
+                evidence=server_category_resolve(conn,"Polaris",oem)
+        except (sqlite3.Error,OSError,ValueError):
+            return denied()
+        category_resolver=lambda manufacturer,sku:evidence if manufacturer=="Polaris" and sku==oem else None
     # Authorized catalog context only. Neither Telegram input nor the live page
     # is a category-authority source. No second authority algorithm.
     if category_resolver is None:
