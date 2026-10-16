@@ -1,0 +1,18 @@
+name: Theme1 Stage2 Category Contract
+on:
+  push:
+    branches:
+      - theme1-stage2-category-routing-alignment-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  stage2-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -B -m py_compile dcp_category_safety.py test_theme1_stage2_target.py dcp_private_price.py
+      - run: python -B -m unittest -v test_theme1_stage2_target.py test_theme5_stage2_mock_contract.py
