@@ -9,8 +9,8 @@ def load(*names):
         def __init__(self,text,callback_data):self.text=text;self.callback_data=callback_data
     class Markup:
         def __init__(self,rows):self.inline_keyboard=rows
-    ns=dict(InlineKeyboardButton=Button,InlineKeyboardMarkup=Markup,ACCESS_DENIED="NO",
-       is_telegram_admin=lambda uid:uid==123,_admin_dealers=lambda:[{"id":"d1","name":"Dealer"}],
+    ns=dict(Update=object,ContextTypes=types.SimpleNamespace(DEFAULT_TYPE=object),InlineKeyboardButton=Button,InlineKeyboardMarkup=Markup,ACCESS_DENIED="NO",
+       is_telegram_admin=lambda uid:uid==123,_admin_dealers=lambda:[{"id":"d1","name":"Dealer","active":1}],
        normalize_oem=lambda text:(text or "").strip().upper(),
        _resolve_admin_oem_offer=AsyncMock(return_value={"status":"DEALER_PRICE_UNVERIFIED","price_error":"hold"}),
        _dealer=lambda update:None)
