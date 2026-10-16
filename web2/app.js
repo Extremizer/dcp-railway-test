@@ -241,7 +241,7 @@ async function searchOem(oem) {
   currentProduct = null;
   setSearchBusy(true);
   lastSearchStatus = "loading";
-  showState("Ищем OEM " + oem + "…", "loading");
+  showState("Ищем…", "loading");
   try {
     const response = await fetch(`/api/v1/oem/${encodeURIComponent(oem)}`, {
       signal: controller.signal,
