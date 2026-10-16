@@ -208,3 +208,26 @@ footer { max-width: 1180px; margin: auto; padding: 30px 24px; border-top: 1px so
   .offer-buy button { min-height: 44px; }
   .cart-item-top { min-width: 0; }
 }
+
+/* M4: one responsive layout, safe-area-aware and resilient to long API text. */
+html, body { max-width: 100%; }
+.topbar, main, footer { width: 100%; min-width: 0; }
+.eyebrow, .hint, .state, .lead, .cart-total, .cart-footer p,
+.offer-meta, .offer-card, .offer-buy, .weight-note { overflow-wrap: anywhere; }
+.cart-button { min-height: 44px; min-width: 0; }
+.cart-button > span { min-width: 0; }
+.cart-panel { max-width: 100%; }
+.cart-item-bottom, .cart-item-top, .cart-total { gap: 12px; min-width: 0; }
+.cart-item-bottom > strong, .cart-total > strong { text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.cart-item-bottom > .cart-mini-qty { flex-shrink: 0; }
+.cart-footer { max-height: 47dvh; overflow-y: auto; overscroll-behavior: contain; }
+.telegram, .continue-search { min-height: 44px; }
+@media (max-width: 700px) {
+  .topbar { gap: 8px; }
+  .brand-slot { flex: 0 1 72px; min-width: 40px; }
+  .cart-button { flex: 0 1 auto; justify-content: center; }
+  .cart-panel { height: 100dvh; }
+  .product-head, .offers-section, .info-card { min-width: 0; }
+  .cart-item-top > div { flex: 1 1 auto; }
+  .cart-item-top > button { flex: 0 0 auto; }
+}
