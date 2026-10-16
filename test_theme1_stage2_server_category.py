@@ -19,7 +19,7 @@ class Stage2ServerCategoryTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             conn.execute("""CREATE TABLE oem_catalog_cache (
                 manufacturer TEXT, current_oem TEXT, catalog TEXT, msrp_verified INTEGER,
-                source_kind TEXT, source_ref TEXT, last_verified_at TEXT)""")
+                source_kind TEXT, source_ref TEXT, last_verified_at TEXT, previous_oems_json TEXT DEFAULT '[]')""")
             conn.execute("""CREATE TABLE oem_catalog_aliases (
                 manufacturer TEXT, alias_oem TEXT, current_oem TEXT, alias_kind TEXT)""")
             conn.execute("""INSERT INTO oem_catalog_cache VALUES (?,?,?,?,?,?,?)""",
@@ -99,7 +99,6 @@ class Stage2ServerCategoryTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             conn.execute("UPDATE oem_catalog_cache SET current_oem='NEW-1'")
             conn.execute("UPDATE oem_catalog_aliases SET current_oem='NEW-1',alias_kind='previous'")
-            conn.execute("ALTER TABLE oem_catalog_cache ADD COLUMN previous_oems_json TEXT DEFAULT '[]'")
             conn.execute("UPDATE oem_catalog_cache SET previous_oems_json='[\"2206328\"]'")
             self.assertEqual(authority.resolve(conn,"Polaris","2206328")["resolved_oem"],"NEW-1")
             conn.execute("UPDATE oem_catalog_cache SET previous_oems_json='[]'")
