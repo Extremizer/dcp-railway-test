@@ -29,6 +29,7 @@ import sqlite3
 import time
 from contextlib import closing, nullcontext
 from datetime import datetime
+from dcp_price_ttl import DEALER_PRICE_MAX_AGE_HOURS, MSRP_MAX_AGE_HOURS, is_fresh_timestamp
 from decimal import Decimal, InvalidOperation, ROUND_CEILING, ROUND_HALF_UP
 from html import escape
 from pathlib import Path
@@ -87,13 +88,8 @@ USD_RUB_RATE_RAW = os.getenv("EXTREMIZER_USD_RUB_RATE", "").strip().replace(",",
 USD_RUB_RATE = float(USD_RUB_RATE_RAW) if USD_RUB_RATE_RAW else 0.0
 PRICE_COEFFICIENT_RAW = os.getenv("EXTREMIZER_PRICE_COEFFICIENT", "1.34").strip().replace(",", ".")
 PRICE_COEFFICIENT = float(PRICE_COEFFICIENT_RAW) if PRICE_COEFFICIENT_RAW else 1.34
-DP_CACHE_MAX_AGE_HOURS_RAW = os.getenv(
-    "EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "168"
-).strip().replace(",", ".")
-try:
-    DP_CACHE_MAX_AGE_HOURS = max(0.0, float(DP_CACHE_MAX_AGE_HOURS_RAW))
-except ValueError:
-    DP_CACHE_MAX_AGE_HOURS = 168.0
+# Approved policy is authoritative; environment cannot extend stale dealer prices.
+DP_CACHE_MAX_AGE_HOURS = DEALER_PRICE_MAX_AGE_HOURS
 
 DCP_MODE = os.getenv("EXTREMIZER_DCP_MODE", "live").strip().lower()
 DCP_CACHE_ONLY = DCP_MODE == "cache_only"
@@ -190,6 +186,8 @@ def public_msrp_cache_result(manufacturer: str, oem: str) -> dict | None:
         ):
             continue
 
+        if not is_fresh_timestamp(entry.get("captured_at"), MSRP_MAX_AGE_HOURS):
+            continue
         msrp = entry.get("msrp_usd")
         if not isinstance(msrp, (int, float)) or float(msrp) <= 0:
             return None
@@ -1141,6 +1139,9 @@ def get_oem_catalog_cache_result(
         alias_kind,
     ) = row
 
+    if not is_fresh_timestamp(last_verified_at, MSRP_MAX_AGE_HOURS):
+        return None
+
     try:
         previous_oems = json.loads(previous_json or "[]")
     except (TypeError, ValueError, json.JSONDecodeError):
@@ -1426,10 +1427,7 @@ def get_dealer_price_cache(
         except (TypeError, ValueError):
             age_hours = float("inf")
 
-        fresh = (
-            DP_CACHE_MAX_AGE_HOURS > 0
-            and age_hours <= DP_CACHE_MAX_AGE_HOURS
-        )
+        fresh = is_fresh_timestamp(row[3], DP_CACHE_MAX_AGE_HOURS)
 
         if mark_used and fresh:
             used_at = datetime.now().astimezone().isoformat(timespec="seconds")
