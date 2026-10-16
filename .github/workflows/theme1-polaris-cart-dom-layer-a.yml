@@ -1,0 +1,19 @@
+name: Theme1 Polaris Cart DOM Layer A
+on:
+  push:
+    branches:
+      - theme1-polaris-cart-dom-layer-a-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-dom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install 'beautifulsoup4>=4.12,<5'
+      - run: python -B -m py_compile polaris_dealer_cart_dom.py polaris_dealer_cart_contract.py test_polaris_cart_dom_layer_a.py
+      - run: python -B -m unittest -v test_polaris_cart_dom_layer_a.py test_polaris_dealer_cart_contract.py
