@@ -19,6 +19,7 @@ from pathlib import Path
 
 import dp_live_health
 import dp_live_admission
+import dcp_category_authority
 
 
 def _request_key(manufacturer: str, oem: str) -> tuple[str, str]:
@@ -155,6 +156,8 @@ def init(db_file: Path | str) -> None:
             "claim_token": "TEXT", "claim_owner": "TEXT",
             "claim_generation": "INTEGER NOT NULL DEFAULT 0", "lease_expires_at": "TEXT",
             "orphaned_at": "TEXT", "cache_committed_at": "TEXT",
+            "item_category": "TEXT", "category_source_kind": "TEXT",
+            "category_source_ref": "TEXT", "category_verified_at": "TEXT",
         }.items():
             if column not in cols:
                 conn.execute(f"ALTER TABLE dp_live_requests ADD COLUMN {column} {definition}")
@@ -183,10 +186,10 @@ def request_live_dp(
     wait_seconds: float = 10.0,
 ) -> dict:
     """Create/reuse one pending request and wait briefly for the local agent."""
-    init(db_file)
     manufacturer, oem = _request_key(manufacturer, oem)
     if not manufacturer or not oem:
-        return {"status": "INVALID"}
+        return {"status": "UNKNOWN_MANUFACTURER"}
+    init(db_file)
 
     if _health_enforced():
         health = dp_live_health.get_health(db_file)
@@ -207,6 +210,10 @@ def request_live_dp(
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         # Lookup and insert must share the write lock across all bot processes.
         conn.execute("BEGIN IMMEDIATE")
+        authority = dcp_category_authority.resolve(conn, manufacturer, oem)
+        if authority is None:
+            conn.rollback()
+            return {"status": "CATEGORY_UNVERIFIED"}
         if not dp_live_admission.is_open(conn):
             conn.commit()
             return {"status": "ADMISSION_CLOSED", "error_code": "dp_live_admission_closed"}
@@ -223,8 +230,10 @@ def request_live_dp(
                       current_oem,item_name,error_code,result_manufacturer,cache_committed_at
                FROM dp_live_requests WHERE manufacturer=? AND oem=?
                  AND status='finished' AND result_status='FOUND' AND finished_at>=?
+                 AND item_category=? AND category_source_kind=? AND category_source_ref=? AND category_verified_at=?
                ORDER BY finished_at DESC LIMIT 1""",
-            (manufacturer, oem, (datetime.now(timezone.utc)-timedelta(seconds=5)).isoformat(timespec="seconds")),
+            (manufacturer, oem, (datetime.now(timezone.utc)-timedelta(seconds=5)).isoformat(timespec="seconds"),
+             authority["item_category"], authority["category_source_kind"], authority["category_source_ref"], authority["category_verified_at"]),
         ).fetchone()
         if recent and _valid_dp(recent[2], recent[3]):
             conn.commit()
@@ -233,8 +242,9 @@ def request_live_dp(
             """SELECT request_id
                  FROM dp_live_requests
                 WHERE manufacturer=? AND oem=? AND status IN ('pending','claimed')
+                  AND item_category=? AND category_source_kind=? AND category_source_ref=? AND category_verified_at=?
                 ORDER BY requested_at DESC LIMIT 1""",
-            (manufacturer, oem),
+            (manufacturer, oem, authority["item_category"], authority["category_source_kind"], authority["category_source_ref"], authority["category_verified_at"]),
         ).fetchone()
         if row:
             request_id = str(row[0])
@@ -242,9 +252,10 @@ def request_live_dp(
             request_id = uuid.uuid4().hex
             conn.execute(
                 """INSERT INTO dp_live_requests(
-                       request_id,manufacturer,oem,status,requested_at
-                   ) VALUES(?,?,?,'pending',?)""",
-                (request_id, manufacturer, oem, now),
+                       request_id,manufacturer,oem,status,requested_at,
+                       item_category,category_source_kind,category_source_ref,category_verified_at
+                   ) VALUES(?,?,?,'pending',?,?,?,?,?)""",
+                (request_id, manufacturer, oem, now, authority["item_category"], authority["category_source_kind"], authority["category_source_ref"], authority["category_verified_at"]),
             )
         conn.commit()
 
@@ -309,7 +320,7 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             conn.commit()
             return None
         row = conn.execute(
-            """SELECT request_id,manufacturer,oem,claim_generation
+            """SELECT request_id,manufacturer,oem,claim_generation,item_category,category_source_kind,category_source_ref,category_verified_at
                  FROM dp_live_requests
                 WHERE status='pending'
                 ORDER BY requested_at ASC LIMIT 1"""
@@ -339,6 +350,10 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             "claim_generation": int(row[3]) + 1,
             "lease_expires_at": lease_expires_at,
             "protocol_version": 2,
+            "item_category": row[4],
+            "category_source_kind": row[5],
+            "category_source_ref": row[6],
+            "category_verified_at": row[7],
         }
 
 
