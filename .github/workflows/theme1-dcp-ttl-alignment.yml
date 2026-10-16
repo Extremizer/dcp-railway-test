@@ -1,0 +1,21 @@
+name: Theme1 DCP TTL Alignment
+on:
+  push:
+    branches:
+      - theme1-dcp-ttl-alignment-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ttl-unit-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax
+        run: python -B -m py_compile dcp_price_ttl.py test_dcp_price_ttl.py extremizer_bot.py
+      - name: TTL boundary and consumer contract
+        run: python -B -m unittest -v test_dcp_price_ttl.py
