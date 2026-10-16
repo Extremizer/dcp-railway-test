@@ -1,6 +1,7 @@
 --- a/oemixibot_app.py
 +++ b/oemixibot_app.py
-@@ -183,4 +183,15 @@
+@@ -182,6 +182,18 @@
+ 
  async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
      u=update.effective_user
 +    if context.user_data.get("admin_oem_search"):
@@ -16,14 +17,17 @@
 +        await update.effective_message.reply_text(_admin_offer_text(oem,offer),reply_markup=_admin_search_keyboard())
 +        return
      state=context.user_data.get("admin_topup")
--    if state and u and is_telegram_admin(u.id):
-@@ -641,4 +653,4 @@
+     if state and u and is_telegram_admin(u.id):
+         raw=(update.effective_message.text or "").strip().replace(",",".")
+@@ -640,12 +652,46 @@
+ 
  def _admin_root_keyboard(dealers):
      rows=[
 +        [InlineKeyboardButton("🔎 Поиск по OEM",callback_data="admsearch")],
          [InlineKeyboardButton("💳 Задолженность дилеров",callback_data="admdebt")],
--        [InlineKeyboardButton("⏳ Aging по дилерам",callback_data="admagingsum:all:0")],
-@@ -647,4 +660,36 @@
+         [InlineKeyboardButton("⏳ Aging по дилерам",callback_data="admagingsum:all:0")],
+     ]
+     rows += [[InlineKeyboardButton(f"👤 {d['name']}",callback_data=f"admdealer:{d['id']}")] for d in dealers]
      return InlineKeyboardMarkup(rows) if rows else None
  
 +def _clear_admin_input_modes(user_data):
@@ -60,14 +64,18 @@
 +            "catalog_status":status}
 +
  def _admin_debt_rows():
--    rows=[FINANCE.dealer_debt_status(d["id"],"USD") for d in _admin_dealers()]
-@@ -911,4 +957,4 @@
+     rows=[FINANCE.dealer_debt_status(d["id"],"USD") for d in _admin_dealers()]
+     priority={"over":0,"full":1,"credit":2,"normal":3}
+@@ -910,6 +956,7 @@
+     u=update.effective_user
      if not u or not is_telegram_admin(u.id):
          await update.effective_message.reply_text(ACCESS_DENIED); return
 +    _clear_admin_input_modes(context.user_data)
      dealers=_admin_dealers()
--    await update.effective_message.reply_text("⚙️ OEMixiBOT ADMIN\n\n👥 Дилеры",reply_markup=_admin_root_keyboard(dealers))
-@@ -920,4 +967,15 @@
+     await update.effective_message.reply_text("⚙️ OEMixiBOT ADMIN\n\n👥 Дилеры",reply_markup=_admin_root_keyboard(dealers))
+ 
+@@ -919,6 +966,18 @@
+     if data.startswith("adm"):
          u=update.effective_user
          if not u or not is_telegram_admin(u.id): await q.edit_message_text(ACCESS_DENIED); return
 +        if data=="admsearch":
@@ -83,11 +91,14 @@
 +        if data != "admsearch":
 +            context.user_data.pop("admin_oem_search",None)
          if data.startswith("admdealer:"):
--            did=data.split(":",1)[1]; d=next((x for x in _admin_dealers() if x["id"]==did),None)
-@@ -1323,4 +1382,5 @@
+             did=data.split(":",1)[1]; d=next((x for x in _admin_dealers() if x["id"]==did),None)
+             if not d: await q.edit_message_text("Дилер не найден."); return
+@@ -1322,7 +1381,7 @@
+     app.add_handler(CommandHandler("orders",orders_command))
      app.add_handler(CommandHandler("balance",balance_command))
      app.add_handler(CommandHandler("admin",admin_command))
 +    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admsearch$|admhome$|admdealer:|admdealers$|admdebt$|admdebt:|admagingsum:|admaging:|admfin:|admfinevent:|admdebit:|admtopup:|noop$)"))
 -    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admdealer:|admdealers$|admdebt$|admdebt:|admagingsum:|admaging:|admfin:|admfinevent:|admdebit:|admtopup:|noop$)"))
      app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,oem_message))
-+    return app
+     return app
+ 
