@@ -1,0 +1,23 @@
+name: Theme1 Polaris Dealer Cart Contract
+on:
+  push:
+    branches:
+      - theme1-polaris-dealer-cart-contract-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax import smoke
+        run: |
+          python -B -m py_compile polaris_dealer_cart_contract.py test_polaris_dealer_cart_contract.py
+          python -B -c 'import polaris_dealer_cart_contract'
+      - name: Pure synthetic contract regressions
+        run: python -B -m unittest -v test_polaris_dealer_cart_contract.py
