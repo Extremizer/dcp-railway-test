@@ -117,6 +117,18 @@ def _money(value: str | None) -> float | None:
         return None
 
 def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
+    # Stage 2: no verified server-side category authority currently reaches this
+    # adapter. Never choose Parts or Ski-Doo Accessories by default.
+    # Preserve supplier adapters for later verified routing integration.
+    return DealerPriceResult(
+        status="CATEGORY_UNVERIFIED", manufacturer=str(manufacturer or ""),
+        query_oem=_normalize_oem(oem),
+        message="server_side_category_authority_missing",
+    )
+
+
+def _legacy_get_dealer_price_unverified_route(manufacturer: str, oem: str) -> DealerPriceResult:
+    """Dormant legacy parser; never callable from approved Stage 2 producer."""
     """Return the dealer price from the user's authorized DCP Chrome session."""
     canonical, slug = _parts_slug(manufacturer)
     normalized_oem = _normalize_oem(oem)
