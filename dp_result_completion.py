@@ -119,15 +119,10 @@ def complete_result(db_file, payload: dict) -> dict:
                 price = float(value)
                 source = _dealer_source(payload.get("source"), manufacturer, requested_oem)
                 name = str(payload.get("name") or "")[:300] or None
-                if False and conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE name='probnik_oem_identity'"
-                ).fetchone():
-                    existing = conn.execute(
-                        "SELECT manufacturer FROM probnik_oem_identity WHERE verified=1 AND (oem=? OR current_oem=?)",
-                        (requested_oem,requested_oem),
-                    ).fetchall()
-                    if any(r[0] != manufacturer for r in existing):
-                        raise CompletionError(409, "confirmed_identity_conflict")
+                # Stage 2 approval gate: the completion request does not carry
+                # authoritative server-side category/line/price-kind evidence.
+                # Thus FOUND must fail before any cache or identity mutation.
+                raise CompletionError(409, "CATEGORY_UNVERIFIED")
                 _write_cache(conn, manufacturer, requested_oem, price, source, now)
                 if current_oem != requested_oem:
                     _write_cache(conn, manufacturer, current_oem, price, source, now)
