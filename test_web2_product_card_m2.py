@@ -35,7 +35,7 @@ class ProductCardM2(unittest.TestCase):
             for oem in cases:
                 page.locator("#oemInput").fill(oem)
                 page.locator("#searchButton").click()
-                page.wait_for_function("(x)=>document.querySelector('#productOem').textContent===x",oem)
+                page.wait_for_function("(x)=>document.querySelector('#productOem').textContent===x",arg=oem)
                 self.assertTrue(page.locator("#product").is_visible())
                 self.assertFalse(page.evaluate("document.documentElement.scrollWidth>innerWidth+1"))
                 if oem in ("NO-RRP","LOW-RRP","BAD-PRICE"):
