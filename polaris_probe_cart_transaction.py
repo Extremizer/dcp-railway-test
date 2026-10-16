@@ -46,7 +46,7 @@ def recover_probe(adapter,*,lock_path,journal_path):
                 pathlib.Path(lock_path).unlink()
                 return _result("RESTORED",restored=True,mutated=True)
             except Exception:return _result("RECOVERY_REQUIRED")
-    except ProbeBusy:return _result("BUSY")
+    except ProbeBusy:return _result("RECOVERY_REQUIRED")
 
 def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
     journal=Journal(journal_path)
