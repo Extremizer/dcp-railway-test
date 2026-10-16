@@ -68,9 +68,5 @@ class SharedDealerPriceAdapter:
             return {"status":"TECHNICAL_ERROR","error_code":"invalid_gateway_response"}
         if result.get("status") != "FOUND":
             return {k:v for k,v in result.items() if k not in {"dealer_price_usd","msrp_usd","retail","rrp"}}
-        # Independently accepted Dealer Price semantics are still on HOLD.
-        # A source label or a numeric quote cannot authorize Dealer FOUND.
+        # Stage 2 price provenance remains unverified, even for injected gateways.
         return {"status":"DEALER_PRICE_UNVERIFIED"}
-        if not _verified_price(result,manufacturer,oem,self.max_age_hours):
-            return {"status":"NO_PRICE","error_code":"invalid_gateway_dealer_price"}
-        return result
