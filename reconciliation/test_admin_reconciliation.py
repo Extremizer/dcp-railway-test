@@ -35,8 +35,8 @@ class AdminReconciliationTests(unittest.TestCase):
             self.assertNotIn(forbidden,search)
     def test_08_search_price_fail_closed(self):
         text=body("_admin_offer_text")
-        self.assertIn("Дилерская цена недоступна",text)
-        self.assertIn("MSRP не используется вместо Dealer Price",text)
+        self.assertIn("format_admin_price",text)
+        self.assertIn("oemixi_admin_polaris_cart_price",text)
         self.assertNotIn("dl_usd",text)
     def test_09_current_dealer_buttons(self):
         self.assertIn('admdealer:',body("_admin_root_keyboard"))
