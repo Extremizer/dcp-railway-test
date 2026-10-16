@@ -262,7 +262,8 @@ class ExistingBrowserProbeAdapter:
         tab=self._ensure_cart()
         path=f"/cart/{operation}/{token}"
         expression="""(()=>{
-          const a=document.querySelector('a[href='+JSON.stringify(PATH)+']');
+          const a=[...document.querySelectorAll('a[href^="/cart/"]')]
+            .find(x=>(x.getAttribute('href')||'')===PATH);
           if(!a) return {started:false};
           location.assign(a.href);
           return {started:true};
