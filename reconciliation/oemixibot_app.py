@@ -678,10 +678,8 @@ async def _resolve_admin_oem_offer(oem,context):
     from oemixi_admin_polaris_cart_price import admin_cart_price
     # Only an explicitly installed trusted server SQLite connection can
     # supply Category Authority. Never accept category data from Telegram.
-    connection=context.application.bot_data.get("trusted_dcp_catalog_connection")
-    if connection is None:
-        return {"status":"DEALER_PRICE_UNVERIFIED","dealer_price_usd":None,"production_found":False}
-    return await asyncio.to_thread(admin_cart_price,oem,catalog_connection=connection)
+    # Trusted server-side configuration only; connection opens inside worker thread.
+    return await asyncio.to_thread(admin_cart_price,oem)
 
 
 def _admin_debt_rows():
