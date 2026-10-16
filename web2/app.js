@@ -110,7 +110,8 @@ function renderOffers(offers = []) {
     const button = node("button", "", !offer.can_add ? "Цена уточняется" : existing ? "Добавить ещё" : "В корзину");
     button.type = "button";
     button.dataset.offerKey = String(offer.key ?? "");
-    button.disabled = !usableOffer(offer);
+    button.disabled = !usableOffer(offer) || typeof currentProduct?.manufacturer !== "string" ||
+      !currentProduct.manufacturer.trim() || typeof currentProduct?.oem !== "string" || !currentProduct.oem.trim();
     buy.appendChild(button);
     card.append(meta, buy);
     root.appendChild(card);
@@ -303,7 +304,8 @@ $("offers").addEventListener("click", (event) => {
   if (!offerKey || !currentProduct) return;
 
   const offer = (currentProduct.offers || []).find((x) => x.key === offerKey);
-  if (!usableOffer(offer) || typeof currentProduct.oem !== "string" || !currentProduct.oem.trim()) return;
+  if (!usableOffer(offer) || typeof currentProduct.oem !== "string" || !currentProduct.oem.trim() ||
+      typeof currentProduct.manufacturer !== "string" || !currentProduct.manufacturer.trim()) return;
 
   const key = `${currentProduct.manufacturer}|${currentProduct.oem}|${offer.key}`;
   const maxQty = offer.available_quantity == null
