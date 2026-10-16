@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from polaris_add_form_contract import validate_form
 from polaris_cart_snapshot import canonical
+from polaris_probe_errors import ProbeFailure,classify_failure
 
 DCP_ORIGIN="https://www.dealercostparts.com"
 PARTS_PATH="/oemparts/c/polaris_atv/parts"
@@ -31,6 +32,7 @@ class ExistingBrowserProbeAdapter:
         self.allow_mutation=allow_mutation
         self._timeout=float(timeout_seconds)
         self._poll=float(poll_seconds)
+        self.last_failure_code=None
 
     @staticmethod
     def _oem(value):
@@ -52,10 +54,15 @@ class ExistingBrowserProbeAdapter:
         return tab
 
     def verify(self):
+        self.last_failure_code=None
         try:
             self._tab()
-            return self._verify_session() is True
-        except Exception:
+            if self._verify_session() is not True:
+                self.last_failure_code="AUTH_REQUIRED"
+                return False
+            return True
+        except Exception as exc:
+            self.last_failure_code=classify_failure(exc,"AUTH_REQUIRED")
             return False
 
     def _require_verified(self):
@@ -85,14 +92,22 @@ class ExistingBrowserProbeAdapter:
                 if str(exc)=="CLOUDFLARE":
                     raise
             time.sleep(self._poll)
-        raise TimeoutError("DCP_BROWSER_TRANSITION_TIMEOUT:"+str((last or {}).get("url") or ""))
+        raise ProbeFailure("DCP_TRANSITION_TIMEOUT")
 
     def _navigate(self,url,path,partsearch=None):
-        tab=self._require_verified()
-        expr="(()=>{location.assign(URL);return true})()".replace("URL",json.dumps(url))
-        if self._evaluate(tab,expr) is not True:
-            raise RuntimeError("DCP_NAVIGATION_NOT_STARTED")
-        return self._wait(path,partsearch)
+        last_exc=None
+        for attempt in range(2):
+            tab=self._require_verified()
+            expr="(()=>{location.assign(URL);return true})()".replace("URL",json.dumps(url))
+            if self._evaluate(tab,expr) is not True:
+                raise ProbeFailure("DCP_NAVIGATION_NOT_STARTED")
+            try:
+                return self._wait(path,partsearch)
+            except ProbeFailure as exc:
+                last_exc=exc
+                if exc.code!="DCP_TRANSITION_TIMEOUT" or attempt:
+                    raise
+        raise last_exc or ProbeFailure("DCP_TRANSITION_TIMEOUT")
 
     def _ensure_cart(self):
         try:
@@ -122,7 +137,7 @@ class ExistingBrowserProbeAdapter:
         })()"""
         data=self._evaluate(tab,expression)
         if not isinstance(data,dict) or not isinstance(data.get("forms"),list):
-            raise RuntimeError("ADD_FORM_READ_FAILED")
+            raise ProbeFailure("ADD_FORM_READ_FAILED")
         if self._verify_session() is not True:
             raise PermissionError("DEALER_SESSION_CHANGED")
         return data["forms"]
@@ -148,8 +163,17 @@ class ExistingBrowserProbeAdapter:
         })()""".replace("OEM",json.dumps(oem))
         data=self._evaluate(tab,expression)
         if not isinstance(data,dict) or data.get("started") is not True:
-            raise RuntimeError("SEARCH_SUBMIT_NOT_STARTED")
-        self._wait(SEARCH_PATH,oem)
+            raise ProbeFailure("SEARCH_SUBMIT_NOT_STARTED")
+        try:
+            self._wait(SEARCH_PATH,oem)
+        except ProbeFailure as exc:
+            if exc.code!="DCP_TRANSITION_TIMEOUT":
+                raise
+            tab=self._require_verified()
+            data=self._evaluate(tab,expression)
+            if not isinstance(data,dict) or data.get("started") is not True:
+                raise ProbeFailure("SEARCH_SUBMIT_NOT_STARTED")
+            self._wait(SEARCH_PATH,oem)
 
     def find_exact_oem(self,oem):
         oem=self._oem(oem)
@@ -191,7 +215,7 @@ class ExistingBrowserProbeAdapter:
         })()"""
         data=self._evaluate(tab,expression)
         if not isinstance(data,dict) or not isinstance(data.get("rows"),list):
-            raise RuntimeError("CART_SNAPSHOT_READ_FAILED")
+            raise ProbeFailure("CART_SNAPSHOT_READ_FAILED")
         lines=[]
         for row in data["rows"]:
             href=str(row.get("remove_href") or "")
@@ -240,7 +264,7 @@ class ExistingBrowserProbeAdapter:
             "BUTTON",json.dumps("#addtocart_"+oem)).replace("OEM",json.dumps(oem))
         data=self._evaluate(tab,expression)
         if not isinstance(data,dict) or data.get("clicked") is not True:
-            raise RuntimeError("ADD_CLICK_NOT_STARTED")
+            raise ProbeFailure("ADD_CLICK_NOT_STARTED")
         time.sleep(self._poll)
         if self._verify_session() is not True:
             raise PermissionError("DEALER_SESSION_LOST_AFTER_ADD")
@@ -270,7 +294,7 @@ class ExistingBrowserProbeAdapter:
         })()""".replace("PATH",json.dumps(path))
         data=self._evaluate(tab,expression)
         if not isinstance(data,dict) or data.get("started") is not True:
-            raise RuntimeError("CART_ACTION_NOT_STARTED")
+            raise ProbeFailure("CART_ACTION_NOT_STARTED")
         self._wait("/cart")
         return True
 
