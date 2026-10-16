@@ -29,9 +29,9 @@ def _request_key(manufacturer: str, oem: str) -> tuple[str, str]:
         "polaris": "Polaris", "ktm": "KTM", "indian": "Indian",
     }
     raw = str(manufacturer or "").strip()
-    canonical = "__AUTO__" if raw.upper() == "__AUTO__" else aliases.get(
-        re.sub(r"[\s_-]", "", raw).lower(), raw
-    )
+    canonical = aliases.get(re.sub(r"[\s_-]", "", raw).lower(), "")
+    if raw.upper() in {"__AUTO__", "AUTO", "UNKNOWN"}:
+        return "", ""
     normalized_oem = re.sub(r"\s+", "", str(oem or "")).upper()
     if not canonical or not re.fullmatch(r"[A-Z0-9-]{4,40}", normalized_oem):
         return "", ""
