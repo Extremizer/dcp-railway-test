@@ -10,7 +10,6 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import socket
 import sys
 from datetime import datetime, timezone
 from urllib.parse import urlsplit
@@ -105,7 +104,20 @@ def fake_lookup(manufacturer, oem):
     # price nor converts MSRP to DP. Test fixtures can inject other fake outcomes.
     return {"status": "TECHNICAL_ERROR", "error_code": "FAKE_SUPPLIER_UNAVAILABLE"}
 
-def execute(config, *, agent=None, lookup=None):
+def identity_approved(item, approved):
+    """Only explicitly admitted manufacturer/OEM pairs may reach fake supplier."""
+    if not isinstance(item, dict):
+        return False
+    manufacturer, oem = item.get("manufacturer"), item.get("oem")
+    return (
+        isinstance(manufacturer, str) and isinstance(oem, str)
+        and bool(manufacturer.strip()) and bool(oem.strip())
+        and manufacturer.strip().upper() not in {"AUTO", "__AUTO__", "UNKNOWN"}
+        and (manufacturer, oem) in approved
+    )
+
+
+def execute(config, *, agent=None, lookup=None, approved_identities=()):
     """One mock cycle, not a daemon. An unresolved journal is never replayed."""
     with LinuxSingleton(config["lock"]):
         if config["journal"].exists():
@@ -123,7 +135,14 @@ def execute(config, *, agent=None, lookup=None):
         agent._set_dcp_health = lambda *a, **kw: None
         supplier = lookup or fake_lookup
         agent.oemixibot_dcp_price.get_dealer_price_dict = supplier
-        agent._auto_identity_price = lambda oem: {"status": "TECHNICAL_ERROR", "error_code": "FAKE_IDENTITY_UNAVAILABLE"}
+        agent._auto_identity_price = lambda oem: {"status": "TECHNICAL_ERROR", "error_code": "UNVERIFIED_IDENTITY"}
+        original_claim = agent._claim
+        def guarded_claim():
+            item = original_claim()
+            if item is not None and not identity_approved(item, approved_identities):
+                raise UnsafeConfiguration("unverified_identity")
+            return item
+        agent._claim = guarded_claim
         try:
             completed = agent.run_once()  # existing fenced claim / v2 POST / atomic completion
             if agent.JOURNAL_FILE.exists() or agent._PRODUCER_STOP:
