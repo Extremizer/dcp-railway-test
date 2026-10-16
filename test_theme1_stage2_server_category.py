@@ -59,6 +59,7 @@ class Stage2ServerCategoryTests(unittest.TestCase):
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM dp_live_requests").fetchone()[0],0)
 
+    @patch("dp_live_admission.is_open", new=lambda conn: True)
     def test_enqueued_claim_contains_server_authority(self):
         # Only isolated temp DB, never a live supplier. Zero wait avoids producer.
         result=bridge.request_live_dp(self.db,"Polaris","2206328",wait_seconds=0)
@@ -80,6 +81,7 @@ class Stage2ServerCategoryTests(unittest.TestCase):
         claim["item_category"]="Accessories"
         self.assertEqual(supplier.get_dealer_price("Polaris","2206328",category_evidence=claim).status,"CATEGORY_UNVERIFIED")
 
+    @patch("dp_live_admission.is_open", new=lambda conn: True)
     def test_found_completion_rolls_back_and_never_writes_cache(self):
         result=bridge.request_live_dp(self.db,"Polaris","2206328",wait_seconds=0)
         self.assertEqual(result["status"],"TIMEOUT")
