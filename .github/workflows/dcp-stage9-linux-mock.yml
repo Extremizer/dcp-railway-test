@@ -1,0 +1,19 @@
+name: DCP Stage 9 Linux Mock Runner
+on:
+  push:
+    branches:
+      - dcp-stage9-isolated-linux-mock-runner-20261016
+  pull_request:
+  workflow_dispatch:
+jobs:
+  mock-only-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Python syntax
+        run: python -m py_compile dcp_stage9_mock_linux_runner.py test_dcp_stage9_mock_linux_runner.py
+      - name: Stage 9 Linux safety tests - no network or supplier
+        run: python -B -m unittest -v test_dcp_stage9_mock_linux_runner.py
