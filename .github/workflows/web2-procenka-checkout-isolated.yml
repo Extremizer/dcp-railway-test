@@ -6,6 +6,7 @@ on:
       - web2-procenka-checkout-integration-20261014
       - web2-unified-procenka-owner-staging-20261014
       - web2-powersports-integration-prep-20261015
+      - web2-client-functional-hardening-20261016
   workflow_dispatch:
 
 permissions:
