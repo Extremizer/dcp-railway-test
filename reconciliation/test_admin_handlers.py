@@ -32,7 +32,7 @@ class HandlerTests(unittest.IsolatedAsyncioTestCase):
     async def test_02_mode_enter_and_wizards_clear(self):
         # callback extraction limits execution to branch under test.
         n=load("_clear_admin_input_modes","_admin_root_keyboard","callback")
-        n.update(_admin_dealers=lambda:[{"id":"d1","name":"Dealer"}],_admin_debt_rows=lambda:[],_admin_debt_text=lambda *a:"debt",_admin_debt_keyboard=lambda *a:None,_admin_aging_all_rows=lambda:[],_admin_aging_sum_text=lambda *a:"aging",_admin_aging_sum_keyboard=lambda *a:None)
+        n.update(_admin_dealers=lambda:[{"id":"d1","name":"Dealer","active":1}],_admin_debt_rows=lambda:[],_admin_debt_text=lambda *a:"debt",_admin_debt_keyboard=lambda *a:None,_admin_aging_all_rows=lambda:[],_admin_aging_sum_text=lambda *a:"aging",_admin_aging_sum_keyboard=lambda *a:None)
         f=Fake({"admin_credit":1,"admin_topup":2,"admin_debit":3,"admin_due":4})
         await n["callback"](f.update,f.context)
         self.assertEqual(f.context.user_data,{"admin_oem_search":True})
