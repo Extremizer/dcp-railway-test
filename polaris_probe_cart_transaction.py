@@ -4,7 +4,7 @@ from datetime import datetime,timezone
 from decimal import Decimal
 from polaris_cart_snapshot import canonical,digest
 from polaris_probe_cart_delta import prove_delta
-from polaris_probe_cart_recovery import ProbeLock,ProbeBusy,Journal
+from polaris_probe_cart_recovery import ProbeLock,ProbeBusy,Journal,RecoveryOwnership
 
 def _result(status,price=None,mutated=False,restored=False):
     return dict(status=status,admin_unit_price_usd=price,cart_mutated=mutated,
@@ -23,7 +23,7 @@ def recover_probe(adapter,*,lock_path,journal_path):
     """Only recover a journal with proven exact delta. Never guess after uncertain add."""
     journal=Journal(journal_path)
     try:
-        with ProbeLock(lock_path):
+        with RecoveryOwnership(lock_path,journal_path):
             rec=journal.read()
             if rec is None:return _result("NO_RECOVERY_NEEDED",restored=True)
             try:
@@ -42,6 +42,8 @@ def recover_probe(adapter,*,lock_path,journal_path):
                     return _result("RECOVERY_REQUIRED")
                 journal.save({**rec,"mutation_state":"RESTORED","cleanup_state":"RESTORED"})
                 journal.clear()
+                import pathlib
+                pathlib.Path(lock_path).unlink()
                 return _result("RESTORED",restored=True,mutated=True)
             except Exception:return _result("RECOVERY_REQUIRED")
     except ProbeBusy:return _result("BUSY")
@@ -50,7 +52,7 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
     journal=Journal(journal_path)
     probe_id=uuid.uuid4().hex
     try:
-        with ProbeLock(lock_path,probe_id=probe_id):
+        with ProbeLock(lock_path,probe_id=probe_id) as ownership:
             if journal.read() is not None:return _result("RECOVERY_REQUIRED")
             try:
                 if not _safe(adapter):return _result("AUTH_REQUIRED")
@@ -78,6 +80,7 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                     return _result("ADMIN_DEALER_CART_PRICE_VERIFIED",price,restored=True)
                 rec={"probe_id":probe_id,"owner_pid":os.getpid(),
                     "started_at":datetime.now(timezone.utc).isoformat(),
+                    "owner_instance_id":ownership.owner_instance_id,
                     "requested_oem":oem,"initial_cart_snapshot":base,
                     "mutation_state":"PREPARED","last_step":"PREPARED",
                     "cleanup_state":"PENDING","delta":None}
