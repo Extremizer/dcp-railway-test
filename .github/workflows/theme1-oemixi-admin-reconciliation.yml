@@ -1,0 +1,18 @@
+name: Theme1 OEMixi ADMIN Reconciliation
+on:
+  push:
+    branches:
+      - theme1-oemixi-admin-search-live-reconcile-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  admin-reconcile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -B -m py_compile reconciliation/oemixibot_app.py reconciliation/test_admin_reconciliation.py
+      - run: python -B -m unittest -v reconciliation/test_admin_reconciliation.py
