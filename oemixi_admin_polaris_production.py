@@ -79,10 +79,55 @@ def make_admin_polaris_provider(*, base_url=None, root_secret=None, token=None):
     )
 
     def provider(oem):
-        return admin_browser_price(
-            oem,
-            category_resolver=category_resolver,
+        # Railway Category Authority owns supersession/replacement resolution.
+        # DCP must probe the canonical resolved OEM rather than re-submitting the
+        # obsolete requested OEM and duplicating authority in browser navigation.
+        evidence = category_resolver("Polaris", oem)
+        if not isinstance(evidence, dict):
+            return {
+                "status":"DEALER_PRICE_UNVERIFIED",
+                "requested_oem":oem,
+                "dealer_price_usd":None,
+                "admin_unit_price_usd":None,
+                "production_found":False,
+                "reason":"CATEGORY_UNVERIFIED",
+            }
+        resolved = str(evidence.get("resolved_oem") or "").strip().upper()
+        if not resolved:
+            return {
+                "status":"DEALER_PRICE_UNVERIFIED",
+                "requested_oem":oem,
+                "dealer_price_usd":None,
+                "admin_unit_price_usd":None,
+                "production_found":False,
+                "reason":"CATEGORY_UNVERIFIED",
+            }
+
+        def canonical_category(manufacturer, candidate_oem):
+            if manufacturer != "Polaris" or candidate_oem != resolved:
+                return None
+            return evidence
+
+        result = admin_browser_price(
+            resolved,
+            category_resolver=canonical_category,
         )
+        if not isinstance(result, dict):
+            return {
+                "status":"DEALER_PRICE_UNVERIFIED",
+                "requested_oem":oem,
+                "resolved_oem":resolved,
+                "dealer_price_usd":None,
+                "admin_unit_price_usd":None,
+                "production_found":False,
+                "reason":"ADMIN_PROBE_INVALID_RESULT",
+            }
+        return {
+            **result,
+            "oem":oem,
+            "requested_oem":oem,
+            "resolved_oem":resolved,
+        }
 
     return provider
 
