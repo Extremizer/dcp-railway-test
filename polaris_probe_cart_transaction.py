@@ -19,6 +19,21 @@ def _price(adapter,oem,snapshot,line):
         raise ValueError("PRICE_UNVERIFIED")
     return str(value)
 
+def _valid_target(target,requested):
+    if not isinstance(target,dict):
+        return False
+    resolved=str(target.get("resolved_oem") or "")
+    if re.fullmatch(r"[A-Z0-9-]{4,40}",resolved) is None:
+        return False
+    if (target.get("manufacturer")!="Polaris"
+        or target.get("requested_oem")!=requested
+        or target.get("item_category")!="Parts"
+        or target.get("exact_match") is not True):
+        return False
+    if resolved!=requested and target.get("replacement_proven") is not True:
+        return False
+    return True
+
 def recover_probe(adapter,*,lock_path,journal_path):
     """Only recover a journal with proven exact delta. Never guess after uncertain add."""
     journal=Journal(journal_path)
@@ -31,8 +46,9 @@ def recover_probe(adapter,*,lock_path,journal_path):
                 original=rec["initial_cart_snapshot"]
                 delta=rec.get("delta")
                 if not isinstance(delta,dict):return _result("RECOVERY_REQUIRED")
+                resolved=rec.get("resolved_oem") or rec["requested_oem"]
                 current=adapter.snapshot()
-                proof=prove_delta(original,current,rec["requested_oem"])
+                proof=prove_delta(original,current,resolved)
                 if proof!=delta:return _result("RECOVERY_REQUIRED")
                 journal.save({**rec,"cleanup_state":"STARTED","last_step":"RECOVERY_CLEANUP"})
                 if not _safe(adapter):return _result("RECOVERY_REQUIRED")
@@ -58,30 +74,50 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                 if not _safe(adapter):return _result("AUTH_REQUIRED")
                 initial=adapter.snapshot()
                 base=canonical(initial)
-                oem=str(oem or '').strip().upper()
-                if not re.fullmatch(r'[A-Z0-9-]{4,40}',oem):return _result('OEM_UNVERIFIED')
-                matches=[x for x in base["lines"] if x["sku"]==oem]
+                requested=str(oem or "").strip().upper()
+                if not re.fullmatch(r"[A-Z0-9-]{4,40}",requested):
+                    return _result("OEM_UNVERIFIED")
+
+                requested_matches=[x for x in base["lines"] if x["sku"]==requested]
+                if len(requested_matches)>1:return _result("AMBIGUOUS_SKU")
+
+                resolved=requested
+                resolved_matches=requested_matches
                 target=None
-                if not matches:
-                    target=adapter.find_exact_oem(oem)
-                    if not isinstance(target,dict) or target.get('manufacturer')!='Polaris' or target.get('requested_oem')!=oem or target.get('resolved_oem')!=oem or target.get('item_category')!='Parts' or target.get('exact_match') is not True:
-                        return _result('OEM_UNVERIFIED')
-                if len(matches)>1:return _result("AMBIGUOUS_SKU")
+                if not requested_matches:
+                    target=adapter.find_exact_oem(requested)
+                    if not _valid_target(target,requested):
+                        return _result("OEM_UNVERIFIED")
+                    resolved=target["resolved_oem"]
+                    resolved_matches=[x for x in base["lines"] if x["sku"]==resolved]
+                    if len(resolved_matches)>1:return _result("AMBIGUOUS_SKU")
+
+                existing=resolved_matches
                 if dry_run:
-                    if not _safe(adapter) or digest(adapter.snapshot())!=digest(initial):return _result("CART_CHANGED")
-                    response=_result("DRY_RUN_READY",restored=True)
-                    response.update(mode="EXISTING_CART" if matches else "ADD_NEW_LINE",requested_oem=oem,resolved_oem=oem)
-                    return response
-                if matches:
-                    if not _safe(adapter):return _result("AUTH_REQUIRED")
-                    price=_price(adapter,oem,initial,matches[0])
                     if not _safe(adapter) or digest(adapter.snapshot())!=digest(initial):
                         return _result("CART_CHANGED")
-                    return _result("ADMIN_DEALER_CART_PRICE_VERIFIED",price,restored=True)
+                    response=_result("DRY_RUN_READY",restored=True)
+                    response.update(
+                        mode="EXISTING_CART" if existing else "ADD_NEW_LINE",
+                        requested_oem=requested,
+                        resolved_oem=resolved,
+                    )
+                    return response
+
+                if existing:
+                    if not _safe(adapter):return _result("AUTH_REQUIRED")
+                    price=_price(adapter,resolved,initial,existing[0])
+                    if not _safe(adapter) or digest(adapter.snapshot())!=digest(initial):
+                        return _result("CART_CHANGED")
+                    response=_result("ADMIN_DEALER_CART_PRICE_VERIFIED",price,restored=True)
+                    response.update(requested_oem=requested,resolved_oem=resolved)
+                    return response
+
                 rec={"probe_id":probe_id,"owner_pid":os.getpid(),
                     "started_at":datetime.now(timezone.utc).isoformat(),
                     "owner_instance_id":ownership.owner_instance_id,
-                    "requested_oem":oem,"initial_cart_snapshot":base,
+                    "requested_oem":requested,"resolved_oem":resolved,
+                    "initial_cart_snapshot":base,
                     "mutation_state":"PREPARED","last_step":"PREPARED",
                     "cleanup_state":"PENDING","delta":None}
                 journal.save(rec)
@@ -90,15 +126,15 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                     if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
                     rec.update(mutation_state="MUTATION_STARTED",last_step="ADD_ONE")
                     journal.save(rec)
-                    adapter.add_one(oem)
+                    adapter.add_one(requested)
                     if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
                     after=adapter.snapshot()
-                    delta=prove_delta(initial,after,oem)
+                    delta=prove_delta(initial,after,resolved)
                     rec.update(delta=delta,mutation_state="MUTATION_CONFIRMED",last_step="AFTER_ADD")
                     journal.save(rec)
                     if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
                     line=next(x for x in canonical(after)["lines"] if x["token"]==delta["token"])
-                    price=_price(adapter,oem,after,line)
+                    price=_price(adapter,resolved,after,line)
                     rec.update(mutation_state="PRICE_CAPTURED",last_step="PRICE")
                     journal.save(rec)
                 except Exception:
@@ -118,6 +154,8 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                 if not restored:return _result("RESTORATION_FAILED",mutated=True)
                 journal.clear()
                 if price is None:return _result("PROBE_UNVERIFIED",mutated=True,restored=True)
-                return _result("ADMIN_PROBE_CART_PRICE_VERIFIED",price,True,True)
+                response=_result("ADMIN_PROBE_CART_PRICE_VERIFIED",price,True,True)
+                response.update(requested_oem=requested,resolved_oem=resolved)
+                return response
             except Exception:return _result("PROBE_UNVERIFIED")
     except ProbeBusy:return _result("BUSY")
