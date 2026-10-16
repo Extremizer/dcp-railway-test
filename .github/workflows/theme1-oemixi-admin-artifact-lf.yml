@@ -1,0 +1,27 @@
+name: Theme1 OEMixi Admin Artifact LF
+on:
+  push:
+    branches:
+      - theme1-oemixi-admin-artifact-lf-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  artifact-and-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify committed checkout LF bytes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          for path in ('reconciliation/oemixibot_admin_search_live.patch','reconciliation/oemixibot_app.py'):
+              content=Path(path).read_bytes()
+              print(path, 'bytes=',len(content),'CRLF_COUNT=',content.count(b'\r\n'))
+              assert content.count(b'\r\n') == 0
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -B -m py_compile reconciliation/oemixibot_app.py reconciliation/test_admin_reconciliation.py reconciliation/test_admin_handlers.py reconciliation/test_finance_navigation.py
+      - run: python -B -m unittest -v reconciliation.test_admin_reconciliation reconciliation.test_admin_handlers reconciliation.test_finance_navigation
