@@ -34,10 +34,16 @@ function node(tag, cls, value) {
 }
 
 
-const rub = (value) => value == null
+const validPrice = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+const validQty = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+const label = (value, fallback = "") => value == null ? fallback : String(value);
+const usableOffer = (offer) => offer && typeof offer.key === "string" && offer.key.length > 0 &&
+  (offer.source === "usa" || offer.source === "warehouse") && validPrice(offer.price_rub) &&
+  offer.can_add === true && (offer.source === "usa" || (validQty(offer.available_quantity) && offer.available_quantity >= 1 && offer.warehouse_id != null));
+const rub = (value) => !validPrice(value)
   ? "Цена уточняется"
   : new Intl.NumberFormat("ru-RU").format(value) + " ₽";
-const usaRub = (value) => value == null
+const usaRub = (value) => !validPrice(value)
   ? "Цена уточняется"
   : new Intl.NumberFormat("ru-RU").format(value) + "* ₽";
 const qtyText = (value) => new Intl.NumberFormat(
@@ -67,9 +73,10 @@ function renderStock(stockData) {
   root.replaceChildren();
   const warehouses = Array.isArray(stockData?.warehouses) ? stockData.warehouses : [];
   for (const row of warehouses) {
+    if (!row || typeof row !== "object" || !validQty(row.quantity)) continue;
     const el = node("div", "stock-row");
-    const price = row.price_rub == null ? "" : " • " + rub(row.price_rub);
-    el.append(node("span", "", row.warehouse), node("b", "", qtyText(row.quantity) + " шт." + price));
+    const price = !validPrice(row.price_rub) ? "" : " • " + rub(row.price_rub);
+    el.append(node("span", "", label(row.warehouse, "Склад уточняется")), node("b", "", qtyText(row.quantity) + " шт." + price));
     root.appendChild(el);
   }
   if (warehouses.length && stockData.refreshing) {
@@ -88,12 +95,13 @@ function renderOffers(offers = []) {
     return;
   }
   for (const offer of offers) {
+    if (!offer || typeof offer !== "object" || !["usa", "warehouse"].includes(offer.source)) continue;
     const card = node("article", "offer-card");
     const meta = node("div", "offer-meta");
     meta.appendChild(node("div", "offer-source", offer.source === "usa"
-      ? "🇺🇸 склад США" : "🇷🇺 " + String(offer.label ?? "")));
+      ? "🇺🇸 склад США" : "🇷🇺 " + label(offer.label, "Склад уточняется")));
     meta.appendChild(node("div", "offer-availability", offer.source === "usa"
-      ? "Заказ из США" : "В наличии: " + qtyText(offer.available_quantity) + " шт."));
+      ? "Заказ из США" : "В наличии: " + (validQty(offer.available_quantity) ? qtyText(offer.available_quantity) + " шт." : "уточняется")));
     const key = String(currentProduct?.manufacturer ?? "") + "|" + String(currentProduct?.oem ?? "") + "|" + String(offer.key);
     const existing = cart.find((x) => x.key === key)?.qty || 0;
     if (existing) meta.appendChild(node("div", "offer-in-cart", "🛒 В корзине: " + existing + " шт."));
@@ -102,7 +110,7 @@ function renderOffers(offers = []) {
     const button = node("button", "", !offer.can_add ? "Цена уточняется" : existing ? "Добавить ещё" : "В корзину");
     button.type = "button";
     button.dataset.offerKey = String(offer.key ?? "");
-    button.disabled = !offer.can_add || offer.price_rub == null;
+    button.disabled = !usableOffer(offer);
     buy.appendChild(button);
     card.append(meta, buy);
     root.appendChild(card);
@@ -112,20 +120,21 @@ function renderOffers(offers = []) {
 async function pollStock(card, serial, attempt = 0) {
   if (serial !== stockPollSerial) return;
   if (attempt >= 40) {
-    if (currentProduct && currentProduct.oem === card.oem) {
+    if (currentProduct === card) {
       currentProduct.stock.refreshing = false;
       renderStock(currentProduct.stock);
     }
     return;
   }
   await new Promise((resolve) => setTimeout(resolve, 1500));
-  if (serial !== stockPollSerial || !currentProduct || currentProduct.oem !== card.oem) return;
+  if (serial !== stockPollSerial || currentProduct !== card) return;
   try {
     const params = new URLSearchParams({ manufacturer: card.manufacturer });
     const response = await fetch(`/api/v1/oem/${encodeURIComponent(card.oem)}/stock?${params}`);
     if (!response.ok) throw new Error("stock_refresh_failed");
     const stockData = await response.json();
-    if (serial !== stockPollSerial || !currentProduct || currentProduct.oem !== card.oem) return;
+    if (serial !== stockPollSerial || currentProduct !== card) return;
+    if (!stockData || !Array.isArray(stockData.warehouses)) throw new Error("invalid_stock_response");
     currentProduct.stock = stockData;
     renderStock(stockData);
     if (Array.isArray(stockData.offers)) {
@@ -136,7 +145,7 @@ async function pollStock(card, serial, attempt = 0) {
   } catch (_) {
     if (attempt < 5) {
       pollStock(card, serial, attempt + 1);
-    } else if (currentProduct && currentProduct.oem === card.oem) {
+    } else if (currentProduct === card) {
       currentProduct.stock.refreshing = false;
       renderStock(currentProduct.stock);
     }
@@ -147,12 +156,12 @@ function renderProduct(card) {
   currentProduct = card;
   currentQty = 1;
   $("qtyValue").textContent = "1";
-  $("productBrand").textContent = [card.manufacturer, card.catalog].filter(Boolean).join(" • ");
-  $("productName").textContent = card.name || "OEM позиция";
-  $("productOem").textContent = card.oem;
+  $("productBrand").textContent = [card.manufacturer, card.catalog].filter((x) => typeof x === "string" && x.trim()).join(" • ");
+  $("productName").textContent = typeof card.name === "string" && card.name.trim() ? card.name : "Название уточняется";
+  $("productOem").textContent = label(card.oem);
   const pricePanel = document.querySelector(".price-panel");
   pricePanel?.classList.toggle("hidden", Boolean(card.warehouse_only));
-  $("customerPrice").textContent = card.price.customer_rub == null
+  $("customerPrice").textContent = !validPrice(card.price.customer_rub)
     ? rub(null)
     : usaRub(card.price.customer_rub);
 
@@ -168,11 +177,11 @@ function renderProduct(card) {
   const benefitLine = $("benefitLine");
   const usaDeliveryNotice = $("usaDeliveryNotice");
   const usaDeliveryText = $("usaDeliveryText");
-  const showUsaTerms = !card.warehouse_only && card.price.customer_rub != null;
-  if (showUsaTerms && card.price.msrp_rub != null && card.price.msrp_rub > card.price.customer_rub) {
+  const showUsaTerms = !card.warehouse_only && validPrice(card.price.customer_rub);
+  if (showUsaTerms && validPrice(card.price.msrp_rub) && card.price.msrp_rub > card.price.customer_rub) {
     $("msrpPrice").textContent = rub(card.price.msrp_rub);
     msrp.classList.remove("hidden");
-    if (card.price.benefit_pct != null) {
+    if (typeof card.price.benefit_pct === "number" && Number.isFinite(card.price.benefit_pct)) {
       $("benefit").textContent = `${card.price.benefit_pct}%`;
       benefitLine.classList.remove("hidden");
     } else {
@@ -198,7 +207,7 @@ function renderProduct(card) {
   const stockSerial = stockPollSerial;
   renderStock(card.stock);
   renderOffers(card.offers || []);
-  if (card.stock.refreshing) pollStock(card, stockSerial);
+  if (card.stock?.refreshing) pollStock(card, stockSerial);
 
   const weight = $("weight");
   weight.replaceChildren();
@@ -253,7 +262,7 @@ async function searchOem(oem) {
     }
     if (!response.ok) throw new Error("search_api_unavailable");
     const card = await response.json();
-    if (!card || !card.price || !card.stock || !Array.isArray(card.offers)) {
+    if (!card || typeof card.oem !== "string" || !card.oem.trim() || !card.price || typeof card.price !== "object" || !card.stock || typeof card.stock !== "object" || !Array.isArray(card.offers)) {
       throw new Error("invalid_search_response");
     }
     lastSearchStatus = "found";
@@ -294,7 +303,7 @@ $("offers").addEventListener("click", (event) => {
   if (!offerKey || !currentProduct) return;
 
   const offer = (currentProduct.offers || []).find((x) => x.key === offerKey);
-  if (!offer || !offer.can_add || offer.price_rub == null) return;
+  if (!usableOffer(offer) || typeof currentProduct.oem !== "string" || !currentProduct.oem.trim()) return;
 
   const key = `${currentProduct.manufacturer}|${currentProduct.oem}|${offer.key}`;
   const maxQty = offer.available_quantity == null
