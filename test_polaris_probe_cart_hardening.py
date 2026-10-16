@@ -71,5 +71,5 @@ class Hardened(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             lock=Path(d)/"lock"
             with ProbeLock(lock):
-                self.assertEqual(recover_probe(Fake(),lock_path=lock,journal_path=Path(d)/"j")["status"],"BUSY")
+                self.assertEqual(recover_probe(Fake(),lock_path=lock,journal_path=Path(d)/"j")["status"],"RECOVERY_REQUIRED")
 if __name__=="__main__":unittest.main()
