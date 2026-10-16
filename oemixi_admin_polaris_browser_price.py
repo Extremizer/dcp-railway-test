@@ -5,6 +5,7 @@ Opt-in only. Never writes catalog/cache/global FOUND. Mutation is disabled here.
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 import re
 import tempfile
@@ -103,7 +104,8 @@ def _real_adapter(category_evidence,*,tabs=None,evaluate=None,preflight=None,exp
                 "exact_match":True}
     return ExistingBrowserProbeAdapter(
         get_tab=get_tab,evaluate=evaluate,verify_session=verify,
-        resolve_authority=authority,allow_mutation=False)
+        resolve_authority=authority,allow_mutation=False,
+        timeout_seconds=30.0,poll_seconds=0.2)
 
 def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
                         lock_path=None,journal_path=None):
@@ -131,5 +133,6 @@ def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
                 "admin_unit_price_usd":result.get("admin_unit_price_usd"),
                 "dealer_price_usd":None,"production_found":False,
                 "source":"polaris:authenticated_dealer_cart:normal_browser"}
-    except Exception:
-        return _denied()
+    except Exception as exc:
+        logging.exception("OEMixi ADMIN browser price failed type=%s",type(exc).__name__)
+        return _denied(type(exc).__name__)
