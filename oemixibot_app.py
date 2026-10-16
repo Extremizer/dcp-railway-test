@@ -26,6 +26,7 @@ FINANCE=FinanceEngine(STORE.path)
 _LEGACY_PRICE_PATH = object()
 _SHARED_PRICE_ADAPTER_KEY = 'oemixi_shared_dealer_price_adapter'
 _ADMIN_POLARIS_PRICE_RESOLVER_KEY = 'oemixi_admin_polaris_price_resolver'
+_ADMIN_POLARIS_PENDING_KEY = 'oemixi_admin_polaris_pending'
 
 
 def bind_admin_polaris_price_resolver(application, resolver):
@@ -233,11 +234,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 reply_markup=_admin_search_keyboard(),
             )
             return
-        offer=await _resolve_admin_oem_offer(oem,context)
-        await update.effective_message.reply_text(
-            _admin_offer_text(oem,offer),
-            reply_markup=_admin_search_keyboard(),
-        )
+        await _queue_admin_oem_probe(update,context,oem)
         return
     state=context.user_data.get("admin_topup")
     if state and u and is_telegram_admin(u.id):
@@ -728,6 +725,64 @@ def _admin_offer_text(requested_oem, offer):
     if source: lines.append(f"Источник dealer price: {source}")
     if verified: lines.append(f"Проверено: {verified}")
     return "\n".join(lines)
+
+
+async def _admin_oem_probe_background(oem,context,chat_id,user_id):
+    key=(int(chat_id),int(user_id))
+    pending=context.application.bot_data.setdefault(_ADMIN_POLARIS_PENDING_KEY,set())
+    try:
+        offer=await _resolve_admin_oem_offer(oem,context)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=_admin_offer_text(oem,offer),
+            reply_markup=_admin_search_keyboard(),
+        )
+    except Exception:
+        logging.exception("OEMixiBOT ADMIN background OEM probe failed oem=%s",oem)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=_admin_offer_text(oem,{
+                "status":"DEALER_PRICE_UNVERIFIED",
+                "reason":"ADMIN_PROBE_INTERNAL_ERROR",
+                "production_found":False,
+                "dealer_price_usd":None,
+                "admin_unit_price_usd":None,
+            }),
+            reply_markup=_admin_search_keyboard(),
+        )
+    finally:
+        pending.discard(key)
+
+
+async def _queue_admin_oem_probe(update,context,oem):
+    u=update.effective_user
+    chat=update.effective_chat
+    if not u or not chat:
+        await update.effective_message.reply_text("Не удалось определить ADMIN-сессию.")
+        return False
+    pending=context.application.bot_data.setdefault(_ADMIN_POLARIS_PENDING_KEY,set())
+    key=(int(chat.id),int(u.id))
+    if key in pending:
+        await update.effective_message.reply_text(
+            "⏳ Предыдущая проверка OEM ещё выполняется.",
+            reply_markup=_admin_search_keyboard(),
+        )
+        return False
+    pending.add(key)
+    context.user_data.pop("admin_oem_search",None)
+    await update.effective_message.reply_text(
+        f"⏳ Проверяю OEM {oem}…",
+        reply_markup=_admin_search_keyboard(),
+    )
+    try:
+        context.application.create_task(
+            _admin_oem_probe_background(oem,context,chat.id,u.id),
+            name=f"admin_oem_probe:{u.id}:{oem}",
+        )
+    except Exception:
+        pending.discard(key)
+        raise
+    return True
 
 
 async def _resolve_admin_oem_offer(oem, context):
