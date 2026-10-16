@@ -5,10 +5,22 @@ from decimal import Decimal
 from polaris_cart_snapshot import canonical,digest
 from polaris_probe_cart_delta import prove_delta
 from polaris_probe_cart_recovery import ProbeLock,ProbeBusy,Journal,RecoveryOwnership
+from polaris_probe_errors import classify_failure
 
-def _result(status,price=None,mutated=False,restored=False):
-    return dict(status=status,admin_unit_price_usd=price,cart_mutated=mutated,
+def _result(status,price=None,mutated=False,restored=False,failure_code=None):
+    result=dict(status=status,admin_unit_price_usd=price,cart_mutated=mutated,
         cart_restored=restored,production_found=False,dealer_price_usd=None)
+    if failure_code:
+        result["failure_code"]=failure_code
+    return result
+
+def _adapter_failure(adapter,default="AUTH_REQUIRED"):
+    code=getattr(adapter,"last_failure_code",None)
+    return code or default
+
+def _failed(exc,*,mutated=False,restored=False):
+    code=classify_failure(exc)
+    return _result(code,mutated=mutated,restored=restored,failure_code=code)
 
 def _safe(adapter):
     return adapter.verify() is True
@@ -71,7 +83,9 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
         with ProbeLock(lock_path,probe_id=probe_id,journal_path=journal_path) as ownership:
             if journal.read() is not None:return _result("RECOVERY_REQUIRED")
             try:
-                if not _safe(adapter):return _result("AUTH_REQUIRED")
+                if not _safe(adapter):
+                    code=_adapter_failure(adapter)
+                    return _result(code,failure_code=code)
                 initial=adapter.snapshot()
                 base=canonical(initial)
                 requested=str(oem or "").strip().upper()
@@ -105,7 +119,9 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                     return response
 
                 if existing:
-                    if not _safe(adapter):return _result("AUTH_REQUIRED")
+                    if not _safe(adapter):
+                        code=_adapter_failure(adapter)
+                        return _result(code,failure_code=code)
                     price=_price(adapter,resolved,initial,existing[0])
                     if not _safe(adapter) or digest(adapter.snapshot())!=digest(initial):
                         return _result("CART_CHANGED")
@@ -121,24 +137,28 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                     "mutation_state":"PREPARED","last_step":"PREPARED",
                     "cleanup_state":"PENDING","delta":None}
                 journal.save(rec)
-                delta=None;price=None;restored=False
+                delta=None;price=None;restored=False;probe_error=None
                 try:
-                    if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
+                    if not _safe(adapter):
+                        raise RuntimeError(_adapter_failure(adapter))
                     rec.update(mutation_state="MUTATION_STARTED",last_step="ADD_ONE")
                     journal.save(rec)
                     adapter.add_one(requested)
-                    if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
+                    if not _safe(adapter):
+                        raise RuntimeError(_adapter_failure(adapter))
                     after=adapter.snapshot()
                     delta=prove_delta(initial,after,resolved)
                     rec.update(delta=delta,mutation_state="MUTATION_CONFIRMED",last_step="AFTER_ADD")
                     journal.save(rec)
-                    if not _safe(adapter):raise ValueError("AUTH_REQUIRED")
+                    if not _safe(adapter):
+                        raise RuntimeError(_adapter_failure(adapter))
                     line=next(x for x in canonical(after)["lines"] if x["token"]==delta["token"])
                     price=_price(adapter,resolved,after,line)
                     rec.update(mutation_state="PRICE_CAPTURED",last_step="PRICE")
                     journal.save(rec)
-                except Exception:
+                except Exception as exc:
                     price=None
+                    probe_error=exc
                 finally:
                     rec.update(cleanup_state="STARTED",last_step="CLEANUP")
                     journal.save(rec)
@@ -151,11 +171,14 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                     rec.update(cleanup_state="RESTORED" if restored else "RECOVERY_REQUIRED",
                                mutation_state="RESTORED" if restored else "RECOVERY_REQUIRED")
                     journal.save(rec)
-                if not restored:return _result("RESTORATION_FAILED",mutated=True)
+                if not restored:return _result("RESTORATION_FAILED",mutated=True,failure_code="RESTORATION_FAILED")
                 journal.clear()
-                if price is None:return _result("PROBE_UNVERIFIED",mutated=True,restored=True)
+                if price is None:
+                    return _failed(probe_error or RuntimeError("PROBE_INTERNAL_ERROR"),
+                                   mutated=True,restored=True)
                 response=_result("ADMIN_PROBE_CART_PRICE_VERIFIED",price,True,True)
                 response.update(requested_oem=requested,resolved_oem=resolved)
                 return response
-            except Exception:return _result("PROBE_UNVERIFIED")
+            except Exception as exc:
+                return _failed(exc)
     except ProbeBusy:return _result("BUSY")
