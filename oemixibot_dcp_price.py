@@ -116,15 +116,24 @@ def _money(value: str | None) -> float | None:
     except ValueError:
         return None
 
-def get_dealer_price(manufacturer: str, oem: str) -> DealerPriceResult:
-    # Stage 2: no verified server-side category authority currently reaches this
-    # adapter. Never choose Parts or Ski-Doo Accessories by default.
-    # Preserve supplier adapters for later verified routing integration.
-    return DealerPriceResult(
-        status="CATEGORY_UNVERIFIED", manufacturer=str(manufacturer or ""),
-        query_oem=_normalize_oem(oem),
-        message="server_side_category_authority_missing",
-    )
+def get_dealer_price(manufacturer: str, oem: str, *, category_evidence=None) -> DealerPriceResult:
+    # Route admission comes exclusively from the broker's server-issued claim.
+    # The producer cannot upgrade it or infer Parts/Accessories from the brand.
+    claim = category_evidence if isinstance(category_evidence, dict) else {}
+    valid = (claim.get("manufacturer") == manufacturer and
+             claim.get("oem") == oem and
+             all(claim.get(k) for k in ("item_category","category_source_kind",
+                "category_source_ref","category_verified_at")))
+    if not valid:
+        return DealerPriceResult("CATEGORY_UNVERIFIED", str(manufacturer or ""), _normalize_oem(oem))
+    category = str(claim["item_category"]).strip()
+    if category.lower() != "parts":
+        return DealerPriceResult("CATEGORY_UNVERIFIED", manufacturer, _normalize_oem(oem),
+                                 message="approved_supplier_adapter_missing")
+    # Even an exact Parts route does not prove dealer price field semantics.
+    # Do not invoke legacy browser adapter or allow positive FOUND on selector name.
+    return DealerPriceResult("DEALER_PRICE_UNVERIFIED", manufacturer, _normalize_oem(oem),
+                             message="independent_dealer_price_semantics_required")
 
 
 def _legacy_get_dealer_price_unverified_route(manufacturer: str, oem: str) -> DealerPriceResult:
