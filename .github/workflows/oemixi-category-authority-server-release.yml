@@ -1,0 +1,22 @@
+name: OEMixi Category Authority Server Release Gate
+on:
+  push:
+    branches:
+      - release-category-authority-server-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  authority-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -B -m py_compile dcp_category_authority.py oemixi_category_authority_transport.py web_app.py test_oemixi_category_authority_transport.py
+      - run: python -B -m unittest -v test_oemixi_category_authority_transport.py
+      - name: Startup import smoke
+        run: python -B -c "import web_app; assert web_app.app is not None; print('WEB_APP_IMPORT_OK')"
