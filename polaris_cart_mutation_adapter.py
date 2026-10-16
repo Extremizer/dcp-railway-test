@@ -36,6 +36,24 @@ class ControlledDcpCartAdapter:
         return self._write(self._remove,token)
     def decrement_one(self,token):
         return self._write(self._decrement,token)
+    @classmethod
+    def from_existing_session(cls, *, verify_session, read_snapshot, read_forms,
+                              perform_post, find_oem, remove_exact_line,
+                              decrement_exact_one, allow_mutation=False):
+        from polaris_add_existing_session import add_one, inspect_exact_form
+        def verified_find(oem):
+            proof=inspect_exact_form(oem,read_forms=read_forms,verify=verify_session)
+            authority=find_oem(oem)
+            if not isinstance(authority,dict) or any(authority.get(k)!=proof[k] for k in proof):
+                raise ValueError("OEM_AUTHORITY_MISMATCH")
+            return proof
+        return cls(verify_session=verify_session,read_snapshot=read_snapshot,
+            find_oem=verified_find,
+            add_exact_one=lambda oem:add_one(oem,read_forms=read_forms,
+                perform_post=perform_post,verify=verify_session,allow_mutation=allow_mutation),
+            remove_exact_line=remove_exact_line,
+            decrement_exact_one=decrement_exact_one,allow_mutation=allow_mutation)
+
     def price(self,oem,snapshot):
         lines=[x for x in canonical(snapshot)["lines"] if x["sku"]==oem]
         if len(lines)!=1:raise ValueError("AMBIGUOUS_SKU")
