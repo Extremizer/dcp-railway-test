@@ -1,0 +1,93 @@
+--- a/oemixibot_app.py
++++ b/oemixibot_app.py
+@@ -183,4 +183,15 @@
+ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
+     u=update.effective_user
++    if context.user_data.get("admin_oem_search"):
++        if not u or not is_telegram_admin(u.id):
++            context.user_data.pop("admin_oem_search",None)
++            await update.effective_message.reply_text(ACCESS_DENIED)
++            return
++        oem=normalize_oem(update.effective_message.text)
++        if not oem:
++            await update.effective_message.reply_text("Введите один OEM-номер.",reply_markup=_admin_search_keyboard())
++            return
++        offer=await _resolve_admin_oem_offer(oem,context)
++        await update.effective_message.reply_text(_admin_offer_text(oem,offer),reply_markup=_admin_search_keyboard())
++        return
+     state=context.user_data.get("admin_topup")
+-    if state and u and is_telegram_admin(u.id):
+@@ -641,4 +653,4 @@
+ def _admin_root_keyboard(dealers):
+     rows=[
++        [InlineKeyboardButton("🔎 Поиск по OEM",callback_data="admsearch")],
+         [InlineKeyboardButton("💳 Задолженность дилеров",callback_data="admdebt")],
+-        [InlineKeyboardButton("⏳ Aging по дилерам",callback_data="admagingsum:all:0")],
+@@ -647,4 +660,36 @@
+     return InlineKeyboardMarkup(rows) if rows else None
+ 
++def _clear_admin_input_modes(user_data):
++    for key in ("admin_oem_search","admin_topup","admin_debit","admin_credit","admin_due"):
++        user_data.pop(key,None)
++
++
++def _admin_search_keyboard():
++    return InlineKeyboardMarkup([
++        [InlineKeyboardButton("🔎 Искать ещё",callback_data="admsearch")],
++        [InlineKeyboardButton("← В ADMIN",callback_data="admhome")],
++    ])
++
++def _admin_offer_text(oem, offer):
++    """Dealer semantics HOLD: never display legacy numeric field as Dealer Price."""
++    status=str(offer.get("status") or "DEALER_PRICE_UNVERIFIED")
++    reason=str(offer.get("price_error") or offer.get("error_code") or status)
++    return "\n".join(["🔎 Поиск по OEM","",f"OEM: {oem}",
++       "Дилерская цена недоступна.",
++       f"Статус: {status}",f"Причина: {reason}",
++       "MSRP не используется вместо Dealer Price."])
++
++async def _resolve_admin_oem_offer(oem,context):
++    """Read-only catalog identity only; positive Dealer semantics remain on HOLD."""
++    try:
++        # Existing catalog path can be inspected for identity, not price promotion.
++        result=await asyncio.to_thread(resolve_offer,oem)
++        status=str(result.get("status") or "DEALER_PRICE_UNVERIFIED")
++    except Exception:
++        status="TECHNICAL_ERROR"
++    # Independent dealer semantic source not approved; never promote legacy price.
++    return {"status":"DEALER_PRICE_UNVERIFIED",
++            "price_error":"positive_dealer_source_not_proven",
++            "catalog_status":status}
++
+ def _admin_debt_rows():
+-    rows=[FINANCE.dealer_debt_status(d["id"],"USD") for d in _admin_dealers()]
+@@ -911,4 +957,4 @@
+     if not u or not is_telegram_admin(u.id):
+         await update.effective_message.reply_text(ACCESS_DENIED); return
++    _clear_admin_input_modes(context.user_data)
+     dealers=_admin_dealers()
+-    await update.effective_message.reply_text("⚙️ OEMixiBOT ADMIN\n\n👥 Дилеры",reply_markup=_admin_root_keyboard(dealers))
+@@ -920,4 +967,15 @@
+         u=update.effective_user
+         if not u or not is_telegram_admin(u.id): await q.edit_message_text(ACCESS_DENIED); return
++        if data=="admsearch":
++            _clear_admin_input_modes(context.user_data)
++            context.user_data["admin_oem_search"]=True
++            await q.edit_message_text("🔎 Поиск по OEM\n\nВведите один OEM-номер.",
++                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← В ADMIN",callback_data="admhome")]]))
++            return
++        if data=="admhome":
++            _clear_admin_input_modes(context.user_data)
++            await q.edit_message_text("⚙️ OEMixiBOT ADMIN",reply_markup=_admin_root_keyboard(_admin_dealers()))
++            return
++        if data != "admsearch":
++            context.user_data.pop("admin_oem_search",None)
+         if data.startswith("admdealer:"):
+-            did=data.split(":",1)[1]; d=next((x for x in _admin_dealers() if x["id"]==did),None)
+@@ -1323,4 +1382,5 @@
+     app.add_handler(CommandHandler("balance",balance_command))
+     app.add_handler(CommandHandler("admin",admin_command))
++    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admsearch$|admhome$|admdealer:|admdealers$|admdebt$|admdebt:|admagingsum:|admaging:|admfin:|admfinevent:|admdebit:|admtopup:|noop$)"))
+-    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admdealer:|admdealers$|admdebt$|admdebt:|admagingsum:|admaging:|admfin:|admfinevent:|admdebit:|admtopup:|noop$)"))
+     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,oem_message))
++    return app
