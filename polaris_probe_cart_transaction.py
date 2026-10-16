@@ -1,5 +1,5 @@
 """Isolated fail-closed probe transaction; adapter is injected, never opened here."""
-import os,uuid
+import os,uuid,re
 from datetime import datetime,timezone
 from decimal import Decimal
 from polaris_cart_snapshot import canonical,digest
@@ -56,10 +56,20 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                 if not _safe(adapter):return _result("AUTH_REQUIRED")
                 initial=adapter.snapshot()
                 base=canonical(initial)
+                oem=str(oem or '').strip().upper()
+                if not re.fullmatch(r'[A-Z0-9-]{4,40}',oem):return _result('OEM_UNVERIFIED')
                 matches=[x for x in base["lines"] if x["sku"]==oem]
+                target=None
+                if not matches:
+                    target=adapter.find_exact_oem(oem)
+                    if not isinstance(target,dict) or target.get('manufacturer')!='Polaris' or target.get('requested_oem')!=oem or target.get('resolved_oem')!=oem or target.get('item_category')!='Parts' or target.get('exact_match') is not True:
+                        return _result('OEM_UNVERIFIED')
                 if len(matches)>1:return _result("AMBIGUOUS_SKU")
                 if dry_run:
-                    return _result("DRY_RUN_READY",restored=True)
+                    if not _safe(adapter) or digest(adapter.snapshot())!=digest(initial):return _result("CART_CHANGED")
+                    response=_result("DRY_RUN_READY",restored=True)
+                    response.update(mode="EXISTING_CART" if matches else "ADD_NEW_LINE",requested_oem=oem,resolved_oem=oem)
+                    return response
                 if matches:
                     if not _safe(adapter):return _result("AUTH_REQUIRED")
                     price=_price(adapter,oem,initial,matches[0])
