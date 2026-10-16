@@ -568,10 +568,10 @@ def init_orders_db() -> None:
                     ):
                         cache_previous.append(normalized_previous)
 
-                cache_verified_at = (
-                    str(public_entry.get("captured_at") or "").strip()
-                    or datetime.now().astimezone().isoformat(timespec="seconds")
-                )
+                cache_verified_at = str(public_entry.get("captured_at") or "").strip()
+                # A bootstrap snapshot is not newly verified by being imported.
+                if not is_fresh_timestamp(cache_verified_at, MSRP_MAX_AGE_HOURS):
+                    continue
                 cache_source_kind = (
                     str(public_entry.get("source_kind") or "").strip()
                     or "validated_public_msrp"
