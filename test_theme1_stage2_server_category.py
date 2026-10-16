@@ -22,9 +22,12 @@ class Stage2ServerCategoryTests(unittest.TestCase):
                 source_kind TEXT, source_ref TEXT, last_verified_at TEXT, previous_oems_json TEXT DEFAULT '[]')""")
             conn.execute("""CREATE TABLE oem_catalog_aliases (
                 manufacturer TEXT, alias_oem TEXT, current_oem TEXT, alias_kind TEXT)""")
-            conn.execute("""INSERT INTO oem_catalog_cache VALUES (?,?,?,?,?,?,?)""",
+            conn.execute("""INSERT INTO oem_catalog_cache (
+                manufacturer, current_oem, catalog, msrp_verified,
+                source_kind, source_ref, last_verified_at, previous_oems_json
+            ) VALUES (?,?,?,?,?,?,?,?)""",
                 ("Polaris","2206328","Parts",1,"validated_public_msrp","owner-reviewed-catalog",
-                 datetime.now(timezone.utc).isoformat()))
+                 datetime.now(timezone.utc).isoformat(),"[]"))
             conn.execute("INSERT INTO oem_catalog_aliases VALUES (?,?,?,?)",
                          ("Polaris","2206328","2206328","current"))
             conn.commit()
