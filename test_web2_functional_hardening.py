@@ -54,9 +54,7 @@ class HardeningTests(unittest.TestCase):
         with mock_server() as (base, _), sync_playwright() as pw:
             browser = pw.chromium.launch(headless=True)
             page = browser.new_page()
-            page.add_init_script("""() => {
-              localStorage.setItem('extremizer_web2_cart', '{malformed');
-            }""")
+            page.add_init_script("localStorage.setItem('extremizer_web2_cart', '{malformed');")
             page.goto(base + "/web2")
             self.assertEqual(page.locator("#cartCount").inner_text(), "0")
             browser.close()
