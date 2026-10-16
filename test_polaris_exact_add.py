@@ -1,8 +1,10 @@
-import unittest
+import tempfile,unittest
+from pathlib import Path
 from polaris_add_form_contract import validate_form
 from polaris_add_existing_session import add_one
 from polaris_cart_mutation_adapter import ControlledDcpCartAdapter
 from polaris_probe_cart_delta import prove_delta
+from polaris_probe_cart_transaction import run_probe
 from test_polaris_probe_cart_transaction import line
 
 OEM="2206328"
@@ -10,6 +12,13 @@ def form(**kw):
     d=dict(id="add_"+OEM,action="/cart/addoemsinglepart",method="POST",manf="polaris_atv",sku=OEM,qty="1")
     d.update(kw)
     return d
+
+def replacement_form(old="2205250",new="2206328",**kw):
+    d=dict(id="add_"+old,action="/cart/addoemsinglepart",method="POST",
+           manf="polaris_atv",sku=old,qty="1",old_sku=old,new_sku=new)
+    d.update(kw)
+    return d
+
 class ExactAddTests(unittest.TestCase):
     def test_01_exact(self):self.assertTrue(validate_form(OEM,[form()])["exact_match"])
     def test_02_related_first(self):self.assertEqual(validate_form(OEM,[form(id="add_2204967",sku="2204967"),form()])["resolved_oem"],OEM)
@@ -61,4 +70,59 @@ class ExactAddTests(unittest.TestCase):
            perform_post=lambda *args:None,find_oem=lambda o:validate_form(o,[form()]),
            remove_exact_line=lambda t:None,decrement_exact_one=lambda t:None)
         with self.assertRaises(PermissionError):a.add_one(OEM)
+
+    def test_18_explicit_replacement(self):
+        p=validate_form("2205250",[replacement_form()])
+        self.assertEqual(p["requested_oem"],"2205250")
+        self.assertEqual(p["submit_oem"],"2205250")
+        self.assertEqual(p["resolved_oem"],"2206328")
+        self.assertTrue(p["replacement_proven"])
+
+    def test_19_replacement_old_must_match_requested(self):
+        with self.assertRaises(ValueError):
+            validate_form("2205250",[replacement_form(old="2205250",old_sku="2204967")])
+
+    def test_20_replacement_submit_stays_requested(self):
+        calls=[]
+        r=add_one("2205250",read_forms=lambda x:[replacement_form()],
+            perform_post=lambda *args:calls.append(args),verify=lambda:True,allow_mutation=True)
+        self.assertEqual(calls,[("/cart/addoemsinglepart",
+            {"manf":"polaris_atv","sku":"2205250","qty":"1"})])
+        self.assertEqual(r["resolved_oem"],"2206328")
+
+    def test_21_existing_resolved_price_no_mutation(self):
+        class A:
+            def __init__(self):self.ops=[]
+            def verify(self):return True
+            def snapshot(self):return {"lines":[line("2206328","existing")]}
+            def find_exact_oem(self,o):
+                return {"manufacturer":"Polaris","item_category":"Parts",
+                    "requested_oem":"2205250","resolved_oem":"2206328",
+                    "exact_match":True,"replacement_proven":True}
+            def add_one(self,o):raise AssertionError("ADD MUST NOT RUN")
+            def price(self,o,s):
+                self.ops.append(("price",o))
+                return "184.07"
+        a=A()
+        with tempfile.TemporaryDirectory() as d:
+            r=run_probe("2205250",a,lock_path=Path(d)/"lock",journal_path=Path(d)/"journal")
+        self.assertEqual(r["status"],"ADMIN_DEALER_CART_PRICE_VERIFIED")
+        self.assertEqual(r["admin_unit_price_usd"],"184.07")
+        self.assertEqual(r["requested_oem"],"2205250")
+        self.assertEqual(r["resolved_oem"],"2206328")
+        self.assertFalse(r["cart_mutated"])
+        self.assertEqual(a.ops,[("price","2206328")])
+
+    def test_22_unproven_replacement_rejected(self):
+        class A:
+            def verify(self):return True
+            def snapshot(self):return {"lines":[]}
+            def find_exact_oem(self,o):
+                return {"manufacturer":"Polaris","item_category":"Parts",
+                    "requested_oem":"2205250","resolved_oem":"2206328",
+                    "exact_match":True,"replacement_proven":False}
+        with tempfile.TemporaryDirectory() as d:
+            r=run_probe("2205250",A(),lock_path=Path(d)/"lock",journal_path=Path(d)/"journal")
+        self.assertEqual(r["status"],"OEM_UNVERIFIED")
+
 if __name__=="__main__":unittest.main()
