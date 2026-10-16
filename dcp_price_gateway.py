@@ -22,6 +22,9 @@ def _verified_price(result, manufacturer, oem, max_age_hours):
 
 
 def _read_cache(db_file, manufacturer, oem, max_age_hours):
+    # Stage 2 HOLD: legacy cache has no accepted independent Dealer semantics.
+    # Never promote it to positive Dealer FOUND, regardless of numeric price.
+    return None
     if not Path(db_file).exists():
         return None
     with closing(sqlite3.connect(Path(db_file).resolve().as_uri()+"?mode=ro",uri=True)) as conn:
