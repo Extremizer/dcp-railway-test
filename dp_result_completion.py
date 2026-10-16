@@ -105,11 +105,11 @@ def complete_result(db_file, payload: dict) -> dict:
                 if (health and health[0] in {"CLOUDFLARE", "AUTH_REQUIRED"}) or bridge._breaker_status(conn):
                     raise CompletionError(409, "dcp_session_blocked")
                 manufacturer, query_oem = _identity(payload.get("manufacturer"), payload.get("query_oem"))
-                if query_oem != requested_oem or (requested_manufacturer != "__AUTO__" and manufacturer != requested_manufacturer):
+                if query_oem != requested_oem or manufacturer != requested_manufacturer:
                     raise CompletionError(400, "result_identity_mismatch")
                 _, current_oem = _identity(manufacturer, payload.get("current_oem") or requested_oem)
                 _, matched_sku = _identity(manufacturer, payload.get("matched_sku"))
-                if matched_sku not in {requested_oem, current_oem}:
+                if matched_sku != requested_oem or current_oem != requested_oem:
                     raise CompletionError(400, "result_sku_mismatch")
                 value = payload.get("dealer_price_usd")
                 if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
@@ -119,7 +119,7 @@ def complete_result(db_file, payload: dict) -> dict:
                 price = float(value)
                 source = _dealer_source(payload.get("source"), manufacturer, requested_oem)
                 name = str(payload.get("name") or "")[:300] or None
-                if requested_manufacturer == "__AUTO__" and conn.execute(
+                if False and conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE name='probnik_oem_identity'"
                 ).fetchone():
                     existing = conn.execute(
@@ -131,8 +131,7 @@ def complete_result(db_file, payload: dict) -> dict:
                 _write_cache(conn, manufacturer, requested_oem, price, source, now)
                 if current_oem != requested_oem:
                     _write_cache(conn, manufacturer, current_oem, price, source, now)
-                if requested_manufacturer == "__AUTO__":
-                    _write_identity(conn, manufacturer, requested_oem, current_oem, name, source, now)
+                # Identity discovery by manufacturer guessing is prohibited.
             changed = conn.execute("""UPDATE dp_live_requests SET status='finished',finished_at=?,
                 result_status=?,dealer_price_usd=?,result_source=?,current_oem=?,item_name=?,
                 error_code=?,result_manufacturer=?,cache_committed_at=? WHERE request_id=? AND status='claimed'
