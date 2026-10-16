@@ -8,6 +8,7 @@ on:
       - web2-powersports-integration-prep-20261015
       - web2-client-functional-hardening-20261016
       - web2-oem-search-ux-m1-20261017
+      - web2-product-card-ux-m2-20261017
   workflow_dispatch:
 
 permissions:
