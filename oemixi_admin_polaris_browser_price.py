@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from polaris_existing_browser_controller import ExistingBrowserProbeAdapter
 from polaris_probe_cart_transaction import run_probe
+from polaris_probe_errors import ProbeFailure,classify_failure
 
 OEM_RE=re.compile(r"[A-Z0-9-]{4,40}")
 
@@ -26,16 +27,16 @@ def _denied(reason="DEALER_PRICE_UNVERIFIED"):
 def _category(oem,resolver,now):
     evidence=resolver("Polaris",oem)
     if not isinstance(evidence,dict) or evidence.get("item_category")!="Parts":
-        raise ValueError("CATEGORY_UNVERIFIED")
+        raise ProbeFailure("CATEGORY_UNVERIFIED")
     resolved=str(evidence.get("resolved_oem") or "")
     if OEM_RE.fullmatch(resolved) is None:
-        raise ValueError("CATEGORY_UNVERIFIED")
+        raise ProbeFailure("CATEGORY_UNVERIFIED")
     for k in ("category_source_kind","category_source_ref","category_verified_at"):
         if not isinstance(evidence.get(k),str) or not evidence[k].strip():
-            raise ValueError("CATEGORY_UNVERIFIED")
+            raise ProbeFailure("CATEGORY_UNVERIFIED")
     stamp=datetime.fromisoformat(evidence["category_verified_at"].replace("Z","+00:00"))
     if stamp.tzinfo is None or not (0 <= (now-stamp).total_seconds() <= 86400):
-        raise ValueError("CATEGORY_STALE")
+        raise ProbeFailure("CATEGORY_STALE")
     return evidence
 
 def _single_tab(tabs):
@@ -122,7 +123,7 @@ def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
             journal_path=journal_path or root/"probe.json"
         result=run_probe(oem,runtime,lock_path=lock_path,journal_path=journal_path)
         if result.get("status")!="ADMIN_DEALER_CART_PRICE_VERIFIED":
-            return _denied(result.get("status") or "DEALER_PRICE_UNVERIFIED")
+            return _denied(result.get("failure_code") or result.get("status") or "DEALER_PRICE_UNVERIFIED")
         if result.get("cart_mutated") is not False or result.get("production_found") is not False:
             return _denied("UNSAFE_ADMIN_RESULT")
         if result.get("dealer_price_usd") is not None:
@@ -134,5 +135,6 @@ def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
                 "dealer_price_usd":None,"production_found":False,
                 "source":"polaris:authenticated_dealer_cart:normal_browser"}
     except Exception as exc:
-        logging.exception("OEMixi ADMIN browser price failed type=%s",type(exc).__name__)
-        return _denied(type(exc).__name__)
+        code=classify_failure(exc)
+        logging.exception("OEMixi ADMIN browser price failed code=%s",code)
+        return _denied(code)
