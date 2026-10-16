@@ -26,7 +26,7 @@ class RuntimeGuardTests(unittest.TestCase):
         src=source("dp_sync_agent.py")
         fn=src.split("def run_once()",1)[1].split("def main()",1)[0]
         self.assertNotIn("_auto_identity_price(",fn)
-        self.assertIn('oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"])',fn)
+        self.assertIn('oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"], category_evidence=item)',fn)
         claim=src.split("def _claim()",1)[1].split("def _validated_result",1)[0]
         self.assertNotIn('"__AUTO__"',claim)
 
@@ -39,7 +39,8 @@ class RuntimeGuardTests(unittest.TestCase):
     def test_adapter_denies_unverified_route_before_legacy_parser(self):
         src=source("oemixibot_dcp_price.py")
         entry=src.split("def get_dealer_price(",1)[1].split("def _legacy_get_dealer_price_unverified_route",1)[0]
-        self.assertIn('status="CATEGORY_UNVERIFIED"',entry)
+        self.assertIn('"CATEGORY_UNVERIFIED"',entry)
+        self.assertIn('"DEALER_PRICE_UNVERIFIED"',entry)
         self.assertNotIn("_parts_slug(",entry)
         self.assertNotIn("_runtime_evaluate(",entry)
 
