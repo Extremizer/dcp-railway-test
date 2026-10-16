@@ -1,6 +1,6 @@
 """ADMIN-only Polaris Dealer Price through the normal-browser probe controller.
 
-Opt-in only. Never writes catalog/cache/global FOUND. Mutation is disabled here.
+Opt-in ADMIN only. Never writes catalog/cache/global FOUND. Controlled probe-cart mutation is enabled and must be fully compensated before price is returned.
 """
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ def _real_adapter(category_evidence,*,tabs=None,evaluate=None,preflight=None,exp
                 "exact_match":True}
     return ExistingBrowserProbeAdapter(
         get_tab=get_tab,evaluate=evaluate,verify_session=verify,
-        resolve_authority=authority,allow_mutation=False,
+        resolve_authority=authority,allow_mutation=True,
         timeout_seconds=30.0,poll_seconds=0.2)
 
 def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
