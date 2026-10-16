@@ -71,5 +71,24 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(r["status"],"DEALER_PRICE_UNVERIFIED")
         self.assertIsNone(r["admin_unit_price_usd"])
 
+
+    def test_08_real_adapter_enables_controlled_probe_mutation(self):
+        import oemixi_admin_polaris_browser_price as price
+        evidence={
+            "resolved_oem":"2206328",
+            "item_category":"Parts",
+            "category_source_kind":"validated_public_msrp",
+            "category_source_ref":"fixture",
+            "category_verified_at":"2026-10-16T18:30:00+00:00",
+        }
+        adapter=price._real_adapter(
+            evidence,
+            tabs=lambda:[],
+            evaluate=lambda *_:None,
+            preflight=lambda:"READY",
+            expected="dealer@example.invalid",
+        )
+        self.assertIs(adapter.allow_mutation,True)
+
 if __name__=="__main__":
     unittest.main()
