@@ -1,16 +1,20 @@
 """Cross-process exclusive Windows-compatible file lock and durable recovery journal."""
 import json,os,time,uuid
+from datetime import datetime,timezone
 from pathlib import Path
 
 class ProbeBusy(Exception): pass
 class ProbeLock:
-    def __init__(self,path):
+    def __init__(self,path,probe_id=None,owner_instance_id=None):
         self.path=Path(path);self.fd=None
+        self.probe_id=probe_id or uuid.uuid4().hex
+        self.owner_instance_id=owner_instance_id or uuid.uuid4().hex
     def __enter__(self):
         self.path.parent.mkdir(parents=True,exist_ok=True)
         try:self.fd=os.open(self.path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
         except FileExistsError:raise ProbeBusy("PROBE_BUSY") from None
-        os.write(self.fd,str(os.getpid()).encode());os.fsync(self.fd)
+        owner={"probe_id":self.probe_id,"pid":os.getpid(),"created_at":datetime.now(timezone.utc).isoformat(),"owner_instance_id":self.owner_instance_id}
+        os.write(self.fd,json.dumps(owner,sort_keys=True).encode());os.fsync(self.fd)
         return self
     def __exit__(self,*args):
         if self.fd is not None:
