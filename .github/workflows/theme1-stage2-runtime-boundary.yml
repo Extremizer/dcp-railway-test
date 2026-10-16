@@ -1,0 +1,23 @@
+name: Theme1 Stage2 Runtime Boundary
+on:
+  push:
+    branches:
+      - theme1-stage2-runtime-evidence-20261016
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract-runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax and import smoke
+        run: |
+          python -B -m py_compile dp_live_bridge.py dp_sync_agent.py dp_result_completion.py oemixibot_dcp_price.py dcp_category_safety.py test_theme1_stage2_runtime_boundary.py
+          python -B -c 'import dcp_category_safety, dp_live_bridge, dp_result_completion'
+      - name: Runtime boundaries and Stage2 contract regressions
+        run: python -B -m unittest -v test_theme1_stage2_runtime_boundary.py test_theme5_stage2_mock_contract.py
