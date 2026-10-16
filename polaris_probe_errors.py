@@ -26,6 +26,8 @@ SAFE_CODES={
     "RECOVERY_REQUIRED",
     "RESTORATION_FAILED",
     "BUSY",
+    "CATEGORY_UNVERIFIED",
+    "CATEGORY_STALE",
 }
 
 class ProbeFailure(RuntimeError):
