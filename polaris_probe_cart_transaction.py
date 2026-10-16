@@ -52,7 +52,7 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
     journal=Journal(journal_path)
     probe_id=uuid.uuid4().hex
     try:
-        with ProbeLock(lock_path,probe_id=probe_id) as ownership:
+        with ProbeLock(lock_path,probe_id=probe_id,journal_path=journal_path) as ownership:
             if journal.read() is not None:return _result("RECOVERY_REQUIRED")
             try:
                 if not _safe(adapter):return _result("AUTH_REQUIRED")
