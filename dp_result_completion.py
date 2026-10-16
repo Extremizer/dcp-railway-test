@@ -9,6 +9,7 @@ import sqlite3
 
 import dp_live_bridge as bridge
 import dp_live_health
+import dcp_category_authority
 
 
 class CompletionError(Exception):
@@ -119,6 +120,9 @@ def complete_result(db_file, payload: dict) -> dict:
                 price = float(value)
                 source = _dealer_source(payload.get("source"), manufacturer, requested_oem)
                 name = str(payload.get("name") or "")[:300] or None
+                authority = dcp_category_authority.resolve(conn, requested_manufacturer, requested_oem)
+                if (authority is None or any(row[k] != authority[k] for k in ("item_category","category_source_kind","category_source_ref","category_verified_at"))):
+                    raise CompletionError(409, "CATEGORY_UNVERIFIED")
                 # Stage 2 approval gate: the completion request does not carry
                 # authoritative server-side category/line/price-kind evidence.
                 # Thus FOUND must fail before any cache or identity mutation.
