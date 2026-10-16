@@ -498,8 +498,8 @@ def _legacy_get_dealer_price_unverified_route(manufacturer: str, oem: str) -> De
         authorized=True,
     )
 
-def get_dealer_price_dict(manufacturer: str, oem: str) -> dict[str, Any]:
-    return asdict(get_dealer_price(manufacturer, oem))
+def get_dealer_price_dict(manufacturer: str, oem: str, *, category_evidence=None) -> dict[str, Any]:
+    return asdict(get_dealer_price(manufacturer, oem, category_evidence=category_evidence))
 
 if __name__ == "__main__":
     import argparse
