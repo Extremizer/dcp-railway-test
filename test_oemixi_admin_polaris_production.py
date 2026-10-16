@@ -182,5 +182,39 @@ class ProductionWiringTests(unittest.TestCase):
             )
 
 
+
+    def test_12_provider_probes_canonical_resolved_oem(self):
+        evidence={
+            "resolved_oem":"2206328",
+            "item_category":"Parts",
+            "category_source_kind":"validated_public_msrp",
+            "category_source_ref":"fixture",
+            "category_verified_at":"2026-10-16T18:00:00+00:00",
+        }
+        class Transport:
+            def __init__(self,*a,**k): pass
+            def __call__(self,manufacturer,oem):
+                self.request=(manufacturer,oem)
+                return evidence
+        with patch.object(prod,"HTTPSCategoryAuthorityResolver",Transport),              patch.object(prod,"admin_browser_price") as price:
+            price.return_value={
+                "status":"ADMIN_DEALER_CART_PRICE_VERIFIED",
+                "manufacturer":"Polaris",
+                "item_category":"Parts",
+                "oem":"2206328",
+                "admin_unit_price_usd":"184.07",
+                "dealer_price_usd":None,
+                "production_found":False,
+            }
+            provider=prod.make_admin_polaris_provider(
+                base_url="https://authority.example",
+                root_secret=VECTOR_SECRET,
+            )
+            result=provider("2205250")
+        self.assertEqual(price.call_args.args[0],"2206328")
+        self.assertEqual(result["requested_oem"],"2205250")
+        self.assertEqual(result["resolved_oem"],"2206328")
+        self.assertEqual(result["admin_unit_price_usd"],"184.07")
+
 if __name__=="__main__":
     unittest.main()
