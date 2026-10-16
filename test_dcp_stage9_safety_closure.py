@@ -18,6 +18,8 @@ class Stage9SafetyClosure(ProducerV2Tests):
                     c.execute("DELETE FROM dp_live_requests")
                     c.execute("UPDATE dp_live_coordination SET blocked_status=NULL,blocked_at=NULL")
                 self.browser.get_dealer_price_dict.return_value = {"status":status, "msrp_usd":999}
+                with sqlite3.connect(self.db) as c:
+                    cache_before = c.execute("SELECT * FROM dealer_price_cache ORDER BY manufacturer, oem").fetchall()
                 self.enqueue()
                 self.assertTrue(self.agent.run_once())
                 self.assertTrue(self.agent._PRODUCER_STOP)
@@ -25,11 +27,11 @@ class Stage9SafetyClosure(ProducerV2Tests):
                 self.browser.get_dealer_price_dict.assert_called_once()
                 with sqlite3.connect(self.db) as c:
                     row = c.execute("SELECT status,result_status,dealer_price_usd,cache_committed_at FROM dp_live_requests").fetchone()
-                    cache_count = c.execute("SELECT COUNT(*) FROM dealer_price_cache").fetchone()[0]
+                    cache_after = c.execute("SELECT * FROM dealer_price_cache ORDER BY manufacturer, oem").fetchall()
                     blocked = c.execute("SELECT blocked_status FROM dp_live_coordination WHERE singleton_id=1").fetchone()[0]
                 self.assertEqual(row, ("finished", status, None, None))
                 self.assertEqual(blocked, status)
-                self.assertEqual(cache_count, 0)
+                self.assertEqual(cache_after, cache_before)
                 self.assertFalse(self.agent.JOURNAL_FILE.exists())
 
     def test_two_hosts_first_claim_excludes_other_owner(self):
