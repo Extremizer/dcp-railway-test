@@ -14,6 +14,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Python syntax
-        run: python -m py_compile dcp_stage9_mock_linux_runner.py test_dcp_stage9_mock_linux_runner.py
+        run: python -m py_compile dcp_stage9_mock_linux_runner.py test_dcp_stage9_mock_linux_runner.py test_dcp_stage9_safety_closure.py
       - name: Stage 9 Linux safety tests - no network or supplier
         run: python -B -m unittest -v test_dcp_stage9_mock_linux_runner.py
