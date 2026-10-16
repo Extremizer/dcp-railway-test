@@ -659,6 +659,11 @@ def _admin_root_keyboard(dealers):
     rows += [[InlineKeyboardButton(f"👤 {d['name']}",callback_data=f"admdealer:{d['id']}")] for d in dealers]
     return InlineKeyboardMarkup(rows) if rows else None
 
+def _clear_admin_input_modes(user_data):
+    for key in ("admin_oem_search","admin_topup","admin_debit","admin_credit","admin_due"):
+        user_data.pop(key,None)
+
+
 def _admin_search_keyboard():
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("🔎 Искать ещё",callback_data="admsearch")],
@@ -951,7 +956,7 @@ async def admin_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
     u=update.effective_user
     if not u or not is_telegram_admin(u.id):
         await update.effective_message.reply_text(ACCESS_DENIED); return
-    context.user_data.pop("admin_oem_search",None)
+    _clear_admin_input_modes(context.user_data)
     dealers=_admin_dealers()
     await update.effective_message.reply_text("⚙️ OEMixiBOT ADMIN\n\n👥 Дилеры",reply_markup=_admin_root_keyboard(dealers))
 
@@ -962,18 +967,17 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         u=update.effective_user
         if not u or not is_telegram_admin(u.id): await q.edit_message_text(ACCESS_DENIED); return
         if data=="admsearch":
-            context.user_data.pop("admin_due",None)
-            context.user_data.pop("admin_topup",None)
-            context.user_data.pop("admin_debit",None)
+            _clear_admin_input_modes(context.user_data)
             context.user_data["admin_oem_search"]=True
             await q.edit_message_text("🔎 Поиск по OEM\n\nВведите один OEM-номер.",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← В ADMIN",callback_data="admhome")]]))
             return
         if data=="admhome":
-            for key in ("admin_oem_search","admin_topup","admin_debit","admin_due"):
-                context.user_data.pop(key,None)
+            _clear_admin_input_modes(context.user_data)
             await q.edit_message_text("⚙️ OEMixiBOT ADMIN",reply_markup=_admin_root_keyboard(_admin_dealers()))
             return
+        if data != "admsearch":
+            context.user_data.pop("admin_oem_search",None)
         if data.startswith("admdealer:"):
             did=data.split(":",1)[1]; d=next((x for x in _admin_dealers() if x["id"]==did),None)
             if not d: await q.edit_message_text("Дилер не найден."); return
