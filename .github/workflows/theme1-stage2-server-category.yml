@@ -16,7 +16,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Isolated dependencies
-        run: pip install 'websocket-client>=1.7,<2'
+        run: pip install 'websocket-client>=1.7,<2' 'playwright>=1.50,<2'
       - name: Syntax and import
         run: |
           python -B -m py_compile dcp_category_authority.py dp_live_bridge.py dp_sync_agent.py dp_result_completion.py oemixibot_dcp_price.py test_theme1_stage2_server_category.py
