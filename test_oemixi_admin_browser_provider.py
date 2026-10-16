@@ -71,5 +71,70 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(r["status"],"DEALER_PRICE_UNVERIFIED")
         self.assertIsNone(r["admin_unit_price_usd"])
 
+
+    def test_08_real_adapter_enables_controlled_probe_mutation(self):
+        import oemixi_admin_polaris_browser_price as price
+        evidence={
+            "resolved_oem":"2206328",
+            "item_category":"Parts",
+            "category_source_kind":"validated_public_msrp",
+            "category_source_ref":"fixture",
+            "category_verified_at":"2026-10-16T18:30:00+00:00",
+        }
+        adapter=price._real_adapter(
+            evidence,
+            tabs=lambda:[],
+            evaluate=lambda *_:None,
+            preflight=lambda:"READY",
+            expected="dealer@example.invalid",
+        )
+        self.assertIs(adapter.allow_mutation,True)
+
+
+    def test_09_restored_compensated_probe_is_accepted(self):
+        import oemixi_admin_polaris_browser_price as price
+        evidence={
+            "resolved_oem":"2206328",
+            "item_category":"Parts",
+            "category_source_kind":"validated_public_msrp",
+            "category_source_ref":"fixture",
+            "category_verified_at":"2026-10-16T18:30:00+00:00",
+        }
+        probe={
+            "status":"ADMIN_PROBE_CART_PRICE_VERIFIED",
+            "requested_oem":"2205250","resolved_oem":"2206328",
+            "admin_unit_price_usd":"184.07",
+            "cart_mutated":True,"cart_restored":True,
+            "dealer_price_usd":None,"production_found":False,
+        }
+        with patch.object(price,"_category",return_value=evidence), patch.object(price,"run_probe",return_value=probe):
+            r=price.admin_browser_price("2205250",category_resolver=lambda *_: evidence,adapter=object())
+        self.assertEqual(r["status"],"ADMIN_DEALER_CART_PRICE_VERIFIED")
+        self.assertEqual(r["admin_unit_price_usd"],"184.07")
+        self.assertIsNone(r["dealer_price_usd"])
+        self.assertIs(r["production_found"],False)
+
+    def test_10_unrestored_mutation_is_rejected(self):
+        import oemixi_admin_polaris_browser_price as price
+        evidence={
+            "resolved_oem":"2206328",
+            "item_category":"Parts",
+            "category_source_kind":"validated_public_msrp",
+            "category_source_ref":"fixture",
+            "category_verified_at":"2026-10-16T18:30:00+00:00",
+        }
+        probe={
+            "status":"ADMIN_PROBE_CART_PRICE_VERIFIED",
+            "requested_oem":"2205250","resolved_oem":"2206328",
+            "admin_unit_price_usd":"184.07",
+            "cart_mutated":True,"cart_restored":False,
+            "dealer_price_usd":None,"production_found":False,
+        }
+        with patch.object(price,"_category",return_value=evidence), patch.object(price,"run_probe",return_value=probe):
+            r=price.admin_browser_price("2205250",category_resolver=lambda *_: evidence,adapter=object())
+        self.assertEqual(r["status"],"DEALER_PRICE_UNVERIFIED")
+        self.assertEqual(r["reason"],"UNSAFE_ADMIN_RESULT")
+        self.assertIsNone(r["admin_unit_price_usd"])
+
 if __name__=="__main__":
     unittest.main()

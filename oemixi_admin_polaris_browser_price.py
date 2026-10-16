@@ -1,6 +1,6 @@
 """ADMIN-only Polaris Dealer Price through the normal-browser probe controller.
 
-Opt-in only. Never writes catalog/cache/global FOUND. Mutation is disabled here.
+Opt-in ADMIN only. Never writes catalog/cache/global FOUND. Controlled probe-cart mutation is enabled and must be fully compensated before price is returned.
 """
 from __future__ import annotations
 
@@ -114,7 +114,7 @@ def _real_adapter(category_evidence,*,tabs=None,evaluate=None,preflight=None,exp
                 "exact_match":True}
     return ExistingBrowserProbeAdapter(
         get_tab=get_tab,evaluate=evaluate,verify_session=verify,
-        resolve_authority=authority,allow_mutation=False,
+        resolve_authority=authority,allow_mutation=True,
         timeout_seconds=30.0,poll_seconds=0.2)
 
 def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
@@ -131,12 +131,19 @@ def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
             lock_path=lock_path or root/"probe.lock"
             journal_path=journal_path or root/"probe.json"
         result=run_probe(oem,runtime,lock_path=lock_path,journal_path=journal_path)
-        if result.get("status")!="ADMIN_DEALER_CART_PRICE_VERIFIED":
-            return _denied(result.get("failure_code") or result.get("status") or "DEALER_PRICE_UNVERIFIED")
-        if result.get("cart_mutated") is not False or result.get("production_found") is not False:
+        status=result.get("status")
+        if status not in {"ADMIN_DEALER_CART_PRICE_VERIFIED","ADMIN_PROBE_CART_PRICE_VERIFIED"}:
+            return _denied(result.get("failure_code") or status or "DEALER_PRICE_UNVERIFIED")
+        if result.get("production_found") is not False or result.get("dealer_price_usd") is not None:
             return _denied("UNSAFE_ADMIN_RESULT")
-        if result.get("dealer_price_usd") is not None:
-            return _denied("UNSAFE_ADMIN_RESULT")
+        mutated=result.get("cart_mutated")
+        restored=result.get("cart_restored")
+        if status=="ADMIN_DEALER_CART_PRICE_VERIFIED":
+            if mutated is not False or restored is not True:
+                return _denied("UNSAFE_ADMIN_RESULT")
+        else:
+            if mutated is not True or restored is not True:
+                return _denied("UNSAFE_ADMIN_RESULT")
         return {"status":"ADMIN_DEALER_CART_PRICE_VERIFIED",
                 "manufacturer":"Polaris","item_category":"Parts","oem":oem,
                 "requested_oem":oem,"resolved_oem":result.get("resolved_oem") or evidence["resolved_oem"],

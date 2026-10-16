@@ -5,6 +5,9 @@ on:
       - theme4-polaris-p4-closure-20261016
       - theme4-admin-browser-orchestration-20261016
       - theme4-polaris-production-authority-20261016
+      - release-polaris-admin-production-wiring-20261016
+      - release-polaris-cross-host-integration-20261017
+      - release-control-polaris-rc-20261017
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,5 +21,10 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r requirements.txt beautifulsoup4
-      - run: python -B -m py_compile polaris_cart_snapshot.py polaris_probe_cart_recovery.py polaris_probe_cart_transaction.py polaris_probe_errors.py polaris_probe_cart_delta.py polaris_cart_mutation_adapter.py polaris_cart_exact_actions.py polaris_cart_existing_cdp_actions.py polaris_add_form_contract.py polaris_add_existing_session.py polaris_existing_browser_controller.py oemixi_admin_polaris_browser_price.py oemixibot_app.py test_oemixi_admin_browser_provider.py test_admin_browser_orchestration.py test_polaris_production_authority.py test_polaris_exact_add.py test_polaris_cart_exact_actions.py test_polaris_probe_cart_hardening.py test_polaris_probe_recovery_safety.py test_polaris_probe_cart_transaction.py
-      - run: python -B -m unittest -v test_oemixi_admin_browser_provider.py test_admin_browser_orchestration.py test_polaris_production_authority.py test_polaris_probe_cart_transaction.py test_polaris_cart_exact_actions.py test_polaris_exact_add.py test_polaris_probe_cart_hardening.py test_polaris_probe_recovery_safety.py test_polaris_dealer_session_identity_guard.py test_polaris_layer_c_runtime_wiring.py test_polaris_cart_session_layer_c.py test_polaris_cart_dom_layer_a.py test_polaris_dealer_cart_contract.py
+      - run: python -B -m py_compile polaris_cart_snapshot.py polaris_probe_cart_recovery.py polaris_probe_cart_transaction.py polaris_probe_errors.py polaris_probe_cart_delta.py polaris_cart_mutation_adapter.py polaris_cart_exact_actions.py polaris_cart_existing_cdp_actions.py polaris_add_form_contract.py polaris_add_existing_session.py polaris_existing_browser_controller.py oemixi_admin_polaris_browser_price.py oemixi_category_authority_client.py oemixi_category_authority_transport.py oemixi_admin_polaris_production.py polaris_production_authority_seed.py oemixibot_app.py test_oemixi_admin_browser_provider.py test_admin_browser_orchestration.py test_polaris_production_authority.py test_oemixi_admin_polaris_production.py test_polaris_exact_add.py test_polaris_cart_exact_actions.py test_polaris_probe_cart_hardening.py test_polaris_probe_recovery_safety.py test_polaris_probe_cart_transaction.py
+      - run: python -B -m unittest -v test_oemixi_admin_browser_provider.py test_admin_browser_orchestration.py test_polaris_production_authority.py test_oemixi_admin_polaris_production.py test_polaris_probe_cart_transaction.py test_polaris_cart_exact_actions.py test_polaris_exact_add.py test_polaris_probe_cart_hardening.py test_polaris_probe_recovery_safety.py test_polaris_dealer_session_identity_guard.py test_polaris_layer_c_runtime_wiring.py test_polaris_cart_session_layer_c.py test_polaris_cart_dom_layer_a.py test_polaris_dealer_cart_contract.py
+
+      - name: Cross-host Category Authority bridge gate
+        run: python -B -m unittest -v test_oemixi_category_authority_transport.py test_oemixi_category_authority_cross_host.py
+      - name: Railway web startup smoke
+        run: python -B -c "import web_app; assert web_app.app is not None; print('WEB_APP_IMPORT_OK')"
