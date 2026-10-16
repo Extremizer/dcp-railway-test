@@ -13,6 +13,7 @@ class Fake:
     def __init__(self,lines=None):
         self.lines=list(lines or []);self.operations=[];self.fail_remove=False;self.fail_add=False
     def verify(self):return True
+    def find_exact_oem(self,oem):return {'manufacturer':'Polaris','requested_oem':oem,'resolved_oem':oem,'item_category':'Parts','exact_match':True}
     def snapshot(self):return {"lines":[dict(x) for x in self.lines]}
     def add_one(self,oem):
         self.operations.append("add")
