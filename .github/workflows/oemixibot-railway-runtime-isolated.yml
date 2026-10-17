@@ -5,6 +5,7 @@ on:
     branches:
       - oemixibot-railway-runtime-20261015
       - oemixibot-release-prep-20261015
+      - theme4-oemixibot-shared-runtime-20261017
   workflow_dispatch:
 
 permissions:
