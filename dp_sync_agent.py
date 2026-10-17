@@ -232,6 +232,12 @@ def _claim() -> dict | None:
         raise ValueError("category_claim_evidence_missing")
     if item["oem"] != oem or item["manufacturer"] != manufacturer:
         raise ValueError("noncanonical_claim_identity")
+    if manufacturer == "Polaris":
+        resolved=item.get("resolved_oem")
+        if (not isinstance(resolved,str) or
+            _identity(manufacturer,resolved)[1]!=resolved or
+            item.get("item_category")!="Parts"):
+            raise ValueError("polaris_resolved_claim_invalid")
     return item
 
 
@@ -251,8 +257,22 @@ def _validated_result(item, result):
             or sku not in {query, current} or type(price) not in (int, float)
             or not math.isfinite(price) or price <= 0 or result.get("currency", "USD") != "USD"):
             raise ValueError("invalid_producer_identity_or_price")
+        if manufacturer == "Polaris":
+            from polaris_dealer_cart_completion_contract import SOURCE,verify_polaris_cart_proof
+            authority = {k:item.get(k) for k in ("item_category","category_source_kind",
+                                                  "category_source_ref","category_verified_at")}
+            resolved = str(item.get("resolved_oem") or current)
+            if (item.get("item_category")!="Parts" or
+                current != resolved or sku != resolved or
+                result.get("source")!=SOURCE):
+                raise ValueError("polaris_cart_identity_unverified")
+            verify_polaris_cart_proof(result,requested_oem=query,resolved_oem=resolved,
+                                      category_evidence=authority)
+            return {"status":"FOUND","manufacturer":manufacturer,"query_oem":query,
+                    "matched_sku":sku,"current_oem":current,"dealer_price_usd":price,
+                    "currency":"USD","source":SOURCE,"name":result.get("name"),
+                    "dealer_cart_proof":result["dealer_cart_proof"]}
         _dealer_source(result.get("source"), manufacturer, query)
-        # Exact DCP .c2 .dbl parser produces dealer_price_usd, not Retail/MSRP.
         return {"status": "FOUND", "manufacturer": manufacturer, "query_oem": query,
                 "matched_sku": sku, "current_oem": current, "dealer_price_usd": price,
                 "currency": "USD", "source": result["source"], "name": result.get("name")}
@@ -440,7 +460,11 @@ def run_once() -> bool:
             return False
         _journal("lookup_inflight", item)
         try:
-            raw = oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"], category_evidence=item)
+            if item["manufacturer"] == "Polaris":
+                from polaris_dp_verified_readonly_producer import inspect_claim
+                raw = inspect_claim(item)
+            else:
+                raw = oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"], category_evidence=item)
         except Exception:
             raw = {"status": "TECHNICAL_ERROR"}
         result = _validated_result(item, raw)
