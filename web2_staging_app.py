@@ -8,6 +8,8 @@ The staging app serves the WEB2 frontend and a deterministic mock API.
 """
 from __future__ import annotations
 
+import time
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -18,7 +20,7 @@ attach_web2_ui(app)
 
 
 def _card(oem: str) -> dict:
-    if oem not in {"417300574", "NO-MSRP", "WAREHOUSE-ONLY"}:
+    if oem not in {"417300574", "NO-MSRP", "WAREHOUSE-ONLY", "SLOW"}:
         raise HTTPException(status_code=404, detail="OEM not in staging fixtures")
     warehouse_only = oem == "WAREHOUSE-ONLY"
     customer = None if warehouse_only else 29200
@@ -63,6 +65,8 @@ def _card(oem: str) -> dict:
 
 @app.get("/api/v1/oem/{oem}")
 def staging_oem(oem: str) -> dict:
+    if oem == "SLOW":
+        time.sleep(0.8)
     return _card(oem)
 
 
