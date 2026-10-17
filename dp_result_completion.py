@@ -141,17 +141,8 @@ def complete_result(db_file, payload: dict) -> dict:
                 except CartProofError:
                     raise CompletionError(409, "DEALER_CART_UNVERIFIED") from None
                 proof=payload["dealer_cart_proof"]
-                # Preserve exact request/resolved identity for cache consumers while
-                # also journaling immutable proof digests in the existing evidence table.
-                source = (
-                    source
-                    + "|requested_oem=" + requested_oem
-                    + "|resolved_oem=" + current_oem
-                    + "|request_id=" + str(row["request_id"])
-                    + "|producer_id=" + str(payload["producer_id"])
-                    + "|dealer_identity_ref=" + str(proof["dealer_identity_proof_ref"])
-                    + "|category_ref=" + str(authority["category_source_ref"])
-                )
+                # Keep the cache source canonical. Request/resolved identity and
+                # immutable proof correlation live in the existing recovery journal.
                 evidence_digest=hashlib.sha256(json.dumps(
                     proof,sort_keys=True,
                     separators=(",",":"),ensure_ascii=True).encode()).hexdigest()

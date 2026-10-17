@@ -45,6 +45,8 @@ jobs:
             "test_polaris_dealer_cart_completion_contract.py",
             "test_polaris_dp_e2e_integration.py",
             "test_polaris_consumer_pricesource.py",
+            "unified_price_contract_v1.py",
+            "test_oemixibot_railway_runtime.py",
           }
           changed=set(Path("/tmp/theme1-files.txt").read_text().splitlines())
           extra=sorted(changed-allowed)

@@ -182,23 +182,34 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             ).fetchall()
             request = conn.execute(
                 """SELECT status,result_status,current_oem,result_manufacturer,
-                          claim_owner,item_category,category_source_ref,cache_committed_at
+                          claim_owner,item_category,category_source_ref,cache_committed_at,
+                          claim_generation
                      FROM dp_live_requests WHERE request_id=?""",
+                (claim["request_id"],),
+            ).fetchone()
+            evidence = conn.execute(
+                """SELECT request_id,claim_generation,event_type,actor,
+                          evidence_sha256,plan_sha256
+                     FROM dp_live_recovery_events
+                    WHERE request_id=? AND event_type='polaris_cart_verified_found'""",
                 (claim["request_id"],),
             ).fetchone()
         self.assertEqual([r[0] for r in rows], ["2205250", "2206328"])
         self.assertEqual([r[1] for r in rows], [184.07, 184.07])
         for _, _, source in rows:
-            self.assertIn("requested_oem=2205250", source)
-            self.assertIn("resolved_oem=2206328", source)
-            self.assertIn("request_id=" + claim["request_id"], source)
-            self.assertIn("dealer_identity_ref=sha256:isolated-dealer-proof", source)
-            self.assertIn("category_ref=", source)
+            self.assertEqual(source, "verified_local_dcp:dealer_cart:authenticated_exact_line")
         self.assertEqual(request[0:4], ("finished", "FOUND", "2206328", "Polaris"))
         self.assertEqual(request[4], OWNER)
         self.assertEqual(request[5], "Parts")
         self.assertTrue(request[6])
         self.assertTrue(request[7])
+        self.assertIsNotNone(evidence)
+        self.assertEqual(evidence[0], claim["request_id"])
+        self.assertEqual(evidence[1], request[8])
+        self.assertEqual(evidence[2], "polaris_cart_verified_found")
+        self.assertEqual(evidence[3], OWNER)
+        self.assertEqual(len(evidence[4]), 64)
+        self.assertEqual(len(evidence[5]), 64)
 
         gateway = dcp_price_gateway.request_price(
             self.db, "Polaris", "2205250",
@@ -264,7 +275,7 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
         self.assertEqual(
             unified._fresh((now - timedelta(hours=24)).isoformat(),
                            max_age_hours=24, now=now),
-            (False, "STALE"),
+            (True, "VERIFIED"),
         )
         self.assertEqual(
             unified._fresh((now - timedelta(hours=25)).isoformat(),
@@ -272,16 +283,20 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             (False, "STALE"),
         )
 
+        claim = self.claim()
+        payload = self._valid_payload_for_claim(claim)
+        response = self.signed_post(payload)
+        self.assertEqual(response.status_code, 200, response.text)
+
         stamp = (datetime.now(timezone.utc) - timedelta(hours=23)).isoformat()
         with sqlite3.connect(self.db) as conn:
             conn.execute(
-                """INSERT INTO dealer_price_cache(
-                    manufacturer,oem,dealer_price_usd,source,
-                    first_seen_at,last_verified_at,last_used_at,use_count
-                ) VALUES(?,?,?,?,?,?,NULL,0)""",
-                ("Polaris", "2206328", 184.07,
-                 "verified_local_dcp:dealer_cart:authenticated_exact_line",
-                 stamp, stamp),
+                "UPDATE dealer_price_cache SET last_verified_at=? WHERE manufacturer='Polaris'",
+                (stamp,),
+            )
+            conn.execute(
+                "UPDATE dp_live_requests SET cache_committed_at=? WHERE request_id=?",
+                (stamp, claim["request_id"]),
             )
         before = core.get_dealer_price_cache("Polaris", "2206328")["last_verified_at"]
         after = core.get_dealer_price_cache("Polaris", "2206328")["last_verified_at"]
@@ -357,19 +372,28 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(after, before)
     def test_04_stale_or_failed_refresh_never_promotes_msrp_to_dealer(self):
+        claim = self.claim()
+        payload = self._valid_payload_for_claim(claim)
+        response = self.signed_post(payload)
+        self.assertEqual(response.status_code, 200, response.text)
+
         stale = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
         with sqlite3.connect(self.db) as conn:
             conn.execute(
-                """INSERT INTO dealer_price_cache(
-                    manufacturer,oem,dealer_price_usd,source,
-                    first_seen_at,last_verified_at,last_used_at,use_count
-                ) VALUES(?,?,?,?,?,?,NULL,0)""",
-                ("Polaris", "2206328", 184.07,
-                 "verified_local_dcp:dealer_cart:authenticated_exact_line",
-                 stale, stale),
+                "UPDATE dealer_price_cache SET last_verified_at=? WHERE manufacturer='Polaris'",
+                (stale,),
             )
-        self.assertFalse(core.get_dealer_price_cache("Polaris", "2206328")["fresh"])
-        trial = probnik._identity_and_price("2205250")
+            conn.execute(
+                "UPDATE dp_live_requests SET cache_committed_at=? WHERE request_id=?",
+                (stale, claim["request_id"]),
+            )
+        self.assertIsNone(core.get_dealer_price_cache("Polaris", "2206328"))
+        with patch.object(
+            probnik.dp_live_bridge,
+            "request_live_dp",
+            return_value={"status": "AUTH_REQUIRED"},
+        ):
+            trial = probnik._identity_and_price("2205250")
         self.assertEqual(trial["msrp_usd"], 239.99)
         self.assertIsNone(trial["dp_usd"])
         self.assertFalse(trial["price_fresh"])

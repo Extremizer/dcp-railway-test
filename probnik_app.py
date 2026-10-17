@@ -261,7 +261,7 @@ def _identity_and_price_legacy(oem: str) -> dict:
                 0.0,
                 (now - verified.astimezone(now.tzinfo)).total_seconds() / 3600.0,
             )
-            fresh = DP_MAX_AGE_HOURS > 0 and age < DP_MAX_AGE_HOURS
+            fresh = DP_MAX_AGE_HOURS > 0 and age <= DP_MAX_AGE_HOURS
         except Exception:
             fresh = False
 
@@ -312,7 +312,7 @@ def _identity_and_price(oem: str) -> dict:
                 0.0,
                 (now - verified.astimezone(now.tzinfo)).total_seconds() / 3600.0,
             )
-            return DP_MAX_AGE_HOURS > 0 and age < DP_MAX_AGE_HOURS
+            return DP_MAX_AGE_HOURS > 0 and age <= DP_MAX_AGE_HOURS
         except Exception:
             return False
 
