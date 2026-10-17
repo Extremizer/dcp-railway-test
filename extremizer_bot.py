@@ -1394,6 +1394,13 @@ def get_dealer_price_cache(
     if not canonical or not normalized_oem:
         return None
 
+    # Polaris cache requires server-committed cart evidence and 24h freshness.
+    # Reject historical MSRP/search-page entries even if the old cache marks fresh.
+    if canonical == "Polaris":
+        from dcp_price_gateway import _read_cache as _verified_polaris_cache
+        if _verified_polaris_cache(ORDERS_DB_FILE,canonical,normalized_oem,24.0) is None:
+            return None
+
     init_orders_db()
     with sqlite3.connect(ORDERS_DB_FILE) as conn:
         row = conn.execute(
@@ -1426,9 +1433,10 @@ def get_dealer_price_cache(
         except (TypeError, ValueError):
             age_hours = float("inf")
 
+        max_age = min(DP_CACHE_MAX_AGE_HOURS,24.0) if canonical == "Polaris" else DP_CACHE_MAX_AGE_HOURS
         fresh = (
-            DP_CACHE_MAX_AGE_HOURS > 0
-            and age_hours <= DP_CACHE_MAX_AGE_HOURS
+            max_age > 0
+            and age_hours <= max_age
         )
 
         if mark_used and fresh:
