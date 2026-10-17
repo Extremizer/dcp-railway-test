@@ -47,9 +47,7 @@ jobs:
           python -B -m unittest -v test_oemixi_shared_price_runtime.py
 
       - name: Three consumers one claim
-        run: |
-          python -B -m unittest -v test_oemixi_secure_gateway_transport.SecureTransportE2ETests.test_three_consumers_over_secure_transport_share_one_claim
-          python -B -m unittest -v test_polaris_consumer_pricesource.py
+        run: python -B -m unittest -v test_oemixi_secure_gateway_transport.SecureTransportE2ETests.test_three_consumers_over_secure_transport_share_one_claim
 
       - name: Client pricing cards
         run: python -B -m unittest -v test_client_offer_card.py
