@@ -322,3 +322,46 @@ main {max-width:none;margin:0;padding:0;}
   .topbar {gap:14px;}
   .topnav {gap:clamp(16px,3vw,35px);}
 }
+
+/* PR #50 OEM interaction-only correction; approved composition unchanged. */
+.search-field,
+.search-box button#searchButton {
+  background: transparent;
+}
+.search-field:hover,
+.search-field:focus-within,
+.search-field:has(input:not(:placeholder-shown)),
+.search-box button#searchButton:hover,
+.search-box button#searchButton:focus-visible,
+.search-box button#searchButton:active {
+  background: #BFF803;
+  color: #080808;
+}
+.search-field:has(input:not(:placeholder-shown)) input,
+.search-field:hover input,
+.search-field:focus-within input {
+  color: #080808;
+}
+.search-box button#searchButton:hover,
+.search-box button#searchButton:focus-visible,
+.search-box button#searchButton:active {
+  border-color: #e9e9e9;
+}
+.search-field:has(input:not(:placeholder-shown)) .search-placeholder {
+  display: none;
+}
+@media (max-width:700px) {
+  .search-field,
+  .search-box button#searchButton {
+    background: transparent;
+  }
+  .search-field:hover,
+  .search-field:focus-within,
+  .search-field:has(input:not(:placeholder-shown)),
+  .search-box button#searchButton:hover,
+  .search-box button#searchButton:focus-visible,
+  .search-box button#searchButton:active {
+    background: #BFF803;
+    color: #080808;
+  }
+}
