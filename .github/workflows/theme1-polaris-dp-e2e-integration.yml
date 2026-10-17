@@ -35,6 +35,7 @@ jobs:
             ".github/workflows/theme1-polaris-dp-e2e-release-candidate.yml",
             ".github/workflows/theme1-polaris-dp-e2e-integration.yml",
             "dcp_price_gateway.py",
+            "dp_live_bridge.py",
             "dp_result_completion.py",
             "dp_sync_agent.py",
             "extremizer_bot.py",
