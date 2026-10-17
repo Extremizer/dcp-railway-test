@@ -328,6 +328,13 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
         if not row:
             conn.commit()
             return None
+        # Server-only alias resolution; never take resolved identity from producer.
+        authority = dcp_category_authority.resolve(conn, str(row[1]), str(row[2]))
+        if authority is None or any(row[i] != authority[key] for i,key in (
+            (4,"item_category"),(5,"category_source_kind"),
+            (6,"category_source_ref"),(7,"category_verified_at"))):
+            conn.commit()
+            return None
         now = datetime.now(timezone.utc)
         claim_token = uuid.uuid4().hex
         lease_expires_at = (now + timedelta(seconds=600)).isoformat(timespec="seconds")
@@ -354,6 +361,7 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             "category_source_kind": row[5],
             "category_source_ref": row[6],
             "category_verified_at": row[7],
+            "resolved_oem": authority["resolved_oem"],
         }
 
 

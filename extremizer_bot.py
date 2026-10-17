@@ -88,12 +88,12 @@ USD_RUB_RATE = float(USD_RUB_RATE_RAW) if USD_RUB_RATE_RAW else 0.0
 PRICE_COEFFICIENT_RAW = os.getenv("EXTREMIZER_PRICE_COEFFICIENT", "1.34").strip().replace(",", ".")
 PRICE_COEFFICIENT = float(PRICE_COEFFICIENT_RAW) if PRICE_COEFFICIENT_RAW else 1.34
 DP_CACHE_MAX_AGE_HOURS_RAW = os.getenv(
-    "EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "168"
+    "EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "24"
 ).strip().replace(",", ".")
 try:
     DP_CACHE_MAX_AGE_HOURS = max(0.0, float(DP_CACHE_MAX_AGE_HOURS_RAW))
 except ValueError:
-    DP_CACHE_MAX_AGE_HOURS = 168.0
+    DP_CACHE_MAX_AGE_HOURS = 24.0
 
 DCP_MODE = os.getenv("EXTREMIZER_DCP_MODE", "live").strip().lower()
 DCP_CACHE_ONLY = DCP_MODE == "cache_only"
@@ -1394,6 +1394,13 @@ def get_dealer_price_cache(
     if not canonical or not normalized_oem:
         return None
 
+    # Polaris cache requires server-committed cart evidence and 24h freshness.
+    # Reject historical MSRP/search-page entries even if the old cache marks fresh.
+    if canonical == "Polaris":
+        from dcp_price_gateway import _read_cache as _verified_polaris_cache
+        if _verified_polaris_cache(ORDERS_DB_FILE,canonical,normalized_oem,24.0) is None:
+            return None
+
     init_orders_db()
     with sqlite3.connect(ORDERS_DB_FILE) as conn:
         row = conn.execute(
@@ -1426,9 +1433,10 @@ def get_dealer_price_cache(
         except (TypeError, ValueError):
             age_hours = float("inf")
 
+        max_age = min(DP_CACHE_MAX_AGE_HOURS,24.0) if canonical == "Polaris" else DP_CACHE_MAX_AGE_HOURS
         fresh = (
-            DP_CACHE_MAX_AGE_HOURS > 0
-            and age_hours <= DP_CACHE_MAX_AGE_HOURS
+            max_age > 0
+            and age_hours <= max_age
         )
 
         if mark_used and fresh:

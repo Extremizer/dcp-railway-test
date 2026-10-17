@@ -35,6 +35,7 @@ class DealerPriceResult:
     http_status: int | None = None
     authorized: bool | None = None
     message: str | None = None
+    dealer_cart_proof: dict[str, Any] | None = None
 
 def _parts_slug(manufacturer: str) -> tuple[str, str]:
     canonical = finder.manufacturer_alias(manufacturer)
@@ -127,6 +128,23 @@ def get_dealer_price(manufacturer: str, oem: str, *, category_evidence=None) -> 
     if not valid:
         return DealerPriceResult("CATEGORY_UNVERIFIED", str(manufacturer or ""), _normalize_oem(oem))
     category = str(claim["item_category"]).strip()
+    if manufacturer == "Polaris" and category.lower() == "parts":
+        from oemixi_admin_polaris_browser_price import producer_browser_price
+        value = producer_browser_price(oem, category_evidence=claim)
+        status = str(value.get("status") or "TECHNICAL_ERROR").upper()
+        if status != "FOUND":
+            return DealerPriceResult(status, manufacturer, _normalize_oem(oem),
+                                     message=str(value.get("error_code") or status))
+        return DealerPriceResult(
+            "FOUND", "Polaris", _normalize_oem(oem),
+            matched_sku=value.get("matched_sku"),
+            current_oem=value.get("current_oem"),
+            name=value.get("name"),
+            dealer_price_usd=float(value["dealer_price_usd"]),
+            source=value.get("source"),
+            authorized=True,
+            dealer_cart_proof=value.get("dealer_cart_proof"),
+        )
     if category.lower() != "parts":
         return DealerPriceResult("CATEGORY_UNVERIFIED", manufacturer, _normalize_oem(oem),
                                  message="approved_supplier_adapter_missing")
