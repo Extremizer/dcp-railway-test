@@ -11,7 +11,7 @@ class PolarisGatewayTTL(unittest.TestCase):
   self.fixture.setUp()
   self.addCleanup(self.fixture.doCleanups)
   complete_result(self.fixture.db,self.fixture.payload())
-  self.now=datetime.now(timezone.utc)
+  self.now=datetime.now(timezone.utc).replace(microsecond=0)
  def at_age(self,hours):
   timestamp=(self.now-timedelta(hours=hours)).isoformat(timespec="seconds")
   with sqlite3.connect(self.fixture.db) as conn:
