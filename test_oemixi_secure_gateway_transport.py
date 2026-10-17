@@ -125,6 +125,12 @@ class SecureGatewayFixture(CompletionFixture):
                     now,
                 ),
             )
+            conn.execute(
+                """INSERT OR REPLACE INTO oem_catalog_aliases(
+                       manufacturer,alias_oem,current_oem,alias_kind
+                   ) VALUES(?,?,?,?)""",
+                ("Arctic Cat","2670-265","2670-265","current"),
+            )
 
         def shared_gateway(manufacturer, oem, *, max_age_hours, wait_seconds=5):
             return gateway.request_price(
@@ -367,6 +373,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
             reply = AsyncMock()
             update = SimpleNamespace(
                 effective_user=SimpleNamespace(id=1),
+                effective_chat=SimpleNamespace(id=1),
                 effective_message=SimpleNamespace(
                     text="2670-265",
                     reply_text=reply,
