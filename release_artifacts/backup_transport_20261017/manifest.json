@@ -1,0 +1,36 @@
+﻿{
+    "artifact":  "EXTREMIZER_BACKUP_TRANSPORT_FREEZE",
+    "date":  "2026-10-17",
+    "root_causes":  [
+                        "Windows System32 OpenSSH ssh.exe returned 255 and no diagnostic output",
+                        "Railway snapshot launcher hardcoded obsolete /mise/installs/python/3.13.15/bin/python3.13"
+                    ],
+    "fixes":  [
+                  "RUN_EXTREMIZER_BACKUP_AUTO.cmd prepends C:\\Program Files\\Git\\usr\\bin to process-local PATH",
+                  "railway_snapshot_launcher.py uses /mise/installs/python/latest/bin/python"
+              ],
+    "production_runtime_changed":  false,
+    "railway_service_redeployed":  false,
+    "files":  [
+                  {
+                      "file":  "RUN_EXTREMIZER_BACKUP_AUTO.cmd",
+                      "size":  573,
+                      "sha256":  "115D074F22987964419CD374E8D0E0061E8716BA2E0C491D7714E0D9CC441E42"
+                  },
+                  {
+                      "file":  "railway_snapshot_launcher.py",
+                      "size":  18146,
+                      "sha256":  "443EBC9937A2C942920CA55F844B3944FF4B8E80D58238C22F644FF6262BDDC9"
+                  },
+                  {
+                      "file":  "backup_auto_main.py",
+                      "size":  3528,
+                      "sha256":  "7DD43EC40E8CB772577503A00ABA2DE5D52134DAC8339747F378036D781D12E1"
+                  },
+                  {
+                      "file":  "backup_auto_health.py",
+                      "size":  3365,
+                      "sha256":  "085FD9F4122F2985D7F573FE3313F51FF972EB1ED377EE0FF48F344109D60B5D"
+                  }
+              ]
+}
