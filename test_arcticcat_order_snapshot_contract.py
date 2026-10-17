@@ -53,7 +53,7 @@ class FrozenOrderBasis(unittest.TestCase):
     def test_quote_does_not_reread_current_reference_weight(self):
         src=Path("extremizer_bot.py").read_text(encoding="utf-8")
         tree=ast.parse(src)
-        fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name=="format_admin_quote_preview")
+        fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name=="format_customer_quote")
         body=ast.get_source_segment(src,fn) or ""
         self.assertNotIn("get_oem_reference(",body)
     def test_web_raw_and_calculated_are_separate(self):
