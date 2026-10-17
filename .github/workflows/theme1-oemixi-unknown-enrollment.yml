@@ -21,8 +21,8 @@ jobs:
       - name: Install dependencies
         run: pip install 'python-telegram-bot>=22.8,<23' 'websocket-client>=1.9,<2' 'playwright>=1.50'
       - name: Syntax smoke
-        run: python -B -m py_compile oemixi_unknown_enrollment.py oemixibot_app.py test_oemixi_unknown_enrollment.py
+        run: python -B -m py_compile oemixi_unknown_enrollment.py oemixi_category_bootstrap.py oemixibot_app.py test_oemixi_unknown_enrollment.py test_oemixi_category_bootstrap.py
       - name: Unknown manufacturer fail-closed tests
-        run: python -B -m unittest -v test_oemixi_unknown_enrollment.py
+        run: python -B -m unittest -v test_oemixi_unknown_enrollment.py test_oemixi_category_bootstrap.py
       - name: OEMixi consumer regression
         run: python -B -m unittest -v test_oemixibot_admin_oem_search.py test_oemixi_shared_price_runtime.py

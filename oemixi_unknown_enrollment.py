@@ -20,7 +20,7 @@ def manufacturer_choices():
     return tuple(m for m in MANUFACTURERS if finder.manufacturer_alias(m))
 
 
-def validate_selected_manufacturer(oem, selected, price_adapter, *, writer=None):
+def validate_selected_manufacturer(oem, selected, price_adapter, *, category_bootstrap=None, writer=None):
     """Return validation verdict; persist identity iff matching trusted dealer proof.
 
     A successful price response does not imply identity unless its provenance is
@@ -38,6 +38,17 @@ def validate_selected_manufacturer(oem, selected, price_adapter, *, writer=None)
         return {"status": "INVALID_MANUFACTURER"}
     if price_adapter is None:
         return {"status": "VALIDATION_UNAVAILABLE"}
+    if category_bootstrap is None:
+        return {"status": "CATEGORY_BOOTSTRAP_UNAVAILABLE"}
+    try:
+        authority = category_bootstrap(canonical, normalized)
+    except Exception:
+        return {"status": "CATEGORY_BOOTSTRAP_UNAVAILABLE"}
+    if (not isinstance(authority, dict)
+            or authority.get("status") != "CATEGORY_VERIFIED"
+            or authority.get("manufacturer") != canonical
+            or authority.get("oem") != normalized):
+        return {"status": "CATEGORY_UNVERIFIED"}
     existing = oem_identity_service.lookup(normalized)
     if existing and existing.get("manufacturer") != canonical:
         return {"status": "IDENTITY_CONFLICT"}

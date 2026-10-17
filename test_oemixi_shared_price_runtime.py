@@ -113,7 +113,7 @@ class RuntimeGatewayTests(unittest.TestCase):
         source=source.replace('    if adapter is not None:\n        app.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter\n','')
         data=source.encode()
         blob=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
-        self.assertEqual(blob,'1bf944750563cac18f29b464d28ba2654f49a089')  # PR39 + Stage B + isolated unknown-manufacturer UI; guard retained
+        self.assertEqual(blob,'5868d79e2603d672af2d56e07f51cb71988f0397')  # PR39 + Stage B + isolated unknown-manufacturer UI; guard retained
 
 
 if __name__=='__main__': unittest.main()

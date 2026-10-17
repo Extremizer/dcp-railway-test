@@ -934,6 +934,7 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         verdict=await asyncio.to_thread(
             validate_selected_manufacturer, oem, selected,
             context.application.bot_data[_SHARED_PRICE_ADAPTER_KEY],
+            category_bootstrap=context.application.bot_data.get('oemixi_verified_category_bootstrap'),
         )
         if verdict.get("status")!="VERIFIED":
             await q.edit_message_text(

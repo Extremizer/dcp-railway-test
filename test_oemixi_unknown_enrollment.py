@@ -39,7 +39,7 @@ class UnknownManufacturerTests(unittest.TestCase):
         self.temp.cleanup()
 
     def enroll(self, proof, manufacturer="Polaris", oem="3211070"):
-        return validate_selected_manufacturer(oem, manufacturer, Gateway(proof))
+        return validate_selected_manufacturer(oem, manufacturer, Gateway(proof), category_bootstrap=lambda m,o: {"status":"CATEGORY_VERIFIED","manufacturer":m,"oem":o})
 
     def test_positive_trusted_proof_enrolls(self):
         result = self.enroll(valid())
