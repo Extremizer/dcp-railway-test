@@ -1,0 +1,19 @@
+name: Theme1 Polaris DP E2E Candidate
+on:
+  push:
+    branches:
+      - theme1-polaris-dp-e2e-current-production-20261017
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  targeted-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install beautifulsoup4 websocket-client playwright
+      - run: python -B -m py_compile polaris_dealer_cart_completion_contract.py polaris_dp_verified_readonly_producer.py dp_result_completion.py dp_sync_agent.py dp_live_bridge.py dcp_price_gateway.py test_polaris_dealer_cart_completion_contract.py test_polaris_fenced_completion_e2e.py test_polaris_producer_v2_result.py test_polaris_dp_verified_readonly_producer.py test_polaris_gateway_cache_ttl.py test_polaris_consumer_pricesource.py
+      - run: python -B -m unittest -v test_polaris_dealer_cart_completion_contract.py test_polaris_fenced_completion_e2e.py test_polaris_producer_v2_result.py test_polaris_dp_verified_readonly_producer.py test_polaris_gateway_cache_ttl.py test_polaris_consumer_pricesource.py test_dp_result_completion.py
