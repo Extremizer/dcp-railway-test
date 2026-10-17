@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import io
 import sqlite3
 import tempfile
@@ -106,7 +107,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
                 "item_category": "accessories",
                 "msrp_usd": 10.99,
                 "source": "verified_public_msrp:isolated_fixture",
-                "last_verified_at": "2026-10-15T10:00:00+00:00",
+                "last_verified_at": datetime.now(timezone.utc).isoformat(),
             },
         )
 
@@ -143,18 +144,33 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
             reply = AsyncMock()
             update = SimpleNamespace(
                 effective_user=SimpleNamespace(id=1),
+                effective_chat=SimpleNamespace(id=1001),
                 effective_message=SimpleNamespace(
                     text="2884109",
                     reply_text=reply,
                 ),
             )
-            context = SimpleNamespace(
-                application=application,
-                user_data={"admin_oem_search": True},
-            )
-            asyncio.run(oemixibot_app.oem_message(update, context))
+            sent = AsyncMock()
 
-        text = reply.await_args.args[0]
+            async def run_admin_probe():
+                tasks = []
+                def schedule(coro, *, name=None):
+                    task = asyncio.create_task(coro, name=name)
+                    tasks.append(task)
+                    return task
+                context = SimpleNamespace(
+                    application=application,
+                    user_data={"admin_oem_search": True},
+                    bot=SimpleNamespace(send_message=sent),
+                )
+                with patch.object(application, "create_task", side_effect=schedule):
+                    await oemixibot_app.oem_message(update, context)
+                    if tasks:
+                        await asyncio.gather(*tasks)
+
+            asyncio.run(run_admin_probe())
+
+        text = sent.await_args.kwargs["text"]
         self.assertIn("Дилерская цена недоступна", text)
         self.assertIn("MSRP: $10.99", text)
         self.assertNotIn("Дилерская цена: $10.99", text)
@@ -175,7 +191,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
                 "item_category": "accessories",
                 "msrp_usd": 10.99,
                 "source": "verified_public_msrp:isolated_fixture",
-                "last_verified_at": "2026-10-15T10:00:00+00:00",
+                "last_verified_at": datetime.now(timezone.utc).isoformat(),
             },
         )
         result = transport("Polaris", "2884109")
@@ -200,7 +216,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
                 "current_oem": "2670-265",
                 "dealer_price_usd": 31.25,
                 "source": "verified_local_dcp:live",
-                "last_verified_at": "2026-10-15T10:00:00+00:00",
+                "last_verified_at": datetime.now(timezone.utc).isoformat(),
                 "currency": "USD",
             }
         )
@@ -218,7 +234,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
                 "current_oem": "2670-265",
                 "dealer_price_usd": 31.25,
                 "source": "verified_local_dcp:cache",
-                "last_verified_at": "2026-10-15T10:00:00+00:00",
+                "last_verified_at": datetime.now(timezone.utc).isoformat(),
                 "currency": "USD",
                 "verified_cache_hit": True,
                 "server_cache_committed": False,
@@ -235,7 +251,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
                 "current_oem": "2670-265",
                 "dealer_price_usd": 31.25,
                 "source": "verified_local_dcp:live",
-                "last_verified_at": "2026-10-15T10:00:00+00:00",
+                "last_verified_at": datetime.now(timezone.utc).isoformat(),
                 "currency": "USD",
                 "verified_cache_hit": False,
                 "server_cache_committed": True,
