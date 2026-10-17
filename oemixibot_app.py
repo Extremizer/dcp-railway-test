@@ -590,7 +590,7 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
     display_price_usd=round(float(offer["dl_usd"])*float(dealer["price_coefficient"])+1e-9,2)
     text=price_card(offer.get("manufacturer"),offer.get("oem") or oem,offer.get("name"),
                     offer["dl_usd"],dealer["price_coefficient"],offer.get("item_type"),
-                    offer.get("actual_weight_kg"),offer.get("volume_weight_kg"))
+                    offer.get("actual_weight_kg"),offer.get("volume_weight_kg"),offer.get("reference_calculation_weight_kg"))
     cart=STORE.cart_view(dealer["id"])
     cart_qty=sum(int(r["qty"]) for r in cart["items"])
     rows=[[InlineKeyboardButton("➕ В корзину",callback_data="add:"+oem)]]
