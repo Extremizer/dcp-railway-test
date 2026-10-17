@@ -88,6 +88,14 @@ def attach_web2_ui(app: FastAPI, *, prefix: str = "/web2") -> None:
             raise HTTPException(status_code=404, detail="canonical logo unavailable")
         return FileResponse(path, media_type="image/png")
 
+    @app.get("/web2-powersports-hero", include_in_schema=False)
+    def web2_powersports_hero() -> FileResponse:
+        """Serve only the SHA-matched, owner-approved sharp garage image."""
+        path = _verified_powersports_garage_path()
+        if path is None:
+            raise HTTPException(status_code=404, detail="powersports garage unavailable")
+        return FileResponse(path, media_type="image/png")
+
     @app.get("/web2-powersports-logo", include_in_schema=False)
     def web2_powersports_logo() -> FileResponse:
         """Serve only the exact Theme 7 horizontal PNG once its SHA is approved.
@@ -99,3 +107,14 @@ def attach_web2_ui(app: FastAPI, *, prefix: str = "/web2") -> None:
         if path is None:
             raise HTTPException(status_code=404, detail="powersports logo unavailable")
         return FileResponse(path, media_type="image/png")
+
+# Approved garage asset, supplied to isolated staging (no fallback or redraw).
+POWERSPORTS_GARAGE_PATH_ENV = "EXTREMIZER_POWERSPORTS_GARAGE_PATH"
+POWERSPORTS_GARAGE_SHA256_ENV = "EXTREMIZER_POWERSPORTS_GARAGE_SHA256"
+
+def _verified_powersports_garage_path() -> Path | None:
+    raw_path = os.getenv(POWERSPORTS_GARAGE_PATH_ENV, "").strip()
+    raw_sha = os.getenv(POWERSPORTS_GARAGE_SHA256_ENV, "").strip()
+    if not raw_path or not raw_sha:
+        return None
+    return _verified_png_path(Path(raw_path), raw_sha)
