@@ -1,0 +1,70 @@
+﻿{
+    "artifact":  "EXTREMIZER_WINDOWS_POLARIS_RUNTIME_FREEZE",
+    "created_at":  "2026-10-17",
+    "source_live_path":  "C:\\Users\\ASUS\\Desktop\\Работа\\DCP Railway Test\\vk_prod_redeploy_20261002",
+    "live_acceptance":  "2205250 -\u003e 2206328 -\u003e Parts -\u003e authenticated DCP -\u003e 184.07 USD",
+    "production_found":  false,
+    "dealer_price_usd":  null,
+    "files":  [
+                  {
+                      "file":  "oemixibot_app.py",
+                      "size":  98075,
+                      "sha256":  "B78D429097517424FB3CEB693CE781BEA53FFB1E01505724CC9C940A9933BFD4"
+                  },
+                  {
+                      "file":  "start_oemixibot_private.ps1",
+                      "size":  819,
+                      "sha256":  "99F576F0931D5C854AA3B14D93755AFFDA2578F9B32A327DC80113A879C8CFAA"
+                  },
+                  {
+                      "file":  "oemixi_admin_polaris_production.py",
+                      "size":  5609,
+                      "sha256":  "8B94AAD523CD64F5F2D9E77232AA8FF14A309604D91B5FE7859E2CC13F5258B8"
+                  },
+                  {
+                      "file":  "oemixi_admin_polaris_browser_price.py",
+                      "size":  7389,
+                      "sha256":  "14B3729A5D116C60BFDEEBB9E7D46AE34ED6FC5B78ADD312912A2C6F39D17E0C"
+                  },
+                  {
+                      "file":  "oemixi_category_authority_client.py",
+                      "size":  5326,
+                      "sha256":  "51D295B033423472575F409C14F1A5E0CFFBEDEFC597C56D7581264D3B142541"
+                  },
+                  {
+                      "file":  "polaris_existing_browser_controller.py",
+                      "size":  13232,
+                      "sha256":  "B953DE3CA4787FE68CE7032A2E9046014C4D43EEABE6D2B43F246EEB99A881FD"
+                  },
+                  {
+                      "file":  "polaris_add_form_contract.py",
+                      "size":  1541,
+                      "sha256":  "F9C2B46754CA5F8619647056F41B4303B834F61BD8010D2508216256D2E601C6"
+                  },
+                  {
+                      "file":  "polaris_cart_snapshot.py",
+                      "size":  2923,
+                      "sha256":  "467CD19763100470C57BFB0F72603DDEC43DA4AA35819E6387C20DE9605C4D1E"
+                  },
+                  {
+                      "file":  "polaris_probe_cart_delta.py",
+                      "size":  2051,
+                      "sha256":  "AE5B1E5B36F1BFC474A88167291499B5CC9EB0683D50C99E86977A2E60BC2A96"
+                  },
+                  {
+                      "file":  "polaris_probe_cart_recovery.py",
+                      "size":  4391,
+                      "sha256":  "ED40693E40FD2B79F000AD481EC7E0DE7155A9102BC71EC64BA5F96866DE5559"
+                  },
+                  {
+                      "file":  "polaris_probe_cart_transaction.py",
+                      "size":  9523,
+                      "sha256":  "314ACDA0E0CD413DD8B8F388F2E08222CC6B4E44FF61011A22665D16AB89B663"
+                  },
+                  {
+                      "file":  "polaris_probe_errors.py",
+                      "size":  1608,
+                      "sha256":  "060AC3CE180DC024BAEBB5795BF6873AEFCA1FB48E522CD59B7753AD080381E6"
+                  }
+              ]
+}
