@@ -5,6 +5,8 @@ from contextlib import closing
 from datetime import datetime, timezone
 import math
 import secrets
+import hashlib
+import json
 import sqlite3
 
 import dp_live_bridge as bridge
@@ -138,6 +140,18 @@ def complete_result(db_file, payload: dict) -> dict:
                     verify_polaris_cart_proof(payload,requested_oem=requested_oem,resolved_oem=current_oem,category_evidence=authority)
                 except CartProofError:
                     raise CompletionError(409, "DEALER_CART_UNVERIFIED") from None
+                # Store correlation and immutable proof digest in the existing
+                # v2 recovery/evidence table; never store account identity bytes.
+                evidence_digest=hashlib.sha256(json.dumps(
+                    payload["dealer_cart_proof"],sort_keys=True,
+                    separators=(",",":"),ensure_ascii=True).encode()).hexdigest()
+                authority_digest=hashlib.sha256(json.dumps(
+                    authority,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode()).hexdigest()
+                conn.execute("""INSERT INTO dp_live_recovery_events
+                    (request_id,claim_generation,event_type,actor,evidence_sha256,plan_sha256,created_at)
+                    VALUES(?,?,'polaris_cart_verified_found',?,?,?,?)""",
+                    (row["request_id"],generation,payload["producer_id"],
+                     evidence_digest,authority_digest,now))
                 _write_cache(conn, manufacturer, requested_oem, price, source, now)
                 if current_oem != requested_oem:
                     _write_cache(conn, manufacturer, current_oem, price, source, now)
