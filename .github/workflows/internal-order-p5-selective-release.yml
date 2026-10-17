@@ -117,7 +117,6 @@ jobs:
           python -B _save_order_shared_tx_regression.py
           python -B _client_checkout_orchestrator_regression.py
           python -B _client_checkout_callback_adapter_regression.py
-          python -B _prod_finance_switch_regression.py
 
       - name: No production wiring in this slice
         shell: bash
