@@ -6,12 +6,57 @@ POINT10_WEB_APP_BLOB="c6c7ae46b313220c44e4ee726948f65543c287c7"
 POINT10_WEB_OUTSIDE_DP_CONTROL_BLOB="3e8641f9c9e2a85b028d8598cc41199df8205f65"
 
 
+OEMIXI_GATEWAY_IMPORT="import oemixibot_railway_gateway_mount\n"
+OEMIXI_CATEGORY_MOUNT="""if os.getenv("OEMIXIBOT_TOKEN", "").strip():
+    app.include_router(
+        oemixi_category_authority_transport.build_router(
+            db_file=core.ORDERS_DB_FILE,
+            root_secret=os.getenv("OEMIXIBOT_TOKEN", "").strip(),
+        )
+    )
+
+
+"""
+OEMIXI_CATEGORY_AND_GATEWAY_MOUNT=OEMIXI_CATEGORY_MOUNT+"""_oemixi_gateway_secret = os.getenv("OEMIXIBOT_GATEWAY_SECRET", "").strip()
+if _oemixi_gateway_secret:
+    # Release-Control-only mount. A dedicated scoped secret is required; the
+    # Telegram token and DCP credentials are never reused for this transport.
+    oemixibot_railway_gateway_mount.attach_oemixi_gateway(
+        app,
+        coordination_db=core.ORDERS_DB_FILE,
+        gateway_secret=_oemixi_gateway_secret,
+        dealer_max_age_hours=24.0,
+        msrp_max_age_hours=720.0,
+        wait_seconds=5.0,
+    )
+
+
+"""
+
+
 def blob(source):
     data=source.encode()
     return hashlib.sha1(b"blob "+str(len(data)).encode()+b"\0"+data).hexdigest()
 
 
 def protected_web_source(source):
+    # Release Control authorizes exactly one optional OEMixi secure-gateway
+    # mount. Normalize only that byte-exact mount back to the previously pinned
+    # category-only source before applying the original WEB ADMIN/DCP guard.
+    if OEMIXI_CATEGORY_AND_GATEWAY_MOUNT in source:
+        if (source.count(OEMIXI_CATEGORY_AND_GATEWAY_MOUNT)!=1
+            or source.count(OEMIXI_GATEWAY_IMPORT)!=1):
+            raise AssertionError("OEMixi gateway mount identity changed")
+        source=source.replace(OEMIXI_GATEWAY_IMPORT,"",1)
+        source=source.replace(
+            OEMIXI_CATEGORY_AND_GATEWAY_MOUNT,
+            OEMIXI_CATEGORY_MOUNT,
+            1,
+        )
+    elif (OEMIXI_GATEWAY_IMPORT in source
+          or "_oemixi_gateway_secret" in source
+          or "attach_oemixi_gateway(" in source):
+        raise AssertionError("OEMixi gateway mount identity changed")
     tree=ast.parse(source)
     expected={"DPSyncResultRequest","dp_sync_next","dp_sync_result"}
     targets=[n for n in tree.body if isinstance(n,(ast.ClassDef,ast.FunctionDef,ast.AsyncFunctionDef)) and n.name in expected]
