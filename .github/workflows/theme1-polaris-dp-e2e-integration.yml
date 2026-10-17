@@ -44,8 +44,7 @@ jobs:
             "probnik_app.py",
             "test_polaris_dealer_cart_completion_contract.py",
             "test_polaris_dp_e2e_integration.py",
-            "test_oemixi_secure_gateway_transport.py",
-            "test_dcp_three_adapters.py",
+            "test_polaris_consumer_pricesource.py",
           }
           changed=set(Path("/tmp/theme1-files.txt").read_text().splitlines())
           extra=sorted(changed-allowed)
@@ -93,7 +92,7 @@ jobs:
 
       - name: Common PriceSource and consumer regressions
         run: |
-          python -B -m unittest -v             test_oemixi_secure_gateway_transport.py             test_dcp_three_adapters.py             test_procenka_dp_bridge.py             test_oemixibot_railway_runtime.py             test_web2_host_integration.py
+          python -B -m unittest -v             test_polaris_consumer_pricesource.py             test_procenka_dp_bridge.py             test_oemixibot_railway_runtime.py             test_web2_host_integration.py
 
       - name: Non-Polaris and no-MSRP fallback regressions
         run: |

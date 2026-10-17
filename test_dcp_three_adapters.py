@@ -40,27 +40,8 @@ class ThreeAdapterTests(CompletionFixture):
         with sqlite3.connect(self.db) as c:
             c.execute("DELETE FROM dealer_price_cache")
             completion._write_identity(c,"Arctic Cat","2670-265","2670-265","known identity","fixture",health._now())
-            c.execute("""CREATE TABLE oem_catalog_cache(
-                manufacturer TEXT NOT NULL,current_oem TEXT NOT NULL,name TEXT,catalog TEXT,
-                msrp_usd REAL,msrp_verified INTEGER NOT NULL DEFAULT 0,
-                previous_oems_json TEXT NOT NULL DEFAULT '[]',
-                source_kind TEXT,source_ref TEXT,first_seen_at TEXT NOT NULL,
-                last_verified_at TEXT NOT NULL,
-                PRIMARY KEY(manufacturer,current_oem))""")
-            c.execute("""CREATE TABLE oem_catalog_aliases(
-                manufacturer TEXT NOT NULL,alias_oem TEXT NOT NULL,current_oem TEXT NOT NULL,
-                alias_kind TEXT NOT NULL,PRIMARY KEY(manufacturer,alias_oem))""")
-            now=health._now()
-            c.execute("""INSERT INTO oem_catalog_cache(
-                manufacturer,current_oem,name,catalog,msrp_usd,msrp_verified,
-                previous_oems_json,source_kind,source_ref,first_seen_at,last_verified_at
-            ) VALUES(?,?,?,?,?,1,'[]',?,?,?,?)""",
-            ("Arctic Cat","2670-265","public catalog","Parts",999,
-             "validated_public_msrp","three-adapter-fixture",now,now))
-            c.execute("""INSERT INTO oem_catalog_aliases(
-                manufacturer,alias_oem,current_oem,alias_kind
-            ) VALUES(?,?,?,?)""",
-            ("Arctic Cat","2670-265","2670-265","current"))
+            c.execute("CREATE TABLE oem_catalog_cache(manufacturer,current_oem,name,msrp_usd,last_verified_at,msrp_verified)")
+            c.execute("INSERT INTO oem_catalog_cache VALUES('Arctic Cat','2670-265','public catalog',999,?,1)",(health._now(),))
         self.browser=SimpleNamespace(get_dealer_price_dict=Mock(side_effect=AssertionError("direct DCP lookup forbidden")))
         self.finder=SimpleNamespace(manufacturer_alias=lambda m:bridge._request_key(m,"2670-265")[0],
                                     normalize_oem=lambda o:bridge._request_key("Arctic Cat",o)[1])
@@ -104,7 +85,7 @@ class ThreeAdapterTests(CompletionFixture):
         context=SimpleNamespace(application=application,user_data={})
         self.dealer_context=context
         self.dealer_reply=AsyncMock()
-        update=SimpleNamespace(effective_user=None,effective_chat=SimpleNamespace(id=1),
+        update=SimpleNamespace(effective_user=None,
             effective_message=SimpleNamespace(text='2670-265',reply_text=self.dealer_reply))
         async def dealer_handler():
             await runtime['oem_message'](update,context)
