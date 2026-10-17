@@ -3,7 +3,7 @@ name: Theme1 Polaris Current LIVE Release Gate
 on:
   push:
     branches:
-      - theme1-polaris-current-live-reconcile-v2-20261017
+      - theme1-polaris-currency-contract-fix-20261017
   workflow_dispatch:
 
 permissions:

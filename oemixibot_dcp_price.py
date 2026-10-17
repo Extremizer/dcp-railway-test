@@ -517,7 +517,15 @@ def _legacy_get_dealer_price_unverified_route(manufacturer: str, oem: str) -> De
     )
 
 def get_dealer_price_dict(manufacturer: str, oem: str, *, category_evidence=None) -> dict[str, Any]:
-    return asdict(get_dealer_price(manufacturer, oem, category_evidence=category_evidence))
+    value = asdict(get_dealer_price(manufacturer, oem, category_evidence=category_evidence))
+    # DealerPriceResult predates the signed-v2 top-level currency field.  For the
+    # targeted Polaris cart path, preserve currency only from the already
+    # verified cart proof; missing/tampered proof remains fail-closed downstream.
+    if value.get("status") == "FOUND" and value.get("manufacturer") == "Polaris":
+        proof = value.get("dealer_cart_proof")
+        if isinstance(proof, dict) and isinstance(proof.get("currency"), str):
+            value["currency"] = proof["currency"]
+    return value
 
 if __name__ == "__main__":
     import argparse
