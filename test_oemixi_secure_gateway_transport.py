@@ -508,15 +508,17 @@ class SecureTransportE2ETests(SecureGatewayFixture):
         checkout.assert_not_called()
         finance.assert_not_called()
 
+
     def test_three_consumers_over_secure_transport_share_one_claim(self):
+        self.seed_polaris_authority()
         browser = SimpleNamespace(
             get_dealer_price_dict=Mock(
                 side_effect=AssertionError("direct DCP lookup forbidden")
             )
         )
         finder = SimpleNamespace(
-            manufacturer_alias=lambda m: bridge._request_key(m, "2670-265")[0],
-            normalize_oem=lambda o: bridge._request_key("Arctic Cat", o)[1],
+            manufacturer_alias=lambda m: bridge._request_key(m, "2205250")[0],
+            normalize_oem=lambda o: bridge._request_key("Polaris", o)[1],
         )
 
         probnik = actual_functions(
@@ -571,7 +573,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                 "oem_reference_service": SimpleNamespace(lookup_oem=lambda o: {}),
                 "oem_identity_service": SimpleNamespace(
                     lookup=lambda o: {
-                        "manufacturer": "Arctic Cat",
+                        "manufacturer": "Polaris",
                         "item_type": "parts",
                     }
                 ),
@@ -583,7 +585,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
             "oemixibot_app.py",
             {"bind_shared_price_gateway", "_resolve_runtime_offer", "oem_message"},
             {
-                "SharedDealerPriceAdapter": gateway.SharedDealerPriceAdapter,
+                "SharedDealerPriceAdapter": OEMixiCanonicalSharedPriceAdapter,
                 "_SHARED_PRICE_ADAPTER_KEY": "oemixi_shared_dealer_price_adapter",
                 "ContextTypes": SimpleNamespace(DEFAULT_TYPE=object),
                 "Update": object,
@@ -614,29 +616,29 @@ class SecureTransportE2ETests(SecureGatewayFixture):
         update = SimpleNamespace(
             effective_user=None,
             effective_message=SimpleNamespace(
-                text="2670-265",
+                text="2205250",
                 reply_text=dealer_reply,
             ),
         )
 
         async def dealer_call():
             await runtime["oem_message"](update, dealer_context)
-            return dealer_context.user_data.get("offer:2670-265")
+            return dealer_context.user_data.get("offer:2205250")
 
-        thread, errors = self.producer_once()
+        thread, errors = self.producer_once_polaris()
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = [
-                pool.submit(probnik["_identity_and_price"], "2670-265"),
+                pool.submit(probnik["_identity_and_price"], "2205250"),
                 pool.submit(
                     lambda: asyncio.run(
                         procenka["enrich_found_result_with_dealer_price"](
                             {
                                 "status": "FOUND",
                                 "catalog": "Parts",
-                                "manufacturer": "Arctic Cat",
-                                "oem": "2670-265",
-                                "msrp_usd": 99.99,
+                                "manufacturer": "Polaris",
+                                "oem": "2205250",
+                                "msrp_usd": 239.99,
                             }
                         )
                     )
@@ -648,21 +650,22 @@ class SecureTransportE2ETests(SecureGatewayFixture):
         thread.join(timeout=6)
         self.assertFalse(thread.is_alive())
         self.assertEqual(errors, [])
-        self.assertEqual(results[0]["dp_usd"], 31.25)
-        self.assertEqual(results[1]["_dealer_price_usd"], 31.25)
-        self.assertEqual(results[2]["dl_usd"], 31.25)
-        self.assertEqual(results[2]["msrp_usd"], 99.99)
-        self.assertIn("USD 31.25", dealer_reply.await_args.args[0])
+        self.assertEqual(results[0]["dp_usd"], 184.07)
+        self.assertEqual(results[1]["_dealer_price_usd"], 184.07)
+        self.assertEqual(results[2]["dl_usd"], 184.07)
+        self.assertEqual(results[2]["msrp_usd"], 239.99)
+        self.assertIn("USD 184.07", dealer_reply.await_args.args[0])
         browser.get_dealer_price_dict.assert_not_called()
 
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(
-                conn.execute("SELECT COUNT(*) FROM dp_live_requests").fetchone()[0],
+                conn.execute(
+                    "SELECT COUNT(*) FROM dp_live_requests "
+                    "WHERE manufacturer='Polaris' AND oem='2205250'"
+                ).fetchone()[0],
                 1,
             )
 
-
-class SecureTransportSecurityTests(SecureGatewayFixture):
     def _signed_headers(self, *, secret=ROOT_SECRET, nonce="nonce_1234567890123456"):
         body = canonical_body("Arctic Cat", "2670-265")
         ts = str(int(time.time()))
