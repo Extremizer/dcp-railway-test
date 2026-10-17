@@ -19,7 +19,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install dependencies
-        run: pip install 'python-telegram-bot>=22.8,<23' 'websocket-client>=1.9,<2' 'playwright>=1.50'
+        run: pip install 'python-telegram-bot>=22.8,<23' 'websocket-client>=1.9,<2' 'playwright>=1.50' 'fastapi>=0.115,<1' 'httpx>=0.27,<0.29'
       - name: Syntax smoke
         run: python -B -m py_compile oemixi_unknown_enrollment.py oemixi_category_bootstrap.py oemixi_enrollment_transport.py oemixi_enrollment_client.py oemixibot_app.py test_oemixi_unknown_enrollment.py test_oemixi_category_bootstrap.py test_oemixi_enrollment_transport.py
       - name: Unknown manufacturer fail-closed tests
