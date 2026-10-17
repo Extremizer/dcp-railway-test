@@ -49,14 +49,14 @@ def resolve_offer(oem,manufacturer=None,*,price_gateway=None):
         ident["manufacturer"]=canonical
     if not ident.get("manufacturer"):
         return {**ident,"status":"IDENTITY_REQUIRED","actual_weight_kg":ref.get("actual_weight_kg"),
-                "volume_weight_kg":ref.get("volume_weight_kg")}
+                "volume_weight_kg":ref.get("volume_weight_kg"),"reference_calculation_weight_kg":ref.get("reference_calculation_weight_kg"),"reference_weight_quality":ref.get("reference_weight_quality"),"reference_weight_source":ref.get("reference_weight_source")}
     # A future rollout can explicitly inject the shared price adapter.
     # Default runtime behavior remains unchanged; no environment auto-switch.
     price_source = price_gateway if price_gateway is not None else oemixibot_dcp_price
     try: dp=price_source.get_dealer_price_dict(ident["manufacturer"],ident["oem"])
     except Exception as exc:
         return {**ident,"status":"PRICE_UNAVAILABLE","actual_weight_kg":ref.get("actual_weight_kg"),
-                "volume_weight_kg":ref.get("volume_weight_kg"),"price_error":type(exc).__name__}
+                "volume_weight_kg":ref.get("volume_weight_kg"),"reference_calculation_weight_kg":ref.get("reference_calculation_weight_kg"),"reference_weight_quality":ref.get("reference_weight_quality"),"reference_weight_source":ref.get("reference_weight_source"),"price_error":type(exc).__name__}
     if dp.get("status")=="FOUND" and dp.get("dealer_price_usd") is not None:
         current=dp.get("current_oem") or ident["oem"]
         confirm_identity(ident["oem"],ident["manufacturer"],ident.get("item_type"),"dcp_dl_confirmed")
@@ -64,7 +64,7 @@ def resolve_offer(oem,manufacturer=None,*,price_gateway=None):
             confirm_identity(current,ident["manufacturer"],ident.get("item_type"),"dcp_dl_confirmed")
     return {**ident,"status":dp.get("status"),"oem":dp.get("current_oem") or ident["oem"],
             "requested_oem":ident["oem"],"name":dp.get("name"),"dl_usd":dp.get("dealer_price_usd"),
-            "actual_weight_kg":ref.get("actual_weight_kg"),"volume_weight_kg":ref.get("volume_weight_kg"),
+            "actual_weight_kg":ref.get("actual_weight_kg"),"volume_weight_kg":ref.get("volume_weight_kg"),"reference_calculation_weight_kg":ref.get("reference_calculation_weight_kg"),"reference_weight_quality":ref.get("reference_weight_quality"),"reference_weight_source":ref.get("reference_weight_source"),
             "price_source":dp.get("source"),
             "dealer_verified_at":dp.get("last_verified_at"),
             "msrp_usd":dp.get("msrp_usd"),
