@@ -110,7 +110,7 @@ def complete_result(db_file, payload: dict) -> dict:
                     raise CompletionError(400, "result_identity_mismatch")
                 _, current_oem = _identity(manufacturer, payload.get("current_oem") or requested_oem)
                 _, matched_sku = _identity(manufacturer, payload.get("matched_sku"))
-                if matched_sku != requested_oem or current_oem != requested_oem:
+                if manufacturer != "Polaris" and (matched_sku != requested_oem or current_oem != requested_oem):
                     raise CompletionError(400, "result_sku_mismatch")
                 value = payload.get("dealer_price_usd")
                 if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
@@ -118,15 +118,26 @@ def complete_result(db_file, payload: dict) -> dict:
                 if payload.get("currency") != "USD":
                     raise CompletionError(400, "invalid_dp_currency")
                 price = float(value)
-                source = _dealer_source(payload.get("source"), manufacturer, requested_oem)
+                if manufacturer == "Polaris":
+                    from polaris_dealer_cart_completion_contract import SOURCE
+                    if payload.get("source") != SOURCE:
+                        raise CompletionError(400, "unverified_dealer_source")
+                    source = SOURCE
+                else:
+                    source = _dealer_source(payload.get("source"), manufacturer, requested_oem)
                 name = str(payload.get("name") or "")[:300] or None
                 authority = dcp_category_authority.resolve(conn, requested_manufacturer, requested_oem)
                 if (authority is None or any(row[k] != authority[k] for k in ("item_category","category_source_kind","category_source_ref","category_verified_at"))):
                     raise CompletionError(409, "CATEGORY_UNVERIFIED")
-                # Stage 2 approval gate: the completion request does not carry
-                # authoritative server-side category/line/price-kind evidence.
-                # Thus FOUND must fail before any cache or identity mutation.
-                raise CompletionError(409, "CATEGORY_UNVERIFIED")
+                if manufacturer != "Polaris":
+                    raise CompletionError(409, "CATEGORY_UNVERIFIED")
+                from polaris_dealer_cart_completion_contract import verify_polaris_cart_proof,CartProofError
+                if authority.get("resolved_oem") != current_oem:
+                    raise CompletionError(409, "CATEGORY_UNVERIFIED")
+                try:
+                    verify_polaris_cart_proof(payload,requested_oem=requested_oem,resolved_oem=current_oem,category_evidence=authority)
+                except CartProofError:
+                    raise CompletionError(409, "DEALER_CART_UNVERIFIED") from None
                 _write_cache(conn, manufacturer, requested_oem, price, source, now)
                 if current_oem != requested_oem:
                     _write_cache(conn, manufacturer, current_oem, price, source, now)
