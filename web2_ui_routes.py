@@ -54,7 +54,7 @@ def _verified_powersports_logo_path() -> Path | None:
     raw_sha = os.getenv(POWERSPORTS_LOGO_SHA256_ENV, "").strip()
     if not raw_path or not raw_sha:
         return None
-    if raw_sha.lower() != "ac993368c8f07e3f635526dcb296003fa12c8b6f0835fab5744eedab91c0fecb":
+    if raw_sha.lower() != APPROVED_POWERSPORTS_WORDMARK_SHA256:
         return None
     return _verified_png_path(Path(raw_path), raw_sha)
 
