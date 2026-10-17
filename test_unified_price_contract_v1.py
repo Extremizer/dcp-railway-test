@@ -253,6 +253,7 @@ class CanonicalPriceContractTests(unittest.TestCase):
 
     def test_canonical_gateway_composes_existing_dealer_and_read_only_msrp(self):
         calls = []
+        live_fresh = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         def dealer(m, o, *, max_age_hours):
             calls.append(("dealer", m, o, max_age_hours))
             return {
@@ -261,7 +262,7 @@ class CanonicalPriceContractTests(unittest.TestCase):
                 "current_oem": o,
                 "dealer_price_usd": 184.07,
                 "source": "verified_local_dcp:cart_line",
-                "last_verified_at": FRESH,
+                "last_verified_at": live_fresh,
             }
         def msrp(m, o, *, max_age_hours):
             calls.append(("msrp", m, o, max_age_hours))
@@ -270,7 +271,7 @@ class CanonicalPriceContractTests(unittest.TestCase):
                 "current_oem": o,
                 "msrp_usd": 239.99,
                 "source": "verified_dcp_msrp:search_card",
-                "last_verified_at": FRESH,
+                "last_verified_at": live_fresh,
             }
         adapter = CanonicalPriceGatewayAdapter(
             dealer, msrp, dealer_max_age_hours=24, msrp_max_age_hours=48
@@ -287,6 +288,7 @@ class CanonicalPriceContractTests(unittest.TestCase):
         )
 
     def test_gateway_failure_does_not_fallback_to_msrp_for_dealer(self):
+        live_fresh = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
         def dealer(*a, **k):
             raise TimeoutError("gateway down")
         def msrp(m, o, *, max_age_hours):
@@ -295,7 +297,7 @@ class CanonicalPriceContractTests(unittest.TestCase):
                 "current_oem": o,
                 "msrp_usd": 10.99,
                 "source": "verified_dcp_msrp:details",
-                "last_verified_at": FRESH,
+                "last_verified_at": live_fresh,
             }
         adapter = CanonicalPriceGatewayAdapter(
             dealer, msrp, dealer_max_age_hours=24, msrp_max_age_hours=24

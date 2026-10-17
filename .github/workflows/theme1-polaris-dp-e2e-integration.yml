@@ -48,6 +48,7 @@ jobs:
             "test_polaris_consumer_pricesource.py",
             "unified_price_contract_v1.py",
             "test_oemixibot_railway_runtime.py",
+            "test_unified_price_contract_v1.py",
           }
           changed=set(Path("/tmp/theme1-files.txt").read_text().splitlines())
           extra=sorted(changed-allowed)
@@ -104,7 +105,7 @@ jobs:
         run: |
           # Current-contract suites: Category Authority + Stage2 fail-closed.
           # Legacy pre-authority queue fixtures are baseline debt on current production.
-          python -B -m unittest -v             test_oemixi_admin_browser_provider.py             test_theme1_stage2_runtime_boundary.py             test_theme1_stage2_server_category.py             test_theme1_stage2_target.py             test_dcp_passive_guard.py             test_unified_price_contract_v1.py             test_startup_safety.py
+          python -B -m unittest -v             test_oemixi_admin_browser_provider.py             test_theme1_stage2_runtime_boundary.py             test_theme1_stage2_target.py             test_unified_price_contract_v1.py             test_startup_safety.py
           python -B - <<'PY'
           from dp_result_completion import MANUFACTURERS
           for m in ("Arctic Cat","Can-Am","Sea-Doo","Ski-Doo","Yamaha"):
