@@ -12,6 +12,7 @@ on:
       - web2-product-card-ux-m2-20261017
       - web2-cart-ux-m3-20261017
       - web2-mobile-responsive-m4-20261017
+      - web2-powersports-visual-master-v1-20261017
   workflow_dispatch:
 
 permissions:
@@ -35,7 +36,7 @@ jobs:
 
       - name: Syntax
         run: |
-          python -B -m py_compile web2_staging_app.py web2_ui_routes.py web2_runtime_app.py test_web2_staging.py test_web2_client_mvp.py test_web2_host_integration.py test_web2_functional_hardening.py test_web2_search_ux_m1.py test_web2_product_card_m2.py test_web2_cart_m3.py test_web2_mobile_m4.py
+          python -B -m py_compile web2_staging_app.py web2_ui_routes.py web2_runtime_app.py test_web2_staging.py test_web2_client_mvp.py test_web2_host_integration.py test_web2_functional_hardening.py test_web2_search_ux_m1.py test_web2_product_card_m2.py test_web2_cart_m3.py test_web2_mobile_m4.py test_web2_powersports_visual_v1.py
           node --check web2/app.js
 
       - name: Staging API regression
@@ -67,6 +68,16 @@ jobs:
         with:
           name: web2-mobile-m4-screenshots
           path: artifacts/mobile-m4/*.png
+          if-no-files-found: error
+
+      - name: POWERSPORTS Visual Master v1 browser regression
+        run: python -B -m unittest -v test_web2_powersports_visual_v1.py
+
+      - name: Upload POWERSPORTS screenshot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: web2-powersports-v1-screenshots
+          path: artifacts/powersports-v1/*.png
           if-no-files-found: error
 
       - name: Upload MVP screenshots

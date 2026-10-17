@@ -8,34 +8,46 @@
   <link rel="stylesheet" href="/web2-static/styles.css">
 </head>
 <body>
-  <header class="topbar">
+  <header class="topbar powersports-topbar">
     <a class="brand-slot" href="/web2" aria-label="На главную EXTREMIZER">
-      <img class="brand-logo" src="/web2-brand-logo" alt="" hidden>
+      <img class="brand-logo" src="/web2-static/EXTREMIZER_WEB_WORDMARK_TEMPLATE_V1.png" alt="EXTREMIZER" hidden>
       <span class="visually-hidden">На главную EXTREMIZER</span>
     </a>
+    <nav class="powersports-nav" aria-label="Основные направления">
+      <a href="#life-nav">LIFE</a>
+      <a class="nav-oem" href="#searchForm">OEM +</a>
+    </nav>
     <button id="cartButton" class="cart-button" type="button" aria-label="Открыть корзину">
-      <span class="cart-icon">🛒</span>
-      <span>Корзина</span>
-      <span id="cartCount" class="cart-count">0</span>
+      <span>Корзина</span><span id="cartCount" class="cart-count">0</span>
       <span id="cartButtonTotal" class="cart-button-total">0 ₽</span>
     </button>
   </header>
 
-  <main>
-    <section class="hero">
-      <div class="eyebrow">OEM • АКСЕССУАРЫ • ЭКИПИРОВКА • ТЕХНИКА</div>
-      <h1>Найди OEM.<br><span>Узнай свою цену.</span></h1>
-      <p class="lead">
-        Оригинальные запчасти, аксессуары и складские остатки в одном окне.
-        Введи каталожный номер — без регистрации.
-      </p>
-      <form id="searchForm" class="search-box" aria-busy="false">
-        <input id="oemInput" name="oem" autocomplete="off"
-               placeholder="Например, 417224332" aria-label="OEM номер">
-        <button id="searchButton" type="submit">Найти</button>
-      </form>
-      <div id="state" class="state hidden" aria-live="polite" role="status"></div>
-      <div id="searchHint" class="hint">Единый поиск EXTREMIZER: США + наличие на складах РФ</div>
+  <main class="powersports-main">
+    <section class="hero powersports-hero" aria-label="POWERSPORTS MACHINE">
+      <div class="powersports-heading"><h1>POWERSPORTS</h1><p>MACHINE</p></div>
+      <div class="powersports-search">
+        <form id="searchForm" class="search-box" aria-busy="false">
+          <input id="oemInput" name="oem" autocomplete="off" inputmode="text"
+                 placeholder="Введи каталожный номер" aria-label="OEM номер">
+          <button id="searchButton" type="submit"><span>Искать</span><span class="search-lens" aria-hidden="true"></span></button>
+        </form>
+        <div id="state" class="state hidden" aria-live="polite" role="status"></div>
+        <div id="searchHint" class="visually-hidden">Поиск OEM: США и склады РФ</div>
+      </div>
+    </section>
+    <section class="powersports-editorial" aria-label="Практика владения">
+      <h2 class="powersports-motto">Техника должна ехать.</h2>
+      <h3>ПРАКТИКА ВЛАДЕНИЯ</h3>
+      <div class="powersports-practice">
+        <article><span>01</span><h4>ОБСЛУЖИВАНИЕ <b aria-hidden="true">→</b></h4></article>
+        <article><span>02</span><h4>ЭКСПЛУАТАЦИЯ <b aria-hidden="true">→</b></h4></article>
+        <article><span>03</span><h4>ПОДГОТОВКА <b aria-hidden="true">→</b></h4></article>
+      </div>
+      <nav id="life-nav" class="powersports-life" aria-label="Другие направления">
+        <strong>ДРУГИЕ НАПРАВЛЕНИЯ</strong><span>LIFE</span><span>WORKOUT &amp; GYM</span><i>/</i>
+        <span>FOOD &amp; HEALTH</span><i>/</i><span>OUTDOOR &amp; TRAVEL</span><i>/</i><span>GET TOGETHER</span>
+      </nav>
     </section>
 
     <section id="product" class="product hidden">
