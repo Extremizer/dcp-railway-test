@@ -85,6 +85,23 @@ def default_client_payment_route(offer_source: str) -> PaymentRoute:
     return PaymentRoute.EXTREMIZER_BALANCE
 
 
+def resolve_internal_client_payment_route(
+    *,
+    admin_assign_extremizer: bool = False,
+    admin_authorized: bool = False,
+    full_partner_amount_reserved: bool = False,
+) -> PaymentRoute:
+    """Resolve an Internal-order payment-route exception without changing global client defaults."""
+
+    if not admin_assign_extremizer:
+        return PaymentRoute.DIRECT_PARTNER
+    if not admin_authorized:
+        raise PermissionError("EXTREMIZER_INTERNAL_ROUTE_REQUIRES_ADMIN")
+    if not full_partner_amount_reserved:
+        raise ValueError("EXTREMIZER_INTERNAL_ROUTE_REQUIRES_FULL_PARTNER_BALANCE")
+    return PaymentRoute.EXTREMIZER_BALANCE
+
+
 def client_usa_financially_ready(balance_rub: int | float) -> bool:
     """Fixed client rule: USA processing requires strictly positive balance."""
 
@@ -105,6 +122,7 @@ __all__ = [
     "CLIENT_POLICY",
     "DEALER_POLICY",
     "default_client_payment_route",
+    "resolve_internal_client_payment_route",
     "client_usa_financially_ready",
     "requires_client_wallet_charge",
 ]
