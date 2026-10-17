@@ -19,8 +19,11 @@ let currentProduct = null;
 let currentQty = 1;
 let stockPollSerial = 0;
 function validCartItem(x) {
+  const warehouseOnlyIdentity = x?.offer_source === "warehouse" &&
+    typeof x?.manufacturer === "string" && !x.manufacturer.trim();
   if (!x || typeof x !== "object" || typeof x.manufacturer !== "string" ||
-      !x.manufacturer.trim() || typeof x.oem !== "string" || !x.oem.trim() ||
+      (!x.manufacturer.trim() && !warehouseOnlyIdentity) ||
+      typeof x.oem !== "string" || !x.oem.trim() ||
       !["usa", "warehouse"].includes(x.offer_source) ||
       !Number.isSafeInteger(x.unit_rub) || x.unit_rub < 0 ||
       !Number.isInteger(x.qty) || x.qty < 1 || x.qty > 99 ||
@@ -137,8 +140,12 @@ function renderOffers(offers = []) {
     const button = node("button", "", !offer.can_add ? "Цена уточняется" : existing ? "Добавить ещё" : "В корзину");
     button.type = "button";
     button.dataset.offerKey = String(offer.key ?? "");
-    button.disabled = !usableOffer(offer) || typeof currentProduct?.manufacturer !== "string" ||
-      !currentProduct.manufacturer.trim() || typeof currentProduct?.oem !== "string" || !currentProduct.oem.trim();
+    const warehouseOnlyIdentity = currentProduct?.warehouse_only === true &&
+      offer.source === "warehouse" && typeof currentProduct?.manufacturer === "string";
+    button.disabled = !usableOffer(offer) ||
+      (typeof currentProduct?.manufacturer !== "string" ||
+       (!currentProduct.manufacturer.trim() && !warehouseOnlyIdentity)) ||
+      typeof currentProduct?.oem !== "string" || !currentProduct.oem.trim();
     buy.appendChild(button);
     card.append(meta, buy);
     root.appendChild(card);
@@ -331,8 +338,12 @@ $("offers").addEventListener("click", (event) => {
   if (!offerKey || !currentProduct) return;
 
   const offer = (currentProduct.offers || []).find((x) => x.key === offerKey);
-  if (!usableOffer(offer) || !Number.isSafeInteger(offer.price_rub) || typeof currentProduct.oem !== "string" || !currentProduct.oem.trim() ||
-      typeof currentProduct.manufacturer !== "string" || !currentProduct.manufacturer.trim()) return;
+  const warehouseOnlyIdentity = currentProduct.warehouse_only === true &&
+    offer?.source === "warehouse" && typeof currentProduct.manufacturer === "string";
+  if (!usableOffer(offer) || !Number.isSafeInteger(offer.price_rub) ||
+      typeof currentProduct.oem !== "string" || !currentProduct.oem.trim() ||
+      typeof currentProduct.manufacturer !== "string" ||
+      (!currentProduct.manufacturer.trim() && !warehouseOnlyIdentity)) return;
 
   const key = `${currentProduct.manufacturer}|${currentProduct.oem}|${offer.key}`;
   const maxQty = offer.available_quantity == null

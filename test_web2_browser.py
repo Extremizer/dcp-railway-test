@@ -113,6 +113,64 @@ class Web2BrowserTests(unittest.TestCase):
             browser.close()
 
 
+
+    def test_warehouse_only_empty_manufacturer_can_add_to_cart(self):
+        with mock_server() as (base, _), sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            page = browser.new_page(viewport={"width": 390, "height": 844})
+            card = {
+                "manufacturer": "",
+                "oem": "417300574",
+                "requested_oem": "417300574",
+                "name": None,
+                "catalog": None,
+                "previous_oems": [],
+                "price": {
+                    "available": False,
+                    "customer_rub": None,
+                    "msrp_rub": None,
+                    "benefit_pct": None,
+                },
+                "offers": [{
+                    "key": "warehouse:1",
+                    "source": "warehouse",
+                    "warehouse_id": 1,
+                    "label": "Склад 1",
+                    "price_rub": 34700,
+                    "available_quantity": 26,
+                    "can_add": True,
+                }],
+                "stock": {
+                    "known": True,
+                    "refreshing": False,
+                    "warehouses": [{
+                        "warehouse_id": 1,
+                        "warehouse": "Склад 1",
+                        "quantity": 26,
+                        "price_rub": 34700,
+                    }],
+                },
+                "weight": None,
+                "delivery_notice": "Для позиции со склада РФ доставка из США не требуется.",
+                "warehouse_only": True,
+            }
+            page.route("**/api/v1/oem/417300574", lambda route: route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps(card),
+            ))
+            page.goto(base + "/web2")
+            page.locator("#oemInput").fill("417300574")
+            page.locator("#searchForm button").click()
+            page.locator("#product").wait_for(state="visible")
+            button = page.locator('button[data-offer-key="warehouse:1"]')
+            self.assertFalse(button.is_disabled())
+            button.click()
+            self.assertEqual(page.locator("#cartCount").inner_text(), "1")
+            self.assertIn("417300574", page.locator("#cartItems").inner_text())
+            self.assertIn("34 700 ₽", page.locator("#cartItems").inner_text().replace("\xa0", " "))
+            browser.close()
+
     def test_multiple_oems_warehouses_totals_and_handoff(self):
         with mock_server() as (base, handoffs), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
