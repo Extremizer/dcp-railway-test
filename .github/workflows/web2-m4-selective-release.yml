@@ -1,0 +1,104 @@
+name: WEB2 M4 Selective Release Gate
+
+on:
+  push:
+    branches:
+      - release-control-web2-m4-20261017
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selective-web2-m4:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Release boundary allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=757d6b773bac1c5dd25f5360bce5535fefddf1e2
+          git cat-file -e "$BASE^{commit}"
+          git diff --name-only "$BASE"...HEAD | sort > /tmp/changed.txt
+          cat /tmp/changed.txt
+          awk '
+            BEGIN { bad=0 }
+            $0 == ".github/workflows/web2-m4-selective-release.yml" { next }
+            $0 == "EXTREMIZER_WEB2_M4_SELECTIVE_RELEASE_20261017.md" { next }
+            $0 == "test_web2_cart_m3.py" { next }
+            $0 == "test_web2_client_mvp.py" { next }
+            $0 == "test_web2_functional_hardening.py" { next }
+            $0 == "test_web2_mobile_m4.py" { next }
+            $0 == "test_web2_product_card_m2.py" { next }
+            $0 == "test_web2_search_ux_m1.py" { next }
+            $0 == "test_web2_staging.py" { next }
+            $0 == "web2/app.js" { next }
+            $0 == "web2/index.html" { next }
+            $0 == "web2/styles.css" { next }
+            $0 == "web2_staging_app.py" { next }
+            $0 == "web2_ui_routes.py" { next }
+            { print "FORBIDDEN_RELEASE_FILE: " $0; bad=1 }
+            END { exit bad }
+          ' /tmp/changed.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt "httpx>=0.27,<1"
+          python -m playwright install --with-deps chromium
+
+      - name: Syntax
+        run: |
+          python -B -m py_compile             web2_staging_app.py web2_ui_routes.py web2_runtime_app.py             test_web2_staging.py test_web2_client_mvp.py             test_web2_functional_hardening.py test_web2_search_ux_m1.py             test_web2_product_card_m2.py test_web2_cart_m3.py             test_web2_mobile_m4.py test_web2_browser.py             test_web2_ui_routes.py test_web2_host_integration.py             test_web2_contract.py
+          node --check web2/app.js
+
+      - name: RC1 WEB2 staging regression
+        run: python -B -m unittest -v test_web2_staging.py
+
+      - name: RC1 real host integration
+        run: python -B -m unittest -v test_web2_host_integration.py
+
+      - name: RC1 browser routes and contract regression
+        run: python -B -m unittest -v test_web2_browser.py test_web2_ui_routes.py test_web2_contract.py
+
+      - name: Client MVP baseline regression
+        run: python -B -m unittest -v test_web2_client_mvp.py
+
+      - name: Functional hardening regression
+        run: python -B -m unittest -v test_web2_functional_hardening.py
+
+      - name: M1 OEM search regression
+        run: python -B -m unittest -v test_web2_search_ux_m1.py
+
+      - name: M2 product card regression
+        run: python -B -m unittest -v test_web2_product_card_m2.py
+
+      - name: M3 cart regression
+        run: python -B -m unittest -v test_web2_cart_m3.py
+
+      - name: M4 responsive regression
+        run: python -B -m unittest -v test_web2_mobile_m4.py
+
+      - name: Upload M4 screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: web2-m4-selective-screenshots
+          path: artifacts/mobile-m4/*.png
+          if-no-files-found: error
+
+      - name: Upload baseline screenshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: web2-m4-selective-baseline-screenshots
+          path: artifacts/*.png
+          if-no-files-found: error

@@ -1,5 +1,11 @@
 """Staging isolation and mocked API tests."""
+import hashlib
+import os
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
+
 from fastapi.testclient import TestClient
 from web2_staging_app import app
 
@@ -38,6 +44,36 @@ class Web2StagingTests(unittest.TestCase):
             "offer_source": "warehouse", "warehouse_id": 1, "qty": 27,
         }]})
         self.assertEqual(response.status_code, 400)
+
+
+    def test_powersports_logo_hook_is_inactive_without_exact_theme7_asset(self):
+        with patch.dict(os.environ, {
+            "EXTREMIZER_POWERSPORTS_LOGO_PATH": "",
+            "EXTREMIZER_POWERSPORTS_LOGO_SHA256": "",
+        }, clear=False):
+            self.assertEqual(client.get("/web2-powersports-logo").status_code, 404)
+
+    def test_powersports_logo_rejects_wrong_sha_and_serves_exact_png(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "theme7-horizontal.png"
+            data = b"\x89PNG\r\n\x1a\nTHEME7-ISOLATED-EXACT-ASSET"
+            path.write_bytes(data)
+            digest = hashlib.sha256(data).hexdigest()
+
+            with patch.dict(os.environ, {
+                "EXTREMIZER_POWERSPORTS_LOGO_PATH": str(path),
+                "EXTREMIZER_POWERSPORTS_LOGO_SHA256": "0" * 64,
+            }, clear=False):
+                self.assertEqual(client.get("/web2-powersports-logo").status_code, 404)
+
+            with patch.dict(os.environ, {
+                "EXTREMIZER_POWERSPORTS_LOGO_PATH": str(path),
+                "EXTREMIZER_POWERSPORTS_LOGO_SHA256": digest,
+            }, clear=False):
+                response = client.get("/web2-powersports-logo")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.headers["content-type"], "image/png")
+                self.assertEqual(response.content, data)
 
 
 if __name__ == "__main__":

@@ -1,110 +1,168 @@
+const brandLogo = document.querySelector(".brand-logo");
+if (brandLogo) {
+  const showBrandLogo = () => { brandLogo.hidden = false; };
+  const hideBrandLogo = () => { brandLogo.hidden = true; };
+  brandLogo.addEventListener("load", showBrandLogo);
+  brandLogo.addEventListener("error", hideBrandLogo);
+  if (brandLogo.complete && brandLogo.naturalWidth > 0) showBrandLogo();
+}
+
 const $ = (id) => document.getElementById(id);
 const state = $("state");
 const product = $("product");
 const form = $("searchForm");
 const input = $("oemInput");
+const searchButton = $("searchButton");
 const cartPanel = $("cartPanel");
 const scrim = $("scrim");
 let currentProduct = null;
 let currentQty = 1;
 let stockPollSerial = 0;
-let cart = JSON.parse(localStorage.getItem("extremizer_web2_cart") || "[]");
+function validCartItem(x) {
+  if (!x || typeof x !== "object" || typeof x.manufacturer !== "string" ||
+      !x.manufacturer.trim() || typeof x.oem !== "string" || !x.oem.trim() ||
+      !["usa", "warehouse"].includes(x.offer_source) ||
+      !Number.isSafeInteger(x.unit_rub) || x.unit_rub < 0 ||
+      !Number.isInteger(x.qty) || x.qty < 1 || x.qty > 99 ||
+      typeof x.key !== "string" || !x.key.startsWith(x.manufacturer + "|" + x.oem + "|")) return false;
+  if (x.offer_source === "warehouse") {
+    if (x.warehouse_id == null || !Number.isInteger(x.available_quantity) ||
+        x.available_quantity < 1 || x.qty > x.available_quantity) return false;
+  } else if (x.warehouse_id != null) return false;
+  return true;
+}
+function normalizeCart(items) {
+  const result = [];
+  if (!Array.isArray(items)) return result;
+  for (const item of items) {
+    if (!validCartItem(item)) continue;
+    const existing = result.find(x => x.key === item.key);
+    if (existing) {
+      // Preserve the first trusted snapshot; reject conflicting persisted duplicates.
+      if (existing.unit_rub !== item.unit_rub ||
+          existing.warehouse_id !== item.warehouse_id) continue;
+      const max = item.offer_source === "warehouse" ? existing.available_quantity : 99;
+      existing.qty = Math.min(max, existing.qty + item.qty);
+    } else result.push({ ...item, currency: "RUB" });
+  }
+  return result;
+}
+let cart = [];
+try {
+  const stored = JSON.parse(localStorage.getItem("extremizer_web2_cart") || "[]");
+  cart = normalizeCart(stored);
+} catch (_) { cart = []; }
 
-const rub = (value) => value == null
+function node(tag, cls, value) {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  if (value != null) el.textContent = String(value);
+  return el;
+}
+
+
+const validPrice = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+const validQty = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0;
+const label = (value, fallback = "") => value == null ? fallback : String(value);
+const usableOffer = (offer) => offer && typeof offer.key === "string" && offer.key.length > 0 &&
+  (offer.source === "usa" || offer.source === "warehouse") && validPrice(offer.price_rub) &&
+  offer.can_add === true && (offer.source === "usa" || (validQty(offer.available_quantity) && offer.available_quantity >= 1 && offer.warehouse_id != null));
+const rub = (value) => !validPrice(value)
   ? "Цена уточняется"
   : new Intl.NumberFormat("ru-RU").format(value) + " ₽";
+const usaRub = (value) => !validPrice(value)
+  ? "Цена уточняется"
+  : new Intl.NumberFormat("ru-RU").format(value) + "* ₽";
 const qtyText = (value) => new Intl.NumberFormat(
   "ru-RU", { maximumFractionDigits: 3 }
 ).format(value);
 
-function showState(text, error = false) {
+function showState(text, kind = "info") {
   state.textContent = text;
-  state.classList.remove("hidden", "error");
-  if (error) state.classList.add("error");
+  state.classList.remove("hidden", "error", "loading");
+  if (kind === "error") state.classList.add("error");
+  if (kind === "loading") state.classList.add("loading");
 }
 
 function hideState() {
   state.classList.add("hidden");
+  state.classList.remove("error", "loading");
+}
+
+function setSearchBusy(busy) {
+  form.setAttribute("aria-busy", busy ? "true" : "false");
+  searchButton.disabled = busy;
+  searchButton.textContent = busy ? "Ищем…" : "Найти";
 }
 
 function renderStock(stockData) {
-  const stock = $("stock");
-  stock.innerHTML = "";
-  if (stockData.warehouses.length) {
-    stockData.warehouses.forEach((row) => {
-      const el = document.createElement("div");
-      el.className = "stock-row";
-      const price = row.price_rub == null ? "" : ` • ${rub(row.price_rub)}`;
-      el.innerHTML = `<span>${escapeHtml(row.warehouse)}</span><b>${qtyText(row.quantity)} шт.${price}</b>`;
-      stock.appendChild(el);
-    });
-    if (stockData.refreshing) {
-      stock.insertAdjacentHTML("beforeend", '<div class="stock-note">Проверяем остальные склады…</div>');
-    }
-  } else {
-    stock.textContent = stockData.refreshing
-      ? "Проверяем склады…"
-      : (stockData.known ? "Подтверждённого остатка сейчас нет." : "Остаток уточняется.");
+  const root = $("stock");
+  root.replaceChildren();
+  const warehouses = Array.isArray(stockData?.warehouses) ? stockData.warehouses : [];
+  for (const row of warehouses) {
+    if (!row || typeof row !== "object" || !validQty(row.quantity)) continue;
+    const el = node("div", "stock-row");
+    const price = !validPrice(row.price_rub) ? "" : " • " + rub(row.price_rub);
+    el.append(node("span", "", label(row.warehouse, "Склад уточняется")), node("b", "", qtyText(row.quantity) + " шт." + price));
+    root.appendChild(el);
+  }
+  if (warehouses.length && stockData.refreshing) {
+    root.appendChild(node("div", "stock-note", "Проверяем остальные склады…"));
+  } else if (!warehouses.length) {
+    root.textContent = stockData?.refreshing ? "Проверяем склады…" :
+      (stockData?.known ? "Подтверждённого остатка сейчас нет." : "Остаток уточняется.");
   }
 }
 
 function renderOffers(offers = []) {
   const root = $("offers");
-  root.innerHTML = "";
-  if (!offers.length) {
-    root.innerHTML = '<div class="offer-empty">Доступные варианты покупки уточняются.</div>';
+  root.replaceChildren();
+  if (!Array.isArray(offers) || !offers.length) {
+    root.appendChild(node("div", "offer-empty", "Доступные варианты покупки уточняются."));
     return;
   }
-  offers.forEach((offer) => {
-    const el = document.createElement("article");
-    el.className = "offer-card";
-    const sourceLabel = offer.source === "usa" ? "🇺🇸 склад США" : `🇷🇺 ${escapeHtml(offer.label)}`;
-    const availability = offer.source === "usa"
-      ? "Заказ из США"
-      : `В наличии: ${qtyText(offer.available_quantity)} шт.`;
-    const price = offer.price_rub == null
-      ? "Цена уточняется"
-      : (offer.source === "usa" ? rub(offer.price_rub).replace(" ₽", "* ₽") : rub(offer.price_rub));
-    const disabled = offer.can_add ? "" : " disabled";
-    const cartKey = `${currentProduct?.manufacturer || ""}|${currentProduct?.oem || ""}|${offer.key}`;
-    const existingQty = cart.find((x) => x.key === cartKey)?.qty || 0;
-    const inCart = existingQty
-      ? `<div class="offer-in-cart">🛒 В корзине: ${existingQty} шт.</div>`
-      : "";
-    const buttonText = offer.can_add
-      ? (existingQty ? "Добавить ещё" : "В корзину")
-      : "Цена уточняется";
-    el.innerHTML = `
-      <div class="offer-meta">
-        <div class="offer-source">${sourceLabel}</div>
-        <div class="offer-availability">${availability}</div>
-        ${inCart}
-      </div>
-      <div class="offer-buy">
-        <strong>${price}</strong>
-        <button type="button" data-offer-key="${escapeHtml(offer.key)}"${disabled}>${buttonText}</button>
-      </div>`;
-    root.appendChild(el);
-  });
+  for (const offer of offers) {
+    if (!offer || typeof offer !== "object" || !["usa", "warehouse"].includes(offer.source)) continue;
+    const card = node("article", "offer-card");
+    const meta = node("div", "offer-meta");
+    meta.appendChild(node("div", "offer-source", offer.source === "usa"
+      ? "🇺🇸 склад США" : "🇷🇺 " + label(offer.label, "Склад уточняется")));
+    meta.appendChild(node("div", "offer-availability", offer.source === "usa"
+      ? "Заказ из США" : "В наличии: " + (validQty(offer.available_quantity) ? qtyText(offer.available_quantity) + " шт." : "уточняется")));
+    const key = String(currentProduct?.manufacturer ?? "") + "|" + String(currentProduct?.oem ?? "") + "|" + String(offer.key);
+    const existing = cart.find((x) => x.key === key)?.qty || 0;
+    if (existing) meta.appendChild(node("div", "offer-in-cart", "🛒 В корзине: " + existing + " шт."));
+    const buy = node("div", "offer-buy");
+    buy.appendChild(node("strong", "", offer.source === "usa" ? usaRub(offer.price_rub) : rub(offer.price_rub)));
+    const button = node("button", "", !offer.can_add ? "Цена уточняется" : existing ? "Добавить ещё" : "В корзину");
+    button.type = "button";
+    button.dataset.offerKey = String(offer.key ?? "");
+    button.disabled = !usableOffer(offer) || typeof currentProduct?.manufacturer !== "string" ||
+      !currentProduct.manufacturer.trim() || typeof currentProduct?.oem !== "string" || !currentProduct.oem.trim();
+    buy.appendChild(button);
+    card.append(meta, buy);
+    root.appendChild(card);
+  }
 }
 
 async function pollStock(card, serial, attempt = 0) {
   if (serial !== stockPollSerial) return;
   if (attempt >= 40) {
-    if (currentProduct && currentProduct.oem === card.oem) {
+    if (currentProduct === card) {
       currentProduct.stock.refreshing = false;
       renderStock(currentProduct.stock);
     }
     return;
   }
   await new Promise((resolve) => setTimeout(resolve, 1500));
-  if (serial !== stockPollSerial || !currentProduct || currentProduct.oem !== card.oem) return;
+  if (serial !== stockPollSerial || currentProduct !== card) return;
   try {
     const params = new URLSearchParams({ manufacturer: card.manufacturer });
     const response = await fetch(`/api/v1/oem/${encodeURIComponent(card.oem)}/stock?${params}`);
     if (!response.ok) throw new Error("stock_refresh_failed");
     const stockData = await response.json();
-    if (serial !== stockPollSerial || !currentProduct || currentProduct.oem !== card.oem) return;
+    if (serial !== stockPollSerial || currentProduct !== card) return;
+    if (!stockData || !Array.isArray(stockData.warehouses)) throw new Error("invalid_stock_response");
     currentProduct.stock = stockData;
     renderStock(stockData);
     if (Array.isArray(stockData.offers)) {
@@ -115,7 +173,7 @@ async function pollStock(card, serial, attempt = 0) {
   } catch (_) {
     if (attempt < 5) {
       pollStock(card, serial, attempt + 1);
-    } else if (currentProduct && currentProduct.oem === card.oem) {
+    } else if (currentProduct === card) {
       currentProduct.stock.refreshing = false;
       renderStock(currentProduct.stock);
     }
@@ -126,14 +184,14 @@ function renderProduct(card) {
   currentProduct = card;
   currentQty = 1;
   $("qtyValue").textContent = "1";
-  $("productBrand").textContent = [card.manufacturer, card.catalog].filter(Boolean).join(" • ");
-  $("productName").textContent = card.name || "OEM позиция";
-  $("productOem").textContent = card.oem;
+  $("productBrand").textContent = [card.manufacturer, card.catalog].filter((x) => typeof x === "string" && x.trim()).join(" • ");
+  $("productName").textContent = typeof card.name === "string" && card.name.trim() ? card.name : "Название уточняется";
+  $("productOem").textContent = label(card.oem);
   const pricePanel = document.querySelector(".price-panel");
   pricePanel?.classList.toggle("hidden", Boolean(card.warehouse_only));
-  $("customerPrice").textContent = card.price.customer_rub == null
+  $("customerPrice").textContent = !validPrice(card.price.customer_rub)
     ? rub(null)
-    : rub(card.price.customer_rub).replace(" ₽", "* ₽");
+    : usaRub(card.price.customer_rub);
 
   const replacement = $("replacement");
   if (card.requested_oem && card.requested_oem !== card.oem) {
@@ -144,40 +202,60 @@ function renderProduct(card) {
   }
 
   const msrp = $("msrpBlock");
-  if (card.price.customer_rub != null && card.price.msrp_rub != null && card.price.msrp_rub > card.price.customer_rub) {
+  const benefitLine = $("benefitLine");
+  const usaDeliveryNotice = $("usaDeliveryNotice");
+  const usaDeliveryText = $("usaDeliveryText");
+  const showUsaTerms = !card.warehouse_only && validPrice(card.price.customer_rub);
+  if (showUsaTerms && validPrice(card.price.msrp_rub) && card.price.msrp_rub > card.price.customer_rub) {
     $("msrpPrice").textContent = rub(card.price.msrp_rub);
-    $("benefit").textContent = `Ваша выгода — ${card.price.benefit_pct ?? Math.round((card.price.msrp_rub - card.price.customer_rub) / card.price.msrp_rub * 1000) / 10}%`;
     msrp.classList.remove("hidden");
+    if (typeof card.price.benefit_pct === "number" && Number.isFinite(card.price.benefit_pct)) {
+      $("benefit").textContent = `${card.price.benefit_pct}%`;
+      benefitLine.classList.remove("hidden");
+    } else {
+      $("benefit").textContent = "";
+      benefitLine.classList.add("hidden");
+    }
   } else {
+    $("msrpPrice").textContent = "";
+    $("benefit").textContent = "";
+    benefitLine.classList.add("hidden");
     msrp.classList.add("hidden");
+  }
+
+  if (showUsaTerms && card.delivery_notice) {
+    usaDeliveryText.textContent = String(card.delivery_notice).replace(/^\*\s*-\s*/, "");
+    usaDeliveryNotice.classList.remove("hidden");
+  } else {
+    usaDeliveryText.textContent = "";
+    usaDeliveryNotice.classList.add("hidden");
   }
 
   stockPollSerial += 1;
   const stockSerial = stockPollSerial;
   renderStock(card.stock);
   renderOffers(card.offers || []);
-  if (card.stock.refreshing) pollStock(card, stockSerial);
+  if (card.stock?.refreshing) pollStock(card, stockSerial);
 
   const weight = $("weight");
-  weight.innerHTML = "";
+  weight.replaceChildren();
   if (card.weight) {
-    if (card.weight.actual_kg) {
-      weight.insertAdjacentHTML("beforeend",
-        `<div class="weight-line">Фактический: <b>${card.weight.actual_kg} кг / шт.</b></div>`);
+    for (const [value, label] of [[card.weight.actual_kg, "Фактический: "],
+      [card.weight.volume_kg, "Объёмный: "]]) {
+      if (value != null && Number(value) > 0) {
+        const line = node("div", "weight-line", label);
+        line.appendChild(node("b", "", String(value) + " кг / шт."));
+        weight.appendChild(line);
+      }
     }
-    if (card.weight.volume_kg) {
-      weight.insertAdjacentHTML("beforeend",
-        `<div class="weight-line">Объёмный: <b>${card.weight.volume_kg} кг / шт.</b></div>`);
-    }
-    weight.insertAdjacentHTML("beforeend",
-      `<div class="weight-note">${escapeHtml(card.weight.notice)}</div>`);
+    weight.appendChild(node("div", "weight-note", card.weight.notice));
   } else {
     weight.textContent = "Вес неизвестен.";
   }
 
-  $("deliveryNotice").textContent = card.delivery_notice?.startsWith("* -")
-    ? card.delivery_notice
-    : "🚚 " + card.delivery_notice;
+  const deliveryNotice = $("deliveryNotice");
+  deliveryNotice.textContent = "";
+  deliveryNotice.classList.add("hidden");
   product.classList.remove("hidden");
   product.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -188,21 +266,45 @@ function escapeHtml(value) {
   return div.innerHTML;
 }
 
+const SEARCH_TIMEOUT_MS = 15000;
+let lastSearchStatus = "idle";
+
 async function searchOem(oem) {
+  if (form.getAttribute("aria-busy") === "true") return;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), SEARCH_TIMEOUT_MS);
   product.classList.add("hidden");
-  showState("Ищем OEM в БАЗЕ…");
+  stockPollSerial += 1;
+  currentProduct = null;
+  setSearchBusy(true);
+  lastSearchStatus = "loading";
+  showState("Ищем…", "loading");
   try {
-    const response = await fetch(`/api/v1/oem/${encodeURIComponent(oem)}`);
-    if (!response.ok) {
-      throw new Error(response.status === 404
-        ? "Этот OEM пока не найден в проверенной БАЗЕ."
-        : "Не удалось выполнить поиск. Попробуй чуть позже.");
+    const response = await fetch(`/api/v1/oem/${encodeURIComponent(oem)}`, {
+      signal: controller.signal,
+    });
+    if (response.status === 404) {
+      lastSearchStatus = "not_found";
+      showState("OEM " + oem + " не найден в проверенной базе. Проверь номер и попробуй ещё раз.", "error");
+      return;
     }
+    if (!response.ok) throw new Error("search_api_unavailable");
     const card = await response.json();
+    if (!card || typeof card.oem !== "string" || !card.oem.trim() || !card.price || typeof card.price !== "object" || !card.stock || typeof card.stock !== "object" || !Array.isArray(card.offers)) {
+      throw new Error("invalid_search_response");
+    }
+    lastSearchStatus = "found";
     hideState();
     renderProduct(card);
   } catch (error) {
-    showState(error.message || "Ошибка поиска.", true);
+    lastSearchStatus = "technical_error";
+    const timedOut = error?.name === "AbortError";
+    showState(timedOut
+      ? "Поиск занял слишком много времени. Проверь подключение и повтори запрос."
+      : "Техническая ошибка поиска. Повтори запрос чуть позже.", "error");
+  } finally {
+    window.clearTimeout(timeout);
+    setSearchBusy(false);
   }
 }
 
@@ -225,11 +327,12 @@ $("qtyPlus").addEventListener("click", () => {
 $("offers").addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  const offerKey = target.dataset.offerKey;
+  const offerKey = target.closest("button[data-offer-key]")?.dataset.offerKey;
   if (!offerKey || !currentProduct) return;
 
   const offer = (currentProduct.offers || []).find((x) => x.key === offerKey);
-  if (!offer || !offer.can_add || offer.price_rub == null) return;
+  if (!usableOffer(offer) || !Number.isSafeInteger(offer.price_rub) || typeof currentProduct.oem !== "string" || !currentProduct.oem.trim() ||
+      typeof currentProduct.manufacturer !== "string" || !currentProduct.manufacturer.trim()) return;
 
   const key = `${currentProduct.manufacturer}|${currentProduct.oem}|${offer.key}`;
   const maxQty = offer.available_quantity == null
@@ -251,6 +354,7 @@ $("offers").addEventListener("click", (event) => {
       warehouse_id: offer.warehouse_id,
       source_label: offer.source === "usa" ? "склад США" : offer.label,
       unit_rub: offer.price_rub,
+      currency: "RUB",
       available_quantity: offer.available_quantity,
       qty: Math.min(maxQty, currentQty),
     });
@@ -260,55 +364,58 @@ $("offers").addEventListener("click", (event) => {
 });
 
 function saveCart() {
+  cart = normalizeCart(cart);
   localStorage.setItem("extremizer_web2_cart", JSON.stringify(cart));
   renderCart();
   if (currentProduct) renderOffers(currentProduct.offers || []);
 }
 
 function renderCart() {
+  cart = normalizeCart(cart);
   const itemCount = cart.reduce((sum, x) => sum + x.qty, 0);
   $("cartCount").textContent = itemCount;
   $("cartButton").classList.toggle("has-items", itemCount > 0);
-
   const root = $("cartItems");
-  root.innerHTML = "";
+  root.replaceChildren();
   $("cartEmpty").classList.toggle("hidden", cart.length > 0);
   $("cartFooter").classList.toggle("hidden", cart.length === 0);
-
   let total = 0;
   cart.forEach((item, index) => {
-    if (item.unit_rub) total += item.unit_rub * item.qty;
-    const el = document.createElement("div");
-    el.className = "cart-item";
-    el.innerHTML = `
-      <div class="cart-item-top">
-        <div>
-          <div class="cart-item-name">${escapeHtml(item.name || item.manufacturer)}</div>
-          <div class="cart-item-oem">${escapeHtml(item.oem)}</div>
-          <div class="cart-item-source">${item.offer_source === "warehouse" ? "🇷🇺" : "🇺🇸"} ${escapeHtml(item.source_label || "склад США")}</div>
-        </div>
-        <button class="remove" data-remove="${index}" type="button">Удалить</button>
-      </div>
-      <div class="cart-item-bottom">
-        <div class="cart-mini-qty">
-          <button data-minus="${index}" type="button">−</button>
-          <b>${item.qty}</b>
-          <button data-plus="${index}" type="button">+</button>
-        </div>
-        <strong>${item.unit_rub ? rub(item.unit_rub * item.qty) : "Цена уточняется"}</strong>
-      </div>`;
+    total += Number(item.unit_rub) * item.qty;
+    const el = node("div", "cart-item");
+    const top = node("div", "cart-item-top");
+    const details = node("div");
+    details.append(
+      node("div", "cart-item-name", item.name || item.manufacturer),
+      node("div", "cart-item-oem", item.oem),
+      node("div", "cart-item-source", (item.offer_source === "warehouse" ? "🇷🇺 " : "🇺🇸 ") + String(item.source_label || "склад США"))
+    );
+    const remove = node("button", "remove", "Удалить");
+    remove.type = "button"; remove.dataset.remove = String(index);
+    top.append(details, remove);
+    const bottom = node("div", "cart-item-bottom");
+    const qty = node("div", "cart-mini-qty");
+    const minus = node("button", "", "−");
+    minus.type = "button"; minus.dataset.minus = String(index);
+    const plus = node("button", "", "+");
+    plus.type = "button"; plus.dataset.plus = String(index);
+    qty.append(minus, node("b", "", item.qty), plus);
+    bottom.append(qty, node("strong", "", rub(Number(item.unit_rub) * item.qty)));
+    el.append(top, bottom);
     root.appendChild(el);
   });
-  $("cartTotal").textContent = total ? rub(total) : "уточняется";
-  $("cartButtonTotal").textContent = total ? rub(total) : "0 ₽";
+  $("cartTotal").textContent = cart.length ? rub(total) : "уточняется";
+  $("cartButtonTotal").textContent = cart.length ? rub(total) : "0 ₽";
 }
 
 function openCart() {
+  document.body.classList.add("cart-open");
   cartPanel.classList.add("open");
   cartPanel.setAttribute("aria-hidden", "false");
   scrim.classList.remove("hidden");
 }
 function closeCart() {
+  document.body.classList.remove("cart-open");
   cartPanel.classList.remove("open");
   cartPanel.setAttribute("aria-hidden", "true");
   scrim.classList.add("hidden");
@@ -327,9 +434,11 @@ $("continueSearchButton").addEventListener("click", () => {
 $("cartItems").addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
-  const remove = target.dataset.remove;
-  const minus = target.dataset.minus;
-  const plus = target.dataset.plus;
+  const button = target.closest("button");
+  if (!button || !$("cartItems").contains(button)) return;
+  const remove = button.dataset.remove;
+  const minus = button.dataset.minus;
+  const plus = button.dataset.plus;
   if (remove !== undefined) cart.splice(Number(remove), 1);
   if (minus !== undefined) {
     const item = cart[Number(minus)];
@@ -351,7 +460,8 @@ $("cartItems").addEventListener("click", (event) => {
 });
 
 $("telegramButton").addEventListener("click", async () => {
-  if (!cart.length) return;
+  cart = normalizeCart(cart);
+  if (!cart.length) { renderCart(); return; }
   const button = $("telegramButton");
   const old = button.textContent;
   button.disabled = true;
@@ -373,7 +483,11 @@ $("telegramButton").addEventListener("click", async () => {
     });
     if (!response.ok) throw new Error("Не удалось передать корзину.");
     const data = await response.json();
-    window.location.href = data.telegram_url;
+    const url = new URL(String(data.telegram_url ?? ""));
+    if (url.protocol !== "https:" || !["t.me", "telegram.me"].includes(url.hostname)) {
+      throw new Error("Некорректная ссылка передачи в Telegram.");
+    }
+    window.location.href = url.href;
   } catch (error) {
     alert(error.message || "Не удалось открыть Telegram.");
     button.disabled = false;
