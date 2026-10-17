@@ -1024,6 +1024,10 @@ def _weight_for_oem(oem: str) -> dict[str, Any] | None:
             "actual_kg": actual,
             "volume_kg": volume,
             "reference_calculation_weight_kg": approximate,
+            "client_calculation_weight_kg": (
+                oem_reference_service.reference_client_calculation_weight_kg(reference)
+                if approximate is not None else None
+            ),
             "reference_weight_quality": reference.get("reference_weight_quality") if approximate is not None else None,
             "reference_weight_source": reference.get("reference_weight_source") if approximate is not None else None,
             "label": "Расчётный вес для доставки" if approximate is not None else None,
