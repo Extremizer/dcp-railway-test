@@ -287,6 +287,75 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
         after = core.get_dealer_price_cache("Polaris", "2206328")["last_verified_at"]
         self.assertEqual(before, after)
 
+    def _valid_payload_for_claim(self, claim):
+        raw = producer_browser_price(
+            "2205250",
+            category_evidence=claim,
+            adapter=FakePolarisAdapter(),
+            dealer_identity_proof_ref="sha256:isolated-dealer-proof",
+        )
+        value = dp_sync_agent._validated_result(claim, raw)
+        return {
+            **value,
+            "request_id": claim["request_id"],
+            "protocol_version": 2,
+            "producer_id": OWNER,
+            "claim_token": claim["claim_token"],
+            "claim_generation": claim["claim_generation"],
+        }
+
+    def test_05_protocol_v2_signature_and_fencing_fail_closed(self):
+        claim = self.claim()
+        payload = self._valid_payload_for_claim(claim)
+        before = sqlite3.connect(self.db).execute(
+            "SELECT COUNT(*) FROM dealer_price_cache WHERE manufacturer='Polaris'"
+        ).fetchone()[0]
+
+        # While OWNER holds the lease no second producer can acquire work.
+        self.assertIsNone(bridge.claim_next(self.db, producer_id="second-producer"))
+
+        cases = [
+            ({**payload, "producer_id": "second-producer"}, "second-producer", 409),
+            ({**payload, "claim_token": "0" * 32}, OWNER, 409),
+            ({**payload, "claim_generation": claim["claim_generation"] + 1}, OWNER, 409),
+            ({**payload, "request_id": "missing-request-id"}, OWNER, 404),
+        ]
+        for bad, signer, expected_status in cases:
+            body = json.dumps(bad, separators=(",", ":")).encode()
+            response = self.client.post(
+                PATH, content=body,
+                headers=headers("POST", PATH, body, producer_id=signer),
+            )
+            self.assertEqual(response.status_code, expected_status, response.text)
+
+        # Stale signed request is rejected before completion.
+        body = json.dumps(payload, separators=(",", ":")).encode()
+        response = self.client.post(
+            PATH, content=body,
+            headers=headers("POST", PATH, body, timestamp=int(time.time()) - 600),
+        )
+        self.assertEqual(response.status_code, 401, response.text)
+
+        # Body tampering under a signature for different bytes is rejected.
+        signed = headers("POST", PATH, body)
+        tampered = body.replace(b"184.07", b"999.00")
+        response = self.client.post(PATH, content=tampered, headers=signed)
+        self.assertEqual(response.status_code, 401, response.text)
+
+        # An expired lease cannot mutate cache even with otherwise valid proof.
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "UPDATE dp_live_requests SET lease_expires_at=? WHERE request_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                 claim["request_id"]),
+            )
+        response = self.signed_post(payload)
+        self.assertEqual(response.status_code, 409, response.text)
+        with sqlite3.connect(self.db) as conn:
+            after = conn.execute(
+                "SELECT COUNT(*) FROM dealer_price_cache WHERE manufacturer='Polaris'"
+            ).fetchone()[0]
+        self.assertEqual(after, before)
     def test_04_stale_or_failed_refresh_never_promotes_msrp_to_dealer(self):
         stale = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
         with sqlite3.connect(self.db) as conn:

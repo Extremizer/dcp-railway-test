@@ -83,7 +83,7 @@ jobs:
 
       - name: Signed protocol v2 and cross-host fencing
         run: |
-          python -B -m unittest -v             test_dcp_producer_v2.py             test_dp_result_completion.py             test_oemixi_category_authority_cross_host.py             test_oemixi_category_authority_transport.py
+          python -B -m unittest -v             test_polaris_dp_e2e_integration.py             test_oemixi_category_authority_cross_host.py             test_oemixi_category_authority_transport.py
 
       - name: Polaris browser proof and restoration regressions
         run: |
