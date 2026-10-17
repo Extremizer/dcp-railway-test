@@ -94,7 +94,17 @@ P5 source explicitly leaves owner decisions open for:
 
 Therefore this slice is suitable as an isolated core/read/action-boundary component, NOT as authorization for a live payment action.
 
+## Pre-existing stale guard
+
+`_prod_finance_switch_regression.py` is intentionally not used as a P5 release gate.
+
+It already fails on the untouched RC1 base `757d6b77...` because its historical DCP scope guard rejects the modern RC1 `web_app.py`.
+P5 changes no `web_app.py` file, so adapting product code to satisfy that stale guard would widen scope incorrectly.
+
+All other current RC1 finance/client compatibility regressions remain required.
+
 ## Release boundary
+
 
 NO MERGE.
 NO DEPLOY.
