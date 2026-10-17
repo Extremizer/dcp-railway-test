@@ -1256,6 +1256,7 @@ def reference_weight_lines(
     actual_weight_kg,
     volume_weight_kg,
     quantity: int = 1,
+    reference_calculation_weight_kg=None,
 ) -> list[str]:
     """Customer-safe per-piece reference weight lines."""
     actual = (
@@ -1284,6 +1285,15 @@ def reference_weight_lines(
         lines.append(
             f"Объёмный вес за 1 шт.: <b>{_format_weight_kg(volume)} кг</b>"
         )
+    elif reference_calculation_weight_kg is not None:
+        calculated = oem_reference_service.reference_client_calculation_weight_kg(
+            {"reference_calculation_weight_kg": reference_calculation_weight_kg}
+        )
+        if calculated is not None:
+            lines.append(f"Расчётный вес для доставки: <b>{_format_weight_kg(calculated)} кг*</b>")
+            lines.append("* Данные по весу носят справочный характер.")
+        else:
+            lines.append("Вес: неизвестен")
     else:
         lines.append("Вес: неизвестен")
     if actual is not None and qty > 1:
@@ -6287,6 +6297,9 @@ def format_customer_quote(order_id: str):
                 reference_actual_weight_kg,
                 reference_volume_weight_kg,
                 quantity,
+                (get_oem_reference(oem).get("reference_calculation_weight_kg")
+                 if reference_actual_weight_kg is None and get_oem_reference(oem)
+                 else None),
             )
         )
         preference = tariff_labels.get(str(selected_delivery_tariff or ""))
