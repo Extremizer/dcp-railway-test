@@ -10,32 +10,46 @@
 <body>
   <header class="topbar">
     <a class="brand-slot" href="/web2" aria-label="На главную EXTREMIZER">
-      <img class="brand-logo" src="/web2-brand-logo" alt="" hidden>
+      <img class="brand-logo" src="/web2-powersports-logo" alt="" hidden>
       <span class="visually-hidden">На главную EXTREMIZER</span>
     </a>
-    <button id="cartButton" class="cart-button" type="button" aria-label="Открыть корзину">
-      <span class="cart-icon">🛒</span>
-      <span>Корзина</span>
-      <span id="cartCount" class="cart-count">0</span>
-      <span id="cartButtonTotal" class="cart-button-total">0 ₽</span>
-    </button>
+    <nav class="topnav" aria-label="Навигация">
+      <span class="nav-life">LIFE</span>
+      <a class="nav-oem" href="#oemInput">OEM +</a>
+      <button id="cartButton" class="cart-button" type="button" aria-label="Открыть корзину">
+        <span class="cart-icon" aria-hidden="true">🛒</span>
+        <span>КОРЗИНА</span>
+        <span id="cartCount" class="cart-count">0</span>
+        <span id="cartButtonTotal" class="cart-button-total">0 ₽</span>
+      </button>
+    </nav>
   </header>
 
   <main>
-    <section class="hero">
-      <div class="eyebrow">OEM • АКСЕССУАРЫ • ЭКИПИРОВКА • ТЕХНИКА</div>
-      <h1>Найди OEM.<br><span>Узнай свою цену.</span></h1>
-      <p class="lead">
-        Оригинальные запчасти, аксессуары и складские остатки в одном окне.
-        Введи каталожный номер — без регистрации.
-      </p>
-      <form id="searchForm" class="search-box" aria-busy="false">
-        <input id="oemInput" name="oem" autocomplete="off"
-               placeholder="Например, 417224332" aria-label="OEM номер">
-        <button id="searchButton" type="submit">Найти</button>
-      </form>
-      <div id="state" class="state hidden" aria-live="polite" role="status"></div>
-      <div id="searchHint" class="hint">Единый поиск EXTREMIZER: США + наличие на складах РФ</div>
+    <section class="hero" aria-label="POWERSPORTS — MACHINE">
+      <img class="hero-photo" src="/web2-powersports-hero" alt="" aria-hidden="true">
+      <div class="hero-headings">
+        <h1>POWERSPORTS</h1>
+        <div class="hero-kicker">MACHINE</div>
+      </div>
+      <div class="hero-search">
+        <form id="searchForm" class="search-box" aria-busy="false">
+          <div class="search-field">
+            <input id="oemInput" name="oem" autocomplete="off"
+                   placeholder="Введи каталожный номер" aria-label="Введи каталожный номер">
+            <span class="search-placeholder" aria-hidden="true"><strong>Введи</strong> каталожный номер</span>
+          </div>
+          <button id="searchButton" type="submit">
+            <span id="searchButtonText">Искать</span>
+            <svg class="search-icon" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+              <circle cx="21" cy="11" r="8"></circle>
+              <path d="M15 17 L4 28"></path>
+            </svg>
+          </button>
+        </form>
+        <div id="state" class="state hidden" aria-live="polite" role="status"></div>
+        <div id="searchHint" class="hint visually-hidden">Единый OEM-поиск: США и склады РФ</div>
+      </div>
     </section>
 
     <section id="product" class="product hidden">
@@ -88,6 +102,24 @@
 
       <p id="deliveryNotice" class="delivery"></p>
     </section>
+    <section class="powersports-practice" aria-label="Практика владения">
+      <h2>Техника должна ехать.</h2>
+      <div class="practice-rule"></div>
+      <h3>ПРАКТИКА ВЛАДЕНИЯ</h3>
+      <div class="practice-grid">
+        <article class="practice-card"><span class="practice-index">01</span><div class="practice-name">ОБСЛУЖИВАНИЕ <span aria-hidden="true">→</span></div><p>Раздел будущих материалов</p></article>
+        <article class="practice-card"><span class="practice-index">02</span><div class="practice-name">ЭКСПЛУАТАЦИЯ <span aria-hidden="true">→</span></div><p>Раздел будущих материалов</p></article>
+        <article class="practice-card"><span class="practice-index">03</span><div class="practice-name">ПОДГОТОВКА <span aria-hidden="true">→</span></div><p>Раздел будущих материалов</p></article>
+      </div>
+      <div class="practice-bottom">
+        <strong>ДРУГИЕ НАПРАВЛЕНИЯ</strong>
+        <span class="practice-life">LIFE</span>
+        <span>WORKOUT &amp; GYM</span><span class="slash">/</span>
+        <span>FOOD &amp; HEALTH</span><span class="slash">/</span>
+        <span>OUTDOOR &amp; TRAVEL</span><span class="slash">/</span>
+        <span>GET TOGETHER</span>
+      </div>
+    </section>
   </main>
   <aside id="cartPanel" class="cart-panel" aria-hidden="true">
     <div class="cart-head">
@@ -118,10 +150,7 @@
   </aside>
   <div id="scrim" class="scrim hidden"></div>
 
-  <footer>
-    <span>EXTREMIZER</span>
-    <span>OEM • PRICE • STOCK</span>
-  </footer>
+
 
   <script src="/web2-static/app.js" defer></script>
 </body>
