@@ -69,7 +69,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt "httpx>=0.27,<1" beautifulsoup4 websocket-client playwright
+          python -m pip install -r requirements.txt "httpx>=0.27,<1" beautifulsoup4 websocket-client playwright\n          python -m playwright install --with-deps chromium
 
       - name: Syntax and import
         run: |
@@ -123,7 +123,15 @@ jobs:
 
       - name: WEB2 core compatibility
         run: |
-          python -B -m unittest -v             test_web2_contract.py             test_web2_client_mvp.py             test_web2_functional_hardening.py             test_web2_search_ux_m1.py             test_web2_product_card_m2.py             test_web2_cart_m3.py             test_web2_mobile_m4.py
+          # Browser suites intentionally run in fresh interpreters to avoid
+          # Playwright sync/async loop and browser-lifecycle contamination.
+          python -B -m unittest -v test_web2_contract.py
+          python -B -m unittest -v test_web2_client_mvp.py
+          python -B -m unittest -v test_web2_functional_hardening.py
+          python -B -m unittest -v test_web2_search_ux_m1.py
+          python -B -m unittest -v test_web2_product_card_m2.py
+          python -B -m unittest -v test_web2_cart_m3.py
+          python -B -m unittest -v test_web2_mobile_m4.py
           python -B -m unittest -v test_web2_host_integration.py
 
       - name: No forbidden release-scope changes
