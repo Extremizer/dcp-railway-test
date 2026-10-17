@@ -48,7 +48,7 @@ jobs:
 
       - name: Three consumers one claim
         run: |
-          python -B -m unittest -v test_oemixi_secure_gateway_transport.SecureThreeConsumerTests
+          python -B -m unittest -v test_oemixi_secure_gateway_transport.SecureTransportE2ETests.test_three_consumers_over_secure_transport_share_one_claim
           python -B -m unittest -v test_polaris_consumer_pricesource.py
 
       - name: Client pricing cards
