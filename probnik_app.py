@@ -34,7 +34,7 @@ ORDERS_DB = Path(
     os.getenv("EXTREMIZER_ORDERS_DB_FILE", "").strip()
     or Path(__file__).with_name("extremizer_orders.db")
 )
-DP_MAX_AGE_HOURS = float(os.getenv("EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "168") or "168")
+DP_MAX_AGE_HOURS = float(os.getenv("EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "24") or "24")
 PRICE_COEFFICIENT = float(os.getenv("EXTREMIZER_PRICE_COEFFICIENT", "1.34") or "1.34")
 USD_RUB_RATE = float((os.getenv("EXTREMIZER_USD_RUB_RATE", "0") or "0").replace(",", "."))
 

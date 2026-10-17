@@ -470,7 +470,7 @@ class ApprovedFreshnessBoundaryTests(unittest.TestCase):
             now=self.NOW,
         )
 
-    def test_dealer_235959_valid_exact_24h_stale(self):
+    def test_dealer_235959_and_exact_24h_valid_after_boundary_stale(self):
         valid = self._contract(
             timedelta(hours=23, minutes=59, seconds=59),
             timedelta(hours=1),
@@ -478,12 +478,19 @@ class ApprovedFreshnessBoundaryTests(unittest.TestCase):
         self.assertEqual(valid["dealer_price_status"], STATUS_VERIFIED)
         self.assertEqual(valid["dealer_price_usd"], 184.07)
 
-        stale = self._contract(timedelta(hours=24), timedelta(hours=1))
+        boundary = self._contract(timedelta(hours=24), timedelta(hours=1))
+        self.assertEqual(boundary["dealer_price_status"], STATUS_VERIFIED)
+        self.assertEqual(boundary["dealer_price_usd"], 184.07)
+
+        stale = self._contract(
+            timedelta(hours=24, seconds=1),
+            timedelta(hours=1),
+        )
         self.assertEqual(stale["dealer_price_status"], STATUS_STALE)
         self.assertIsNone(stale["dealer_price_usd"])
         self.assertIsNone(client_price_inputs(stale)["dealer_price_usd"])
 
-    def test_msrp_7195959_valid_exact_720h_stale(self):
+    def test_msrp_7195959_and_exact_720h_valid_after_boundary_stale(self):
         valid = self._contract(
             timedelta(hours=1),
             timedelta(hours=719, minutes=59, seconds=59),
@@ -491,7 +498,14 @@ class ApprovedFreshnessBoundaryTests(unittest.TestCase):
         self.assertEqual(valid["msrp_status"], STATUS_VERIFIED)
         self.assertEqual(valid["msrp_usd"], 239.99)
 
-        stale = self._contract(timedelta(hours=1), timedelta(hours=720))
+        boundary = self._contract(timedelta(hours=1), timedelta(hours=720))
+        self.assertEqual(boundary["msrp_status"], STATUS_VERIFIED)
+        self.assertEqual(boundary["msrp_usd"], 239.99)
+
+        stale = self._contract(
+            timedelta(hours=1),
+            timedelta(hours=720, seconds=1),
+        )
         self.assertEqual(stale["msrp_status"], STATUS_STALE)
         self.assertIsNone(stale["msrp_usd"])
         self.assertIsNone(client_price_inputs(stale)["msrp_usd"])

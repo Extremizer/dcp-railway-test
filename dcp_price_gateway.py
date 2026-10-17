@@ -1,5 +1,6 @@
 """Isolated common-core price gateway and opt-in dealer adapter; no browser IO."""
 from contextlib import closing
+from polaris_dealer_cart_completion_contract import SOURCE
 from datetime import datetime, timezone
 import math
 from pathlib import Path
@@ -21,9 +22,56 @@ def _verified_price(result, manufacturer, oem, max_age_hours):
     )
 
 
-def _read_cache(db_file, manufacturer, oem, max_age_hours):
-    """Stage 2 HOLD: no legacy Dealer cache entry can be positive FOUND."""
-    return None
+def _read_cache(db_file, manufacturer, oem, max_age_hours, *, now=None):
+    """Only server-committed, evidenced Polaris dealer-cart cache is readable.
+
+    No cache timestamp refresh or MRSP fallback. Non-Polaris gates unchanged.
+    """
+    if manufacturer != "Polaris":
+        return None
+    try:
+        limit=min(float(max_age_hours),24.0)
+        if not math.isfinite(limit) or limit<=0:
+            return None
+        observed=now if now is not None else datetime.now(timezone.utc)
+        with closing(sqlite3.connect(str(db_file),timeout=5)) as conn:
+            row=conn.execute("""
+                SELECT c.dealer_price_usd,c.source,c.last_verified_at,
+                       r.current_oem,r.request_id,e.evidence_sha256
+                  FROM dealer_price_cache c
+                  JOIN dp_live_requests r
+                    ON r.manufacturer=c.manufacturer
+                   AND r.dealer_price_usd=c.dealer_price_usd
+                   AND r.result_source=c.source
+                   AND r.cache_committed_at=c.last_verified_at
+                   AND r.result_status='FOUND'
+                   AND r.status='finished'
+                   AND (r.oem=c.oem OR r.current_oem=c.oem)
+                  JOIN dp_live_recovery_events e
+                    ON e.request_id=r.request_id
+                   AND e.claim_generation=r.claim_generation
+                   AND e.event_type='polaris_cart_verified_found'
+                   AND e.actor=r.claim_owner
+                 WHERE c.manufacturer=? AND c.oem=? AND c.source=?
+                 ORDER BY r.cache_committed_at DESC LIMIT 1
+            """,(manufacturer,oem,SOURCE)).fetchone()
+        if row is None or not isinstance(row[5],str) or len(row[5])!=64:
+            return None
+        stamp=dp_live_bridge.dp_live_health._parse_datetime(row[2])
+        if stamp is None or observed.tzinfo is None:
+            return None
+        age=(observed-stamp).total_seconds()
+        if not (0<=age<=limit*3600):
+            return None
+        price=float(row[0])
+        if not dp_live_bridge._valid_dp(price,row[1]):
+            return None
+        return {"status":"FOUND","manufacturer":manufacturer,"query_oem":oem,
+                "current_oem":row[3] or oem,"dealer_price_usd":price,
+                "source":SOURCE,"currency":"USD","last_verified_at":row[2],
+                "server_cache_committed":True,"request_id":row[4]}
+    except (sqlite3.Error,ValueError,TypeError,OverflowError):
+        return None
 
 
 def request_price(db_file, manufacturer, oem, *, max_age_hours=168.0, wait_seconds=10.0,
@@ -68,5 +116,11 @@ class SharedDealerPriceAdapter:
             return {"status":"TECHNICAL_ERROR","error_code":"invalid_gateway_response"}
         if result.get("status") != "FOUND":
             return {k:v for k,v in result.items() if k not in {"dealer_price_usd","msrp_usd","retail","rrp"}}
-        # Stage 2 price provenance remains unverified, even for injected gateways.
+        # Only Polaris Parts verified dealer-cart cache may bypass legacy HOLD.
+        # Other manufacturers retain their existing Stage 2 behavior.
+        if (manufacturer=="Polaris" and result.get("server_cache_committed") is True
+            and _verified_price(result,manufacturer,oem,min(self.max_age_hours,24.0))
+            and result.get("source")==SOURCE):
+            return {k:v for k,v in result.items() if k not in
+                    ("msrp_usd","retail","rrp")}
         return {"status":"DEALER_PRICE_UNVERIFIED"}
