@@ -128,6 +128,48 @@ def transition_to_railway(
     return read_fence(db_file)
 
 
+def transition_to_windows(
+    db_file: Path | str,
+    *,
+    expected_generation: int,
+    railway_stop_evidence: str,
+    actor: str,
+) -> dict[str, Any]:
+    """Release-Control rollback after the Railway poller is proven stopped."""
+    evidence = str(railway_stop_evidence or "").strip()
+    actor = str(actor or "").strip()
+    if len(evidence) < 16:
+        raise ValueError("railway_stop_evidence_required")
+    if not actor:
+        raise ValueError("actor_required")
+    if type(expected_generation) is not int or expected_generation < 2:
+        raise ValueError("expected_generation_invalid")
+
+    init_fence(db_file)
+    with sqlite3.connect(str(db_file), timeout=10) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT active_owner,generation FROM oemixibot_poller_fence_v1 WHERE id=1"
+        ).fetchone()
+        if not row:
+            raise RuntimeError("poller_fence_missing")
+        if int(row["generation"]) != expected_generation:
+            raise ValueError("poller_fence_generation_mismatch")
+        if str(row["active_owner"]) != OWNER_RAILWAY:
+            raise ValueError("poller_fence_not_owned_by_railway")
+        digest = hashlib.sha256(evidence.encode("utf-8")).hexdigest()
+        conn.execute(
+            """UPDATE oemixibot_poller_fence_v1
+               SET active_owner=?,generation=generation+1,evidence_sha256=?,
+                   actor=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+               WHERE id=1""",
+            (OWNER_WINDOWS, digest, actor),
+        )
+        conn.commit()
+    return read_fence(db_file)
+
+
 def build_fence_router(*, db_file: Path | str, root_secret: str) -> APIRouter:
     key = _derive_key(root_secret)
     db_file = str(db_file)
@@ -237,4 +279,5 @@ __all__ = [
     "init_fence",
     "read_fence",
     "transition_to_railway",
+    "transition_to_windows",
 ]
