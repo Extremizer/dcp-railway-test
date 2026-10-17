@@ -92,7 +92,9 @@ function hideState() {
 function setSearchBusy(busy) {
   form.setAttribute("aria-busy", busy ? "true" : "false");
   searchButton.disabled = busy;
-  searchButton.textContent = busy ? "Ищем…" : "Найти";
+  const caption = searchButton.querySelector("span");
+  if (caption) caption.textContent = busy ? "Ищем…" : "Искать";
+  else searchButton.textContent = busy ? "Ищем…" : "Искать";
 }
 
 function renderStock(stockData) {
