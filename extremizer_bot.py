@@ -364,6 +364,8 @@ def init_orders_db() -> None:
             ("reference_volume_weight_kg", "REAL"),
             ("reference_weight_state", "TEXT"),
             ("reference_weight_source", "TEXT"),
+            ("reference_calculation_weight_kg", "REAL"),
+            ("reference_weight_quality", "TEXT"),
             ("offer_source", "TEXT NOT NULL DEFAULT 'usa'"),
             ("payment_route", "TEXT NOT NULL DEFAULT 'extremizer_balance'"),
             ("fulfillment_route", "TEXT NOT NULL DEFAULT 'through_extremizer'"),
@@ -1801,6 +1803,12 @@ def save_order_to_history(
         reference_volume_weight_kg = (
             reference.get("volume_weight_kg") if reference else None
         )
+        reference_calculation_weight_kg = (
+            reference.get("reference_calculation_weight_kg") if reference and reference_actual_weight_kg is None else None
+        )
+        reference_weight_quality = (
+            reference.get("reference_weight_quality") if reference_calculation_weight_kg is not None else None
+        )
         reference_weight_state = (
             str(reference.get("weight_state") or "") or None
             if reference
@@ -1812,9 +1820,12 @@ def save_order_to_history(
             and (
                 reference_actual_weight_kg is not None
                 or reference_volume_weight_kg is not None
+                or reference_calculation_weight_kg is not None
             )
             else None
         )
+        if reference_calculation_weight_kg is not None:
+            reference_weight_source = reference.get("reference_weight_source")
 
         prepared_items.append(
             (
@@ -1837,6 +1848,8 @@ def save_order_to_history(
                 reference_volume_weight_kg,
                 reference_weight_state,
                 reference_weight_source,
+                reference_calculation_weight_kg,
+                reference_weight_quality,
                 offer_source,
                 payment_route,
                 fulfillment_route,
@@ -1960,6 +1973,8 @@ def save_order_to_history(
                     reference_volume_weight_kg,
                     reference_weight_state,
                     reference_weight_source,
+                    reference_calculation_weight_kg,
+                    reference_weight_quality,
                     offer_source,
                     payment_route,
                     fulfillment_route,
@@ -2024,6 +2039,8 @@ def save_order_to_history(
                         reference_volume_weight_kg,
                         reference_weight_state,
                         reference_weight_source,
+                        reference_calculation_weight_kg,
+                        reference_weight_quality,
                         offer_source,
                         payment_route,
                         fulfillment_route,
@@ -2056,6 +2073,8 @@ def save_order_to_history(
                         reference_volume_weight_kg,
                         reference_weight_state,
                         reference_weight_source,
+                        reference_calculation_weight_kg,
+                        reference_weight_quality,
                         offer_source,
                         payment_route,
                         fulfillment_route,
