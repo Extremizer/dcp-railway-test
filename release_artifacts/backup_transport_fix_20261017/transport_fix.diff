@@ -1,0 +1,43 @@
+﻿diff --git "a/C:\\Users\\ASUS\\Desktop\\\320\240\320\260\320\261\320\276\321\202\320\260\\DCP Railway Test\\predeploy_20261004\\railway_snapshot_launcher.pre_gitssh_20261017.py" "b/C:\\Users\\ASUS\\Desktop\\\320\240\320\260\320\261\320\276\321\202\320\260\\DCP Railway Test\\predeploy_20261004\\railway_snapshot_launcher.py"
+index c1cff42..08ac8da 100644
+--- "a/C:\\Users\\ASUS\\Desktop\\\320\240\320\260\320\261\320\276\321\202\320\260\\DCP Railway Test\\predeploy_20261004\\railway_snapshot_launcher.pre_gitssh_20261017.py"	
++++ "b/C:\\Users\\ASUS\\Desktop\\\320\240\320\260\320\261\320\276\321\202\320\260\\DCP Railway Test\\predeploy_20261004\\railway_snapshot_launcher.py"	
+@@ -69,12 +69,20 @@ SSH_CLEANUP_TIMEOUT=30
+ SSH_RETRIES=5
+ REMOTE_CHUNK_DEADMAN=165
+ SNAPSHOT_PROBES=12
++GIT_SSH=Path(r"C:\Program Files\Git\usr\bin\ssh.exe")
++RAILWAY_SSH_HOST="railway-dcp-railway-test"
+ 
+ 
+ def event(name,**fields):
+     print(json.dumps({"event":name,**fields},ensure_ascii=False),flush=True)
+ 
+ 
++def ssh_command(remote_cmd:str):
++    if not GIT_SSH.is_file():
++        raise RuntimeError("Git OpenSSH client missing")
++    return [str(GIT_SSH),"-o","BatchMode=yes",RAILWAY_SSH_HOST,remote_cmd]
++
++
+ def kill_process_tree(pid:int):
+     subprocess.run(
+         ["taskkill","/PID",str(pid),"/T","/F"],
+@@ -88,7 +96,7 @@ def run_ssh_text(railway:str,remote_cmd:str,timeout:int,retries:int=1):
+     last=""
+     for attempt in range(1,retries+1):
+         p=subprocess.Popen(
+-            [railway,"ssh","--","sh","-lc",remote_cmd],
++            ssh_command(remote_cmd),
+             stdout=subprocess.PIPE,
+             stderr=subprocess.PIPE,
+             stdin=subprocess.DEVNULL,
+@@ -137,7 +145,7 @@ def run_ssh_to_file(
+ 
+         with dest.open("wb") as out:
+             p=subprocess.Popen(
+-                [railway,"ssh","--","sh","-lc",remote_cmd],
++                ssh_command(remote_cmd),
+                 stdout=out,
+                 stderr=subprocess.PIPE,
+                 stdin=subprocess.DEVNULL,
