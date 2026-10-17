@@ -54,6 +54,8 @@ def _verified_powersports_logo_path() -> Path | None:
     raw_sha = os.getenv(POWERSPORTS_LOGO_SHA256_ENV, "").strip()
     if not raw_path or not raw_sha:
         return None
+    if raw_sha.lower() != "ac993368c8f07e3f635526dcb296003fa12c8b6f0835fab5744eedab91c0fecb":
+        return None
     return _verified_png_path(Path(raw_path), raw_sha)
 
 
@@ -109,6 +111,8 @@ def attach_web2_ui(app: FastAPI, *, prefix: str = "/web2") -> None:
         return FileResponse(path, media_type="image/png")
 
 # Approved garage asset, supplied to isolated staging (no fallback or redraw).
+APPROVED_POWERSPORTS_GARAGE_SHA256 = "24b1f57e51142cdd385d33a585f3b72b6706b64188eba5830508eedbe5b11a48"
+APPROVED_POWERSPORTS_WORDMARK_SHA256 = "ac993368c8f07e3f635526dcb296003fa12c8b6f0835fab5744eedab91c0fecb"
 POWERSPORTS_GARAGE_PATH_ENV = "EXTREMIZER_POWERSPORTS_GARAGE_PATH"
 POWERSPORTS_GARAGE_SHA256_ENV = "EXTREMIZER_POWERSPORTS_GARAGE_SHA256"
 
@@ -116,5 +120,7 @@ def _verified_powersports_garage_path() -> Path | None:
     raw_path = os.getenv(POWERSPORTS_GARAGE_PATH_ENV, "").strip()
     raw_sha = os.getenv(POWERSPORTS_GARAGE_SHA256_ENV, "").strip()
     if not raw_path or not raw_sha:
+        return None
+    if raw_sha.lower() != APPROVED_POWERSPORTS_GARAGE_SHA256:
         return None
     return _verified_png_path(Path(raw_path), raw_sha)
