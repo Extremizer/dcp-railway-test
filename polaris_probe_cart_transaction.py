@@ -76,7 +76,7 @@ def recover_probe(adapter,*,lock_path,journal_path):
             except Exception:return _result("RECOVERY_REQUIRED")
     except ProbeBusy:return _result("RECOVERY_REQUIRED")
 
-def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
+def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False,authoritative_target=None):
     journal=Journal(journal_path)
     probe_id=uuid.uuid4().hex
     try:
@@ -99,12 +99,32 @@ def run_probe(oem,adapter,*,lock_path,journal_path,dry_run=False):
                 resolved_matches=requested_matches
                 target=None
                 if not requested_matches:
-                    target=adapter.find_exact_oem(requested)
-                    if not _valid_target(target,requested):
-                        return _result("OEM_UNVERIFIED")
-                    resolved=target["resolved_oem"]
-                    resolved_matches=[x for x in base["lines"] if x["sku"]==resolved]
-                    if len(resolved_matches)>1:return _result("AMBIGUOUS_SKU")
+                    # Authoritative alias already in the initial cart: do not
+                    # perform part-search/navigation. The caller must provide
+                    # independently verified server Category Authority evidence.
+                    trusted_alias = (_valid_target(authoritative_target, requested)
+                                     and authoritative_target["resolved_oem"] != requested)
+                    if trusted_alias:
+                        alias = authoritative_target["resolved_oem"]
+                        alias_lines = [x for x in base["lines"] if x["sku"] == alias]
+                        if len(alias_lines) > 1:
+                            return _result("AMBIGUOUS_SKU")
+                        if alias_lines:
+                            if alias_lines[0]["qty"] != 1:
+                                return _result("AMBIGUOUS_SKU")
+                            resolved = alias
+                            resolved_matches = alias_lines
+                    if not resolved_matches:
+                        target=adapter.find_exact_oem(requested)
+                        if not _valid_target(target,requested):
+                            return _result("OEM_UNVERIFIED")
+                        # A verified server-side replacement must not be
+                        # contradicted by browser search evidence.
+                        if trusted_alias and target["resolved_oem"] != authoritative_target["resolved_oem"]:
+                            return _result("OEM_UNVERIFIED")
+                        resolved=target["resolved_oem"]
+                        resolved_matches=[x for x in base["lines"] if x["sku"]==resolved]
+                        if len(resolved_matches)>1:return _result("AMBIGUOUS_SKU")
 
                 existing=resolved_matches
                 if dry_run:
