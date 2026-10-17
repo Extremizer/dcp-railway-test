@@ -23,10 +23,13 @@ DELAY_BUTTONS=(("⏳ Ждать","delay_wait"),("❌ Запросить отка
 def normalize_oem(value):
     return "".join(ch for ch in str(value).strip().upper() if ch.isalnum() or ch in "-_")
 
-def price_card(brand,oem,name,dl_usd,coefficient,item_type=None,weight=None,volume=None):
+def price_card(brand,oem,name,dl_usd,coefficient,item_type=None,weight=None,volume=None,reference_calculation_weight_kg=None):
     dlp=round(float(dl_usd)*float(coefficient)+1e-9,2)
     title = (brand or "Производитель определяется") + (" — " + name if name else "")
-    if weight is not None and volume is not None:
+    approximate = weight is None and volume is None and reference_calculation_weight_kg is not None
+    if approximate:
+        weight_text = 'Расчётный вес: ' + format(float(reference_calculation_weight_kg), '.2f').rstrip('0').rstrip('.') + ' кг*'
+    elif weight is not None and volume is not None:
         weight_text = format(weight, ".2f").rstrip("0").rstrip(".") + " кг / " + format(volume, ".2f").rstrip("0").rstrip(".") + " кг"
     elif weight is not None:
         weight_text = format(weight, ".2f").rstrip("0").rstrip(".") + " кг"
@@ -34,7 +37,8 @@ def price_card(brand,oem,name,dl_usd,coefficient,item_type=None,weight=None,volu
         weight_text = "нет фактического веса / " + format(volume, ".2f").rstrip("0").rstrip(".") + " кг"
     else:
         weight_text = "данных по весу нет"
-    return title + "\n🇺🇸 склад США— $" + format(dlp, ".2f") + " (" + weight_text + ")"
+    card = title + "\n🇺🇸 склад США— $" + format(dlp, ".2f") + " (" + weight_text + ")"
+    return card + ("\n* Данные по весу носят справочный характер." if approximate else "")
 
 def cart_message(cart):
     lines=["🛒 КОРЗИНА"]
