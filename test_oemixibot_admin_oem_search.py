@@ -39,6 +39,7 @@ class AdminOemSearchTests(unittest.TestCase):
         query = FakeQuery(callback_data) if callback_data is not None else None
         return SimpleNamespace(
             effective_user=user,
+            effective_chat=SimpleNamespace(id=4242),
             effective_message=message,
             callback_query=query,
         )
@@ -98,14 +99,28 @@ class AdminOemSearchTests(unittest.TestCase):
             "source": "verified_shared_gateway",
             "last_verified_at": "2026-10-15T08:00:00Z",
         }
-        with patch.object(app, "is_telegram_admin", return_value=True),              patch.object(app, "_resolve_admin_oem_offer", new=AsyncMock(return_value=offer)) as resolver,              patch.object(app, "_dealer", side_effect=AssertionError("dealer lookup forbidden")),              patch.object(app.STORE, "cart_add", side_effect=AssertionError("cart mutation forbidden")),              patch.object(app.STORE, "checkout_cart", side_effect=AssertionError("checkout forbidden")),              patch.object(app.FINANCE, "payment", side_effect=AssertionError("finance mutation forbidden")),              patch.object(app.FINANCE, "adjustment_minus", side_effect=AssertionError("finance mutation forbidden")):
-            asyncio.run(app.oem_message(update, context))
+        sent = AsyncMock()
+        context.bot = SimpleNamespace(send_message=sent)
 
-        resolver.assert_awaited_once_with("2206328", context)
-        reply = update.effective_message.reply_text.await_args.args[0]
-        self.assertIn("Дилерская цена: $184.07", reply)
-        self.assertIn("MSRP: $239.99", reply)
-        self.assertNotIn("➕ В корзину", reply)
+        async def run_admin_probe():
+            tasks = []
+            def schedule(coro, *, name=None):
+                task = asyncio.create_task(coro, name=name)
+                tasks.append(task)
+                return task
+            with patch.object(context.application, "create_task", side_effect=schedule):
+                await app.oem_message(update, context)
+                if tasks:
+                    await asyncio.gather(*tasks)
+
+        with patch.object(app, "is_telegram_admin", return_value=True),              patch.object(app, "_resolve_admin_oem_offer", new=AsyncMock(return_value=offer)) as resolver,              patch.object(app, "_dealer", side_effect=AssertionError("dealer lookup forbidden")),              patch.object(app.STORE, "cart_add", side_effect=AssertionError("cart mutation forbidden")),              patch.object(app.STORE, "checkout_cart", side_effect=AssertionError("checkout forbidden")),              patch.object(app.FINANCE, "payment", side_effect=AssertionError("finance mutation forbidden")),              patch.object(app.FINANCE, "adjustment_minus", side_effect=AssertionError("finance mutation forbidden")):
+            asyncio.run(run_admin_probe())
+
+        resolver.assert_awaited_once()
+        text = sent.await_args.kwargs["text"]
+        self.assertIn("Дилерская цена: $184.07", text)
+        self.assertIn("MSRP: $239.99", text)
+        self.assertNotIn("➕ В корзину", text)
 
     def test_admin_search_denies_non_admin_even_without_dealer(self):
         update = self._update(user_id=2002, text="2206328")
