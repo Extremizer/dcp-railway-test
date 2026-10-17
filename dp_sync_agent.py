@@ -460,7 +460,11 @@ def run_once() -> bool:
             return False
         _journal("lookup_inflight", item)
         try:
-            raw = oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"], category_evidence=item)
+            if item["manufacturer"] == "Polaris":
+                from polaris_dp_verified_readonly_producer import inspect_claim
+                raw = inspect_claim(item)
+            else:
+                raw = oemixibot_dcp_price.get_dealer_price_dict(item["manufacturer"], item["oem"], category_evidence=item)
         except Exception:
             raw = {"status": "TECHNICAL_ERROR"}
         result = _validated_result(item, raw)
