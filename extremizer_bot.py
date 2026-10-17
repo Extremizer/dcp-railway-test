@@ -5301,7 +5301,9 @@ def apply_known_item_types(order_id: str) -> int:
                 item_type,
                 item_type_source,
                 reference_actual_weight_kg,
-                reference_volume_weight_kg
+                reference_volume_weight_kg,
+                reference_calculation_weight_kg,
+                reference_weight_quality
             FROM order_items
             WHERE order_id = ?
             """,
@@ -5317,6 +5319,8 @@ def apply_known_item_types(order_id: str) -> int:
             current_item_type_source,
             current_actual_weight,
             current_volume_weight,
+            current_reference_calculation_weight,
+            current_reference_weight_quality,
         ) in items:
             manufacturer = str(manufacturer or "").strip()
             oem = str(oem or "").strip()
@@ -5346,30 +5350,33 @@ def apply_known_item_types(order_id: str) -> int:
                 resolved_type = reference["item_type"]
                 resolved_source = "oem_reference"
 
+            # Orders with an existing legacy calculation snapshot are immutable
+            # with respect to reference-DB re-reads.
+            frozen_legacy = current_reference_weight_quality == "approximate_legacy"
             ref_actual = (
                 reference.get("actual_weight_kg")
-                if reference and current_actual_weight is None
+                if reference and current_actual_weight is None and not frozen_legacy
                 else None
             )
             ref_volume = (
                 reference.get("volume_weight_kg")
-                if reference and current_volume_weight is None
+                if reference and current_volume_weight is None and not frozen_legacy
                 else None
             )
             ref_state = (
                 str(reference.get("weight_state") or "") or None
-                if reference
+                if reference and not frozen_legacy
                 else None
             )
             ref_source = (
                 "oem_reference"
-                if reference
-                and (
-                    reference.get("actual_weight_kg") is not None
-                    or reference.get("volume_weight_kg") is not None
-                )
+                if reference and not frozen_legacy
+                and (reference.get("actual_weight_kg") is not None
+                     or reference.get("volume_weight_kg") is not None)
                 else None
             )
+            # Never late-populate legacy snapshots from a changing DB.
+            # They are persisted exactly once during order creation.
 
             changed = (
                 resolved_type != current_item_type
@@ -6068,6 +6075,8 @@ def get_stage2_customer_total(order_id: str, owner_id=None):
             """SELECT id, position, manufacturer, oem, name, quantity,
                       reference_actual_weight_kg,
                       reference_volume_weight_kg,
+                      reference_calculation_weight_kg,
+                      reference_weight_quality,
                       COALESCE(selected_delivery_tariff, ?) AS selected_delivery_tariff,
                       offer_source,
                       warehouse_public_name
@@ -6167,7 +6176,7 @@ def format_stage2_customer_total(order_id: str, owner_id=None):
     for item in items:
         actual = item["reference_actual_weight_kg"]
         volume = item["reference_volume_weight_kg"]
-        if actual is not None or volume is not None:
+        if actual is not None or volume is not None or item["reference_calculation_weight_kg"] is not None:
             has_reference_weight = True
 
         lines.extend([
@@ -6187,6 +6196,8 @@ def format_stage2_customer_total(order_id: str, owner_id=None):
                 actual,
                 volume,
                 item["quantity"],
+                item["reference_calculation_weight_kg"]
+                if item["reference_weight_quality"] == "approximate_legacy" else None,
             )
         )
         preference = labels.get(item["selected_delivery_tariff"])
@@ -6242,7 +6253,9 @@ def format_customer_quote(order_id: str):
                 reference_volume_weight_kg,
                 selected_delivery_tariff,
                 offer_source,
-                warehouse_public_name
+                warehouse_public_name,
+                reference_calculation_weight_kg,
+                reference_weight_quality
             FROM order_items
             WHERE order_id = ?
             ORDER BY position
@@ -6294,10 +6307,13 @@ def format_customer_quote(order_id: str):
         selected_delivery_tariff,
         offer_source,
         warehouse_public_name,
+        reference_calculation_weight_kg,
+        reference_weight_quality,
     ) in items:
         if (
             reference_actual_weight_kg is not None
             or reference_volume_weight_kg is not None
+            or reference_calculation_weight_kg is not None
         ):
             has_reference_weight = True
 
@@ -6316,9 +6332,8 @@ def format_customer_quote(order_id: str):
                 reference_actual_weight_kg,
                 reference_volume_weight_kg,
                 quantity,
-                (get_oem_reference(oem).get("reference_calculation_weight_kg")
-                 if reference_actual_weight_kg is None and get_oem_reference(oem)
-                 else None),
+                reference_calculation_weight_kg
+                if reference_weight_quality == "approximate_legacy" else None,
             )
         )
         preference = tariff_labels.get(str(selected_delivery_tariff or ""))
