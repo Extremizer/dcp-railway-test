@@ -62,6 +62,54 @@ class FakePolarisAdapter:
         raise AssertionError("no cleanup mutation expected")
 
 
+class MissingAliasCartAdapter:
+    def __init__(self):
+        self.lines=[{
+            "sku":"9999999","token":"keep-other","qty":2,
+            "unit_price":"12.00","subtotal":"24.00","currency":"USD",
+        }]
+        self.operations=[]
+
+    def verify(self):
+        return True
+
+    def snapshot(self):
+        return {"lines":[dict(x) for x in self.lines]}
+
+    def find_exact_oem(self, oem):
+        self.operations.append(("resolve",oem))
+        return {
+            "manufacturer":"Polaris",
+            "item_category":"Parts",
+            "requested_oem":"2205250",
+            "resolved_oem":"2206328",
+            "exact_match":True,
+            "replacement_proven":True,
+        }
+
+    def add_one(self, oem):
+        self.operations.append(("add",oem))
+        if oem!="2205250":
+            raise AssertionError("requested alias must be submitted")
+        self.lines.append({
+            "sku":"2206328","token":"created-2206328","qty":1,
+            "unit_price":"184.07","subtotal":"184.07","currency":"USD",
+        })
+
+    def price(self, oem, snapshot):
+        self.operations.append(("price",oem))
+        if oem!="2206328":
+            raise AssertionError("resolved SKU price required")
+        return "184.07"
+
+    def remove_line(self, token):
+        self.operations.append(("remove",token))
+        self.lines=[x for x in self.lines if x["token"]!=token]
+
+    def decrement_one(self, token):
+        raise AssertionError("new line must be removed, not decremented")
+
+
 class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
@@ -134,6 +182,40 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             content=body,
             headers=headers("POST", PATH, body),
         )
+
+    def test_00_missing_alias_sku_probe_add_price_restore_producer_found(self):
+        adapter=MissingAliasCartAdapter()
+        before=adapter.snapshot()
+        now=datetime.now(timezone.utc)
+        evidence={
+            "manufacturer":"Polaris",
+            "oem":"2205250",
+            "resolved_oem":"2206328",
+            "item_category":"Parts",
+            "category_source_kind":"validated_public_msrp",
+            "category_source_ref":"missing-sku-e2e",
+            "category_verified_at":now.isoformat(),
+        }
+        result=producer_browser_price(
+            "2205250",
+            category_evidence=evidence,
+            adapter=adapter,
+            now=now,
+            dealer_identity_proof_ref="sha256:missing-sku-e2e",
+        )
+        self.assertEqual(result["status"],"FOUND")
+        self.assertEqual(result["query_oem"],"2205250")
+        self.assertEqual(result["current_oem"],"2206328")
+        self.assertEqual(result["matched_sku"],"2206328")
+        self.assertEqual(result["dealer_price_usd"],184.07)
+        self.assertTrue(result["dealer_cart_proof"]["cart_restored"])
+        self.assertEqual(adapter.snapshot(),before)
+        self.assertEqual(adapter.operations,[
+            ("resolve","2205250"),
+            ("add","2205250"),
+            ("price","2206328"),
+            ("remove","created-2206328"),
+        ])
 
     def test_01_alias_producer_protocol_fence_completion_cache_pricesource_consumers(self):
         with sqlite3.connect(self.db) as conn:
