@@ -33,6 +33,7 @@ from oemixi_secure_gateway_transport import (
     sign_request,
 )
 from test_dcp_three_adapters import actual_functions
+from polaris_dealer_cart_completion_contract import SOURCE
 from test_dp_result_completion import (
     CompletionFixture,
     headers as producer_headers,
@@ -154,6 +155,119 @@ class SecureGatewayFixture(CompletionFixture):
             timeout_seconds=5,
             opener=local_opener(self.secure_client),
         )
+
+    def seed_polaris_authority(self):
+        now = health._now()
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                """INSERT OR REPLACE INTO oem_catalog_cache(
+                       manufacturer,current_oem,name,catalog,msrp_usd,msrp_verified,
+                       previous_oems_json,source_kind,source_ref,first_seen_at,last_verified_at
+                   ) VALUES(?,?,?,?,?,1,?,?,?,?,?)""",
+                (
+                    "Polaris","2206328","Quickdrive Belt Kit","Parts",239.99,
+                    '["2205250"]',"validated_public_msrp",
+                    "isolated-polaris-secure-transport",now,now,
+                ),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO oem_catalog_aliases(
+                       manufacturer,alias_oem,current_oem,alias_kind
+                   ) VALUES(?,?,?,?)""",
+                ("Polaris","2205250","2206328","previous"),
+            )
+            conn.execute(
+                """INSERT OR REPLACE INTO oem_catalog_aliases(
+                       manufacturer,alias_oem,current_oem,alias_kind
+                   ) VALUES(?,?,?,?)""",
+                ("Polaris","2206328","2206328","current"),
+            )
+            conn.commit()
+
+    def polaris_payload(self, claim, *, dealer_price=184.07):
+        return {
+            "request_id":claim["request_id"],
+            "protocol_version":2,
+            "producer_id":claim["producer_id"],
+            "claim_token":claim["claim_token"],
+            "claim_generation":claim["claim_generation"],
+            "status":"FOUND",
+            "manufacturer":"Polaris",
+            "query_oem":"2205250",
+            "matched_sku":"2206328",
+            "current_oem":"2206328",
+            "dealer_price_usd":dealer_price,
+            "currency":"USD",
+            "source":SOURCE,
+            "name":"Quickdrive Belt Kit",
+            "dealer_cart_proof":{
+                "status":"ADMIN_DEALER_CART_PRICE_VERIFIED",
+                "dealer_authenticated":True,
+                "dealer_context_verified":True,
+                "trusted_preflight":True,
+                "cart_restored":True,
+                "production_found":False,
+                "dealer_price_usd":None,
+                "requested_oem":"2205250",
+                "resolved_oem":"2206328",
+                "matched_sku":"2206328",
+                "currency":"USD",
+                "quantity":1,
+                "unit_price_usd":dealer_price,
+                "subtotal_usd":dealer_price,
+                "dealer_identity_proof_ref":"sha256:isolated-secure-transport",
+                "category_source_kind":claim["category_source_kind"],
+                "category_source_ref":claim["category_source_ref"],
+                "category_verified_at":claim["category_verified_at"],
+            },
+        }
+
+    def complete_polaris_once(self):
+        self.seed_polaris_authority()
+        queued = bridge.request_live_dp(
+            self.db,"Polaris","2205250",wait_seconds=0,
+        )
+        self.assertIn(queued["status"], {"TIMEOUT","PENDING"})
+        response = self.client.get(
+            "/internal/dp-sync/next",
+            headers=producer_headers("GET","/internal/dp-sync/next"),
+        )
+        self.assertEqual(response.status_code,200,response.text)
+        claim=response.json()["request"]
+        self.assertIsNotNone(claim)
+        posted=self.post(self.polaris_payload(claim))
+        self.assertEqual(posted.status_code,200,posted.text)
+        return claim
+
+    def producer_once_polaris(self):
+        self.seed_polaris_authority()
+        errors=[]
+
+        def work():
+            try:
+                deadline=time.monotonic()+3
+                claim=None
+                while claim is None and time.monotonic()<deadline:
+                    r=self.client.get(
+                        "/internal/dp-sync/next",
+                        headers=producer_headers("GET","/internal/dp-sync/next"),
+                    )
+                    if r.status_code!=200:
+                        raise AssertionError(r.text)
+                    claim=r.json()["request"]
+                    if claim is None:
+                        time.sleep(0.01)
+                if claim is None:
+                    raise AssertionError("secure request did not enqueue one Polaris claim")
+                r=self.post(self.polaris_payload(claim))
+                if r.status_code!=200:
+                    raise AssertionError(r.text)
+            except BaseException as exc:
+                errors.append(exc)
+
+        thread=threading.Thread(target=work)
+        thread.start()
+        return thread,errors
 
     def producer_once(self, *, status="FOUND", dealer_price=31.25):
         errors = []
