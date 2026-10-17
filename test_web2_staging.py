@@ -66,7 +66,15 @@ class Web2StagingTests(unittest.TestCase):
             }, clear=False):
                 self.assertEqual(client.get("/web2-powersports-logo").status_code, 404)
 
+            # New owner-approved identity gate rejects any valid but unapproved PNG.
             with patch.dict(os.environ, {
+                "EXTREMIZER_POWERSPORTS_LOGO_PATH": str(path),
+                "EXTREMIZER_POWERSPORTS_LOGO_SHA256": digest,
+            }, clear=False):
+                self.assertEqual(client.get("/web2-powersports-logo").status_code, 404)
+
+            # Simulate the installed approved asset with a scoped constant override.
+            with patch("web2_ui_routes.APPROVED_POWERSPORTS_WORDMARK_SHA256", digest), patch.dict(os.environ, {
                 "EXTREMIZER_POWERSPORTS_LOGO_PATH": str(path),
                 "EXTREMIZER_POWERSPORTS_LOGO_SHA256": digest,
             }, clear=False):
