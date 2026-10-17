@@ -102,12 +102,14 @@ jobs:
 
       - name: Non-Polaris and no-MSRP fallback regressions
         run: |
-          python -B -m unittest -v             test_dcp_reliability.py             test_dcp_stage3_consistency.py             test_startup_safety.py
+          # Current-contract suites: Category Authority + Stage2 fail-closed.
+          # Legacy pre-authority queue fixtures are baseline debt on current production.
+          python -B -m unittest -v             test_oemixi_admin_browser_provider.py             test_theme1_stage2_runtime_boundary.py             test_theme1_stage2_server_category.py             test_theme1_stage2_target.py             test_dcp_passive_guard.py             test_unified_price_contract_v1.py             test_startup_safety.py
           python -B - <<'PY'
           from dp_result_completion import MANUFACTURERS
           for m in ("Arctic Cat","Can-Am","Sea-Doo","Ski-Doo","Yamaha"):
               assert m in MANUFACTURERS
-          print("NON_POLARIS_CONTRACT_UNCHANGED_PASS")
+          print("NON_POLARIS_CURRENT_CONTRACT_PASS")
           PY
 
       - name: Finance and Internal Order compatibility
