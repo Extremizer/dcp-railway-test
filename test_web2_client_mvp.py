@@ -206,7 +206,7 @@ class Web2ClientMvpBrowserTests(unittest.TestCase):
                 "() => document.querySelector('#searchForm').getAttribute('aria-busy') === 'true'"
             )
             self.assertTrue(page.locator("#searchButton").is_disabled())
-            self.assertEqual(page.locator("#searchButton").inner_text(), "Ищем…")
+            self.assertEqual(page.locator("#searchButton span").first.inner_text(), "Ищем…")
             self.assertEqual(page.locator("#state").inner_text(), "Ищем…")
             page.screenshot(path=str(ARTIFACTS / "05-search-loading.png"))
             page.wait_for_selector("#product:not(.hidden)")
