@@ -19,6 +19,8 @@ import oem_identity_service
 from oemixibot_identity_client import lookup_shared_identity
 import oem_identity_service
 
+from oemixi_unknown_enrollment import manufacturer_choices, validate_selected_manufacturer
+
 STORE=OemixiStore()
 ACCESS=DealerAccess(STORE)
 FINANCE=FinanceEngine(STORE.path)
@@ -582,7 +584,21 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 display_price_currency="USD",
             ))
         if offer.get("status")=="IDENTITY_REQUIRED":
-            await update.effective_message.reply_text("OEM найден не полностью. Требуется уточнение производителя администратором.")
+            if _SHARED_PRICE_ADAPTER_KEY not in context.application.bot_data:
+                await update.effective_message.reply_text("OEM найден не полностью. Требуется уточнение производителя администратором.")
+            else:
+                nonce=secrets.token_hex(4)
+                context.user_data["unknown_manufacturer_pending"]={
+                    "oem":oem,"nonce":nonce,"dealer_id":dealer["id"],
+                    "user_id":u.id if u else None,
+                }
+                choices=manufacturer_choices()
+                buttons=[InlineKeyboardButton(m,callback_data=f"mf:{nonce}:{idx}") for idx,m in enumerate(choices)]
+                rows=[buttons[i:i+3] for i in range(0,len(buttons),3)]
+                await update.effective_message.reply_text(
+                    f"OEM {oem}: выберите производителя для проверки. Выбор сам по себе ничего не сохраняет.",
+                    reply_markup=InlineKeyboardMarkup(rows),
+                )
         else:
             await update.effective_message.reply_text("Цена из США сейчас недоступна. Попробуйте повторить запрос позже.")
         return
@@ -893,6 +909,58 @@ async def admin_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
 async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; await q.answer()
     data=q.data or ""
+    if data.startswith("mf:"):
+        dealer=_dealer(update)
+        user=update.effective_user
+        pending=context.user_data.pop("unknown_manufacturer_pending",None)
+        segments=data.split(":")
+        if (not dealer or not user or not pending or len(segments)!=3
+                or segments[1]!=pending["nonce"]
+                or pending["dealer_id"]!=dealer["id"]
+                or pending["user_id"]!=user.id
+                or _SHARED_PRICE_ADAPTER_KEY not in context.application.bot_data):
+            await q.edit_message_text("Сессия подтверждения OEM недействительна. Повторите поиск.")
+            return
+        try:
+            selection=int(segments[2])
+            choices=manufacturer_choices()
+            if selection < 0 or selection >= len(choices):
+                raise ValueError("invalid choice")
+        except (ValueError,TypeError):
+            await q.edit_message_text("Некорректный выбор производителя.")
+            return
+        oem=pending["oem"]
+        selected=choices[selection]
+        verdict=await asyncio.to_thread(
+            validate_selected_manufacturer, oem, selected,
+            context.application.bot_data[_SHARED_PRICE_ADAPTER_KEY],
+        )
+        if verdict.get("status")!="VERIFIED":
+            await q.edit_message_text(
+                f"OEM {oem} / {selected}: производитель не подтверждён "
+                f"({verdict.get('status')}). Identity не сохранена. "
+                "MSRP не используется как дилерская цена."
+            )
+            return
+        offer=await _resolve_runtime_offer(oem,context)
+        if offer.get("status")!="FOUND" or offer.get("dl_usd") is None:
+            await q.edit_message_text(
+                "Производитель подтверждён, но дилерская цена сейчас недоступна."
+            )
+            return
+        context.user_data["offer:"+oem]=offer
+        card=price_card(
+            offer.get("manufacturer"),offer.get("oem") or oem,offer.get("name"),
+            offer["dl_usd"],dealer["price_coefficient"],offer.get("item_type"),
+            offer.get("actual_weight_kg"),offer.get("volume_weight_kg"),
+        )
+        await q.edit_message_text(
+            card,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("➕ В корзину",callback_data="add:"+oem)
+            ]]),
+        )
+        return
     if data.startswith("adm"):
         u=update.effective_user
         if not u or not is_telegram_admin(u.id): await q.edit_message_text(ACCESS_DENIED); return
@@ -1174,7 +1242,7 @@ def build_application(
     app.add_handler(CommandHandler("orders",orders_command))
     app.add_handler(CommandHandler("balance",balance_command))
     app.add_handler(CommandHandler("admin",admin_command))
-    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhome$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admsearch$|admhome$|admdealer:|admdealers$|admfin:(?:view|history|topup|debit):|admfinevent:|admdebit:|admtopup:|noop$)"))
+    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:mf:|add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhome$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admsearch$|admhome$|admdealer:|admdealers$|admfin:(?:view|history|topup|debit):|admfinevent:|admdebit:|admtopup:|noop$)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,oem_message))
     return app
 
