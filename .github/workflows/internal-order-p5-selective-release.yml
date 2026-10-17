@@ -1,0 +1,127 @@
+name: Internal Order P5 Selective Release Gate
+
+on:
+  push:
+    branches:
+      - release-control-internal-order-p5-20261017
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  internal-order-p5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Release boundary allowlist
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=757d6b773bac1c5dd25f5360bce5535fefddf1e2
+          git cat-file -e "$BASE^{commit}"
+          git diff --name-only "$BASE"...HEAD | sort > /tmp/changed.txt
+          cat /tmp/changed.txt
+          awk '
+            BEGIN { bad=0 }
+            $0 == ".github/workflows/internal-order-p5-selective-release.yml" { next }
+            $0 == "EXTREMIZER_INTERNAL_ORDER_P5_SELECTIVE_RELEASE_20261017.md" { next }
+            $0 == "client_wallet_info_v14.py" { next }
+            $0 == "common_finance_contract.py" { next }
+            $0 == "internal_order_core_v01.py" { next }
+            $0 == "internal_order_p5_boundary.py" { next }
+            $0 == "internal_order_read_v01.py" { next }
+            $0 == "internal_order_terms_v01.py" { next }
+            $0 == "test_client_wallet_info_v14.py" { next }
+            $0 == "test_internal_order_core_v01.py" { next }
+            $0 == "test_internal_order_p4_terms.py" { next }
+            $0 == "test_internal_order_p5_boundary.py" { next }
+            $0 == "test_internal_order_read_v01.py" { next }
+            $0 == "test_internal_payment_atomic_v14.py" { next }
+            $0 == "test_warehouse_balance_v14.py" { next }
+            $0 == "test_warehouse_history_v14.py" { next }
+            $0 == "warehouse_balance_v14.py" { next }
+            $0 == "warehouse_history_v14.py" { next }
+            { print "FORBIDDEN_RELEASE_FILE: " $0; bad=1 }
+            END { exit bad }
+          ' /tmp/changed.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Syntax and import smoke
+        run: |
+          python -B -m py_compile             common_finance_contract.py client_wallet_info_v14.py             warehouse_balance_v14.py warehouse_history_v14.py             internal_order_core_v01.py internal_order_read_v01.py             internal_order_terms_v01.py internal_order_p5_boundary.py
+          python -B - <<'PY'
+          import client_wallet_info_v14
+          import warehouse_balance_v14
+          import warehouse_history_v14
+          import internal_order_core_v01
+          import internal_order_read_v01
+          import internal_order_terms_v01
+          import internal_order_p5_boundary
+          print("INTERNAL_ORDER_P5_IMPORT_OK")
+          PY
+
+      - name: Preserve RC1 global client routing semantics
+        run: |
+          python -B - <<'PY'
+          from common_finance_contract import (
+              PaymentRoute,
+              default_client_payment_route,
+              resolve_internal_client_payment_route,
+          )
+          assert default_client_payment_route("usa") is PaymentRoute.EXTREMIZER_BALANCE
+          assert default_client_payment_route("warehouse") is PaymentRoute.EXTREMIZER_BALANCE
+          assert resolve_internal_client_payment_route() is PaymentRoute.DIRECT_PARTNER
+          try:
+              resolve_internal_client_payment_route(
+                  admin_assign_extremizer=True,
+                  admin_authorized=False,
+                  full_partner_amount_reserved=True,
+              )
+          except PermissionError:
+              pass
+          else:
+              raise AssertionError("unauthorized Internal route exception did not fail closed")
+          assert resolve_internal_client_payment_route(
+              admin_assign_extremizer=True,
+              admin_authorized=True,
+              full_partner_amount_reserved=True,
+          ) is PaymentRoute.EXTREMIZER_BALANCE
+          print("ROUTE_POLICY_SCOPE_GUARD_PASS")
+          PY
+
+      - name: P5 focused support and Internal Order regressions
+        run: |
+          python -B -m unittest -v             test_warehouse_balance_v14.py             test_client_wallet_info_v14.py             test_internal_payment_atomic_v14.py             test_warehouse_history_v14.py             test_internal_order_core_v01.py             test_internal_order_read_v01.py             test_internal_order_p4_terms.py             test_internal_order_p5_boundary.py
+
+      - name: Current RC1 finance compatibility regressions
+        run: |
+          python -B -m unittest -v             test_partner_routes_checkout_point10.py             test_warehouse_partner_settlements_point10.py             test_dealer_prepaid_finance.py             test_oemixibot_prepaid_runtime.py
+
+      - name: Current RC1 client/order compatibility scripts
+        run: |
+          python -B _atomic_client_finance_regression.py
+          python -B _save_order_shared_tx_regression.py
+          python -B _client_checkout_orchestrator_regression.py
+          python -B _client_checkout_callback_adapter_regression.py
+          python -B _prod_finance_switch_regression.py
+
+      - name: No production wiring in this slice
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --name-only 757d6b773bac1c5dd25f5360bce5535fefddf1e2...HEAD             | grep -Ev '^(\.github/workflows/internal-order-p5-selective-release.yml|EXTREMIZER_INTERNAL_ORDER_P5_SELECTIVE_RELEASE_20261017.md|client_wallet_info_v14.py|common_finance_contract.py|internal_order_.*\.py|test_internal_.*\.py|test_client_wallet_info_v14.py|test_warehouse_.*\.py|warehouse_.*_v14.py)$'             && { echo "UNEXPECTED_FILE"; exit 1; } || true
+          echo "NO_PRODUCTION_ENTRYPOINT_CHANGED"
