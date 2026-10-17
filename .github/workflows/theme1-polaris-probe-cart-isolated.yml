@@ -8,6 +8,7 @@ on:
       - release-polaris-admin-production-wiring-20261016
       - release-polaris-cross-host-integration-20261017
       - release-control-polaris-rc-20261017
+      - release-control-rc1-20261017
   workflow_dispatch:
 permissions:
   contents: read
