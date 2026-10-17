@@ -131,7 +131,11 @@ def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
             root.mkdir(parents=True,exist_ok=True)
             lock_path=lock_path or root/"probe.lock"
             journal_path=journal_path or root/"probe.json"
-        result=run_probe(oem,runtime,lock_path=lock_path,journal_path=journal_path)
+        authority_target={"manufacturer":"Polaris","requested_oem":oem,
+            "resolved_oem":evidence["resolved_oem"],"item_category":"Parts",
+            "exact_match":True,"replacement_proven":evidence["resolved_oem"]!=oem}
+        result=run_probe(oem,runtime,lock_path=lock_path,journal_path=journal_path,
+                         authoritative_target=authority_target)
         status=result.get("status")
         if status not in {"ADMIN_DEALER_CART_PRICE_VERIFIED","ADMIN_PROBE_CART_PRICE_VERIFIED"}:
             return _denied(result.get("failure_code") or status or "DEALER_PRICE_UNVERIFIED")
