@@ -1,0 +1,19 @@
+name: Theme1 Polaris Existing Cart Alias Fastpath
+on:
+  push:
+    branches:
+      - theme1-polaris-existing-cart-alias-fastpath-20261017
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  targeted-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install beautifulsoup4 websocket-client playwright
+      - run: python -B -m py_compile polaris_probe_cart_transaction.py oemixi_admin_polaris_browser_price.py test_polaris_existing_cart_alias_fastpath.py
+      - run: python -B -m unittest -v test_polaris_existing_cart_alias_fastpath test_polaris_probe_cart_transaction test_polaris_probe_cart_hardening test_polaris_exact_add test_admin_browser_orchestration
