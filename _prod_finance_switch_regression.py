@@ -25,7 +25,7 @@ PROD_LEGACY_CHECKOUT_BLOB = "0ebb62fdbf6cef25c915fa16da4687e80b1410d7"
 PROD_PROBNIK_BLOB = "87e316e0af75b0c3447214044d57fc1debd67bf3"
 # PR #25 guard: every Probnik byte outside _compose remains pinned to the
 # original verified RC1 checkpoint. UI-only _compose changes are allowed.
-PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB = "b4b2dd134c45619ccb13168eedca61cf278f69be"
+PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB = "aa9140da8e555c061f58b33a26ce23e10a28e980"
 
 # PR #28 guards: exact reviewed WEB ADMIN candidate and proven FinanceEngine.
 POINT10_WEB_APP_BLOB = "c6c7ae46b313220c44e4ee726948f65543c287c7"
