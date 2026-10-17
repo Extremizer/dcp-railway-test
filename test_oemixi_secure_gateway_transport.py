@@ -28,6 +28,7 @@ import oemixibot_catalog
 from oemixi_secure_gateway_transport import (
     PATH,
     HTTPSPriceTransport,
+    OEMixiCanonicalSharedPriceAdapter,
     build_router,
     canonical_body,
     sign_request,
@@ -305,8 +306,9 @@ class SecureGatewayFixture(CompletionFixture):
 
 
 class SecureTransportE2ETests(SecureGatewayFixture):
+
     def test_windows_like_transport_to_real_oem_message_one_claim(self):
-        thread, errors = self.producer_once()
+        thread, errors = self.producer_once_polaris()
 
         with ExitStack() as stack:
             stack.enter_context(patch.object(oemixibot_app.STORE, "init"))
@@ -330,8 +332,8 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                     oemixibot_catalog,
                     "resolve_identity",
                     return_value={
-                        "oem": "2670-265",
-                        "manufacturer": "Arctic Cat",
+                        "oem": "2205250",
+                        "manufacturer": "Polaris",
                         "item_type": "parts",
                         "source": "isolated",
                     },
@@ -357,12 +359,13 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                 token="123456:TEST_TOKEN_FOR_ISOLATED_RUNTIME",
                 shared_price_gateway=self.transport,
                 dealer_max_age_hours=24,
+                shared_price_adapter_cls=OEMixiCanonicalSharedPriceAdapter,
             )
             reply = AsyncMock()
             update = SimpleNamespace(
                 effective_user=None,
                 effective_message=SimpleNamespace(
-                    text="2670-265",
+                    text="2205250",
                     reply_text=reply,
                 ),
             )
@@ -374,58 +377,46 @@ class SecureTransportE2ETests(SecureGatewayFixture):
         self.assertEqual(errors, [])
         direct.assert_not_called()
 
-        offer = context.user_data["offer:2670-265"]
-        self.assertEqual(offer["dl_usd"], 31.25)
-        self.assertEqual(offer["msrp_usd"], 99.99)
+        offer = context.user_data["offer:2205250"]
+        self.assertEqual(offer["dl_usd"], 184.07)
+        self.assertEqual(offer["msrp_usd"], 239.99)
         self.assertEqual(offer["price_contract_version"], "canonical-price-v1")
-        self.assertIn("$31.25", reply.await_args.args[0])
+        self.assertIn("$184.07", reply.await_args.args[0])
 
         with sqlite3.connect(self.db) as conn:
             self.assertEqual(
-                conn.execute("SELECT COUNT(*) FROM dp_live_requests").fetchone()[0],
+                conn.execute(
+                    "SELECT COUNT(*) FROM dp_live_requests "
+                    "WHERE manufacturer='Polaris' AND oem='2205250'"
+                ).fetchone()[0],
                 1,
             )
             self.assertEqual(
                 conn.execute(
                     "SELECT dealer_price_usd FROM dealer_price_cache "
-                    "WHERE manufacturer='Arctic Cat' AND oem='2670-265'"
+                    "WHERE manufacturer='Polaris' AND oem='2205250'"
                 ).fetchone()[0],
-                31.25,
+                184.07,
             )
 
+
     def test_verified_cache_hit_uses_no_new_live_request(self):
-        with sqlite3.connect(self.db) as conn:
-            from dp_result_completion import _write_cache
-            _write_cache(
-                conn,
-                "Arctic Cat",
-                "2670-265",
-                31.25,
-                "verified_local_dcp:isolated_cache",
-                health._now(),
-            )
+        self.complete_polaris_once()
         before = self.snapshot()
-        result = self.transport("Arctic Cat", "2670-265", max_age_hours=999999)
+        result = self.transport("Polaris", "2205250", max_age_hours=24)
         self.assertEqual(result["status"], "FOUND")
-        self.assertEqual(result["dealer_price_usd"], 31.25)
-        self.assertEqual(result["msrp_usd"], 99.99)
+        self.assertEqual(result["dealer_price_usd"], 184.07)
+        self.assertEqual(result["current_oem"], "2206328")
+        self.assertEqual(result["msrp_usd"], 239.99)
         after = self.snapshot()
         self.assertEqual(
             len(after["dp_live_requests"]),
             len(before["dp_live_requests"]),
         )
 
+
     def test_admin_search_works_over_same_transport_without_dealer_or_finance(self):
-        with sqlite3.connect(self.db) as conn:
-            from dp_result_completion import _write_cache
-            _write_cache(
-                conn,
-                "Arctic Cat",
-                "2670-265",
-                31.25,
-                "verified_local_dcp:isolated_cache",
-                health._now(),
-            )
+        self.complete_polaris_once()
 
         with ExitStack() as stack:
             stack.enter_context(
@@ -433,8 +424,8 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                     oemixibot_catalog,
                     "resolve_identity",
                     return_value={
-                        "oem": "2670-265",
-                        "manufacturer": "Arctic Cat",
+                        "oem": "2205250",
+                        "manufacturer": "Polaris",
                         "item_type": "parts",
                         "source": "isolated",
                     },
@@ -471,36 +462,52 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                     side_effect=AssertionError("admin finance mutation forbidden"),
                 )
             )
-            stack.enter_context(patch.object(oemixibot_app, "is_telegram_admin", return_value=True))
+            stack.enter_context(
+                patch.object(oemixibot_app, "is_telegram_admin", return_value=True)
+            )
 
             application = oemixibot_app.build_application(
                 token="123456:TEST_TOKEN_FOR_ISOLATED_RUNTIME",
                 shared_price_gateway=self.transport,
                 dealer_max_age_hours=24,
+                shared_price_adapter_cls=OEMixiCanonicalSharedPriceAdapter,
             )
             reply = AsyncMock()
+            sent = AsyncMock()
             update = SimpleNamespace(
                 effective_user=SimpleNamespace(id=1),
+                effective_chat=SimpleNamespace(id=1001),
                 effective_message=SimpleNamespace(
-                    text="2670-265",
+                    text="2205250",
                     reply_text=reply,
                 ),
             )
-            context = SimpleNamespace(
-                application=application,
-                user_data={"admin_oem_search": True},
-            )
-            asyncio.run(oemixibot_app.oem_message(update, context))
 
-        text = reply.await_args.args[0]
-        self.assertIn("Дилерская цена: $31.25", text)
-        self.assertIn("MSRP: $99.99", text)
+            async def run_admin_probe():
+                tasks=[]
+                def schedule(coro, *, name=None):
+                    task=asyncio.create_task(coro, name=name)
+                    tasks.append(task)
+                    return task
+                context=SimpleNamespace(
+                    application=application,
+                    user_data={"admin_oem_search": True},
+                    bot=SimpleNamespace(send_message=sent),
+                )
+                with patch.object(application, "create_task", side_effect=schedule):
+                    await oemixibot_app.oem_message(update, context)
+                    if tasks:
+                        await asyncio.gather(*tasks)
+
+            asyncio.run(run_admin_probe())
+
+        text = sent.await_args.kwargs["text"]
+        self.assertIn("Дилерская цена: $184.07", text)
+        self.assertIn("MSRP: $239.99", text)
         cart_add.assert_not_called()
         checkout.assert_not_called()
         finance.assert_not_called()
 
-
-class SecureThreeConsumerTests(SecureGatewayFixture):
     def test_three_consumers_over_secure_transport_share_one_claim(self):
         browser = SimpleNamespace(
             get_dealer_price_dict=Mock(
