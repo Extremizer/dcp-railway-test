@@ -49,6 +49,7 @@ import admin_order_apply_service
 import admin_order_web
 import oem_import_maintenance
 import oemixi_category_authority_transport
+import oemixibot_railway_gateway_mount
 try:
     import oem_reference_service
 except ImportError:
@@ -88,6 +89,20 @@ if os.getenv("OEMIXIBOT_TOKEN", "").strip():
             db_file=core.ORDERS_DB_FILE,
             root_secret=os.getenv("OEMIXIBOT_TOKEN", "").strip(),
         )
+    )
+
+
+_oemixi_gateway_secret = os.getenv("OEMIXIBOT_GATEWAY_SECRET", "").strip()
+if _oemixi_gateway_secret:
+    # Release-Control-only mount. A dedicated scoped secret is required; the
+    # Telegram token and DCP credentials are never reused for this transport.
+    oemixibot_railway_gateway_mount.attach_oemixi_gateway(
+        app,
+        coordination_db=core.ORDERS_DB_FILE,
+        gateway_secret=_oemixi_gateway_secret,
+        dealer_max_age_hours=24.0,
+        msrp_max_age_hours=720.0,
+        wait_seconds=5.0,
     )
 
 
