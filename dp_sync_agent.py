@@ -232,6 +232,12 @@ def _claim() -> dict | None:
         raise ValueError("category_claim_evidence_missing")
     if item["oem"] != oem or item["manufacturer"] != manufacturer:
         raise ValueError("noncanonical_claim_identity")
+    if manufacturer == "Polaris":
+        resolved=item.get("resolved_oem")
+        if (not isinstance(resolved,str) or
+            _identity(manufacturer,resolved)[1]!=resolved or
+            item.get("item_category")!="Parts"):
+            raise ValueError("polaris_resolved_claim_invalid")
     return item
 
 
