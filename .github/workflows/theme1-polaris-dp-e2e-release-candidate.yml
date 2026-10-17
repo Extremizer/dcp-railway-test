@@ -15,5 +15,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install beautifulsoup4 websocket-client playwright
-      - run: python -B -m py_compile polaris_dealer_cart_completion_contract.py dp_result_completion.py test_polaris_dealer_cart_completion_contract.py
+      - run: python -B -m py_compile polaris_dealer_cart_completion_contract.py dp_result_completion.py test_polaris_dealer_cart_completion_contract.py test_polaris_fenced_completion_e2e.py test_polaris_producer_v2_result.py
       - run: python -B -m unittest -v test_polaris_dealer_cart_completion_contract.py test_polaris_fenced_completion_e2e.py
