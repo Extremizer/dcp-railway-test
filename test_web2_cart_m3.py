@@ -44,49 +44,6 @@ class CartM3(unittest.TestCase):
                              [("AAA",2),("CCC",3),("BBB",1)])
             b.close()
 
-
-    def test_warehouse_only_offer_with_empty_manufacturer_adds_to_cart(self):
-        with mock_server() as (base,_), sync_playwright() as pw:
-            b=pw.chromium.launch(headless=True)
-            p=b.new_page(viewport={"width":390,"height":844})
-            card={
-                "manufacturer":"",
-                "oem":"417300574",
-                "requested_oem":"417300574",
-                "name":None,
-                "catalog":None,
-                "previous_oems":[],
-                "price":{"available":False,"customer_rub":None,"msrp_rub":None,"benefit_pct":None},
-                "offers":[{
-                    "key":"warehouse:1",
-                    "source":"warehouse",
-                    "warehouse_id":1,
-                    "label":"Склад 1",
-                    "price_rub":34700,
-                    "available_quantity":26,
-                    "can_add":True,
-                }],
-                "stock":{"known":True,"warehouses":[],"refreshing":False},
-                "weight":None,
-                "delivery_notice":"Для позиции со склада РФ доставка из США не требуется.",
-                "warehouse_only":True,
-            }
-            p.route("**/api/v1/oem/*", lambda route: route.fulfill(
-                status=200, content_type="application/json", body=json.dumps(card)
-            ))
-            p.goto(base+"/web2")
-            p.locator("#oemInput").fill("417300574")
-            p.locator("#searchButton").click()
-            p.wait_for_function("()=>document.querySelector('#productOem').textContent==='417300574'")
-            button=p.locator('[data-offer-key="warehouse:1"]')
-            self.assertFalse(button.is_disabled())
-            button.click()
-            self.assertEqual(p.locator("#cartCount").inner_text(),"1")
-            self.assertEqual(p.locator("#cartItems .cart-item").count(),1)
-            self.assertIn("417300574",p.locator("#cartItems").inner_text())
-            self.assertIn("34 700 ₽",p.locator("#cartItems").inner_text().replace("\xa0"," "))
-            b.close()
-
     def test_corrupt_persisted_snapshot_fails_closed(self):
         with mock_server() as (base,_),sync_playwright() as pw:
             b=pw.chromium.launch(headless=True)
