@@ -183,6 +183,46 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             headers=headers("POST", PATH, body),
         )
 
+    def test_00a_polaris_dict_wrapper_preserves_currency_for_v2_validator(self):
+        import oemixibot_dcp_price
+        claim={
+            "manufacturer":"Polaris","oem":"2205250","resolved_oem":"2206328",
+            "item_category":"Parts","category_source_kind":"validated_public_msrp",
+            "category_source_ref":"theme4_live_dcp_evidence_20261016",
+            "category_verified_at":"2026-10-16T18:30:00+00:00",
+        }
+        raw={
+            "status":"FOUND","manufacturer":"Polaris","query_oem":"2205250",
+            "matched_sku":"2206328","current_oem":"2206328",
+            "dealer_price_usd":184.07,"currency":"USD",
+            "source":"verified_local_dcp:dealer_cart:authenticated_exact_line",
+            "name":None,
+            "dealer_cart_proof":{
+                "status":"ADMIN_DEALER_CART_PRICE_VERIFIED",
+                "dealer_authenticated":True,"dealer_context_verified":True,
+                "trusted_preflight":True,"cart_restored":True,
+                "production_found":False,"dealer_price_usd":None,
+                "requested_oem":"2205250","resolved_oem":"2206328",
+                "matched_sku":"2206328","currency":"USD","quantity":1,
+                "unit_price_usd":184.07,"subtotal_usd":184.07,
+                "dealer_identity_proof_ref":"sha256:live-wrapper-fixture",
+                "category_source_kind":claim["category_source_kind"],
+                "category_source_ref":claim["category_source_ref"],
+                "category_verified_at":claim["category_verified_at"],
+            },
+        }
+        with patch(
+            "oemixi_admin_polaris_browser_price.producer_browser_price",
+            return_value=raw,
+        ):
+            wrapped=oemixibot_dcp_price.get_dealer_price_dict(
+                "Polaris","2205250",category_evidence=claim
+            )
+        self.assertEqual(wrapped.get("currency"),"USD")
+        validated=dp_sync_agent._validated_result(claim,wrapped)
+        self.assertEqual(validated["status"],"FOUND")
+        self.assertEqual(validated["dealer_price_usd"],184.07)
+
     def test_00_missing_alias_sku_probe_add_price_restore_producer_found(self):
         adapter=MissingAliasCartAdapter()
         before=adapter.snapshot()
