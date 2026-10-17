@@ -3,6 +3,7 @@ import ast
 import sqlite3
 import tempfile
 import unittest
+from typing import Any
 from pathlib import Path
 from unittest.mock import patch
 import oem_reference_service as reference
@@ -61,7 +62,7 @@ class FrozenOrderBasis(unittest.TestCase):
         tree=ast.parse(src)
         fn=next(x for x in tree.body if isinstance(x,ast.FunctionDef) and x.name=="_weight_for_oem")
         import types
-        scope={"oem_reference_service":types.SimpleNamespace(
+        scope={"Any":Any,"oem_reference_service":types.SimpleNamespace(
             lookup_oem=lambda oem:{"actual_weight_kg":None,"volume_weight_kg":None,
                 "reference_calculation_weight_kg":.81,
                 "reference_weight_quality":"approximate_legacy",
