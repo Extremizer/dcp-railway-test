@@ -176,6 +176,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
         self.assertNotIn("Дилерская цена: $10.99", text)
 
     def test_gateway_error_keeps_independent_msrp_without_masking_error(self):
+        verified_at = datetime.now(timezone.utc).isoformat()
         transport = self._transport(
             {
                 "status": "TECHNICAL_ERROR",
@@ -191,7 +192,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
                 "item_category": "accessories",
                 "msrp_usd": 10.99,
                 "source": "verified_public_msrp:isolated_fixture",
-                "last_verified_at": datetime.now(timezone.utc).isoformat(),
+                "last_verified_at": verified_at,
             },
         )
         result = transport("Polaris", "2884109")
@@ -201,10 +202,7 @@ class StageC1TargetedCorrectionBaseFailTests(unittest.TestCase):
             result["msrp_source"],
             "verified_public_msrp:isolated_fixture",
         )
-        self.assertEqual(
-            result["msrp_verified_at"],
-            "2026-10-15T10:00:00+00:00",
-        )
+        self.assertEqual(result["msrp_verified_at"], verified_at)
         self.assertNotIn("dealer_price_usd", result)
 
     def test_found_without_atomic_completion_proof_stays_unproven(self):
