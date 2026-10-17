@@ -1,0 +1,19 @@
+name: Theme1 Polaris DP E2E Candidate
+on:
+  push:
+    branches:
+      - theme1-polaris-dp-e2e-release-candidate-20261017
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  targeted-regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install beautifulsoup4 websocket-client playwright
+      - run: python -B -m py_compile polaris_dealer_cart_completion_contract.py dp_result_completion.py test_polaris_dealer_cart_completion_contract.py
+      - run: python -B -m unittest -v test_polaris_dealer_cart_completion_contract.py
