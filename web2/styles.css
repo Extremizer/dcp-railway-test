@@ -314,3 +314,11 @@ main {max-width:none;margin:0;padding:0;}
   .practice-bottom strong {width:100%;}
   .product {margin:28px 12px 50px;}
 }
+
+/* Intermediate tablet breakpoint: do not let LIFE rail widen document at 768px. */
+@media (min-width:701px) and (max-width:1050px) {
+  .practice-bottom {flex-wrap:wrap;white-space:normal;justify-content:flex-start;gap:18px;}
+  .practice-bottom strong {flex-basis:100%;}
+  .topbar {gap:14px;}
+  .topnav {gap:clamp(16px,3vw,35px);}
+}
