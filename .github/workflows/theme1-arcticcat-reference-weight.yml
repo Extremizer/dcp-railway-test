@@ -14,6 +14,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install python-telegram-bot beautifulsoup4 websocket-client
+      - run: pip install python-telegram-bot beautifulsoup4 websocket-client playwright
       - run: python -B -m py_compile oem_reference_service.py oemixibot_catalog.py oemixibot_telegram.py oemixibot_app.py web_app.py extremizer_bot.py test_arcticcat_reference_calculation_weight.py test_arcticcat_order_snapshot_contract.py
       - run: python -B -m unittest -v test_arcticcat_reference_calculation_weight test_arcticcat_order_snapshot_contract test_client_delivery_text_unified test_procenka_delivery_text test_web2_contract test_oemixi_shared_price_runtime
