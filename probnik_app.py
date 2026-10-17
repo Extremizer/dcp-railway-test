@@ -34,7 +34,7 @@ ORDERS_DB = Path(
     os.getenv("EXTREMIZER_ORDERS_DB_FILE", "").strip()
     or Path(__file__).with_name("extremizer_orders.db")
 )
-DP_MAX_AGE_HOURS = float(os.getenv("EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "168") or "168")
+DP_MAX_AGE_HOURS = float(os.getenv("EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "24") or "24")
 PRICE_COEFFICIENT = float(os.getenv("EXTREMIZER_PRICE_COEFFICIENT", "1.34") or "1.34")
 USD_RUB_RATE = float((os.getenv("EXTREMIZER_USD_RUB_RATE", "0") or "0").replace(",", "."))
 
@@ -261,7 +261,7 @@ def _identity_and_price_legacy(oem: str) -> dict:
                 0.0,
                 (now - verified.astimezone(now.tzinfo)).total_seconds() / 3600.0,
             )
-            fresh = DP_MAX_AGE_HOURS > 0 and age <= DP_MAX_AGE_HOURS
+            fresh = DP_MAX_AGE_HOURS > 0 and age < DP_MAX_AGE_HOURS
         except Exception:
             fresh = False
 
@@ -312,7 +312,7 @@ def _identity_and_price(oem: str) -> dict:
                 0.0,
                 (now - verified.astimezone(now.tzinfo)).total_seconds() / 3600.0,
             )
-            return DP_MAX_AGE_HOURS > 0 and age <= DP_MAX_AGE_HOURS
+            return DP_MAX_AGE_HOURS > 0 and age < DP_MAX_AGE_HOURS
         except Exception:
             return False
 

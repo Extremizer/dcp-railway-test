@@ -5,6 +5,7 @@ Opt-in ADMIN only. Never writes catalog/cache/global FOUND. Controlled probe-car
 from __future__ import annotations
 
 import hmac
+import hashlib
 import logging
 import os
 import re
@@ -110,7 +111,7 @@ def _real_adapter(category_evidence,*,tabs=None,evaluate=None,preflight=None,exp
     def authority(oem):
         requested_holder["oem"]=oem
         return {"manufacturer":"Polaris","item_category":"Parts",
-                "requested_oem":oem,"resolved_oem":category_evidence["resolved_oem"],
+                "requested_oem":oem,"resolved_oem":category_evidence.get("resolved_oem"),
                 "exact_match":True}
     return ExistingBrowserProbeAdapter(
         get_tab=get_tab,evaluate=evaluate,verify_session=verify,
@@ -154,3 +155,91 @@ def admin_browser_price(oem,*,category_resolver,adapter=None,now=None,
         code=classify_failure(exc)
         logging.exception("OEMixi ADMIN browser price failed code=%s",code)
         return _denied(code)
+
+
+def _dealer_identity_ref(expected=None):
+    value=expected if expected is not None else os.getenv("EXTREMIZER_DCP_EXPECTED_DEALER_ACCOUNT")
+    if not isinstance(value,str) or not value.strip():
+        raise ProbeFailure("DEALER_IDENTITY_UNVERIFIED")
+    normalized=value.strip().casefold().encode("utf-8")
+    return "sha256:"+hashlib.sha256(b"extremizer-dcp-dealer-identity-v1\0"+normalized).hexdigest()
+
+def producer_browser_price(oem,*,category_evidence,adapter=None,now=None,
+                           lock_path=None,journal_path=None,expected=None,
+                           dealer_identity_proof_ref=None):
+    """Return a signed-v2 completion candidate from the existing Polaris probe.
+
+    This does not write cache/FOUND itself. Server completion remains the only writer.
+    """
+    if not isinstance(oem,str) or OEM_RE.fullmatch(oem) is None:
+        return {"status":"TECHNICAL_ERROR","error_code":"OEM_UNVERIFIED"}
+    evidence=category_evidence if isinstance(category_evidence,dict) else {}
+    required={"manufacturer":"Polaris","oem":oem,"item_category":"Parts"}
+    if any(evidence.get(k)!=v for k,v in required.items()):
+        return {"status":"TECHNICAL_ERROR","error_code":"CATEGORY_UNVERIFIED"}
+    if any(not isinstance(evidence.get(k),str) or not evidence[k].strip()
+           for k in ("category_source_kind","category_source_ref","category_verified_at")):
+        return {"status":"TECHNICAL_ERROR","error_code":"CATEGORY_UNVERIFIED"}
+    current=now or datetime.now(timezone.utc)
+    try:
+        stamp=datetime.fromisoformat(evidence["category_verified_at"].replace("Z","+00:00"))
+        if stamp.tzinfo is None:
+            raise ProbeFailure("CATEGORY_STALE")
+        age=(current-stamp).total_seconds()
+        if age<0 or age>720*3600:
+            raise ProbeFailure("CATEGORY_STALE")
+        runtime=adapter or _real_adapter(evidence,expected=expected)
+        if lock_path is None or journal_path is None:
+            root=Path(tempfile.gettempdir())/"extremizer-producer-polaris"
+            root.mkdir(parents=True,exist_ok=True)
+            lock_path=lock_path or root/"probe.lock"
+            journal_path=journal_path or root/"probe.json"
+        result=run_probe(oem,runtime,lock_path=lock_path,journal_path=journal_path)
+        status=result.get("status")
+        if status not in {"ADMIN_DEALER_CART_PRICE_VERIFIED","ADMIN_PROBE_CART_PRICE_VERIFIED"}:
+            return {"status":"TECHNICAL_ERROR","error_code":result.get("failure_code") or status or "DEALER_PRICE_UNVERIFIED"}
+        if result.get("production_found") is not False or result.get("dealer_price_usd") is not None:
+            return {"status":"TECHNICAL_ERROR","error_code":"UNSAFE_ADMIN_RESULT"}
+        mutated=result.get("cart_mutated")
+        restored=result.get("cart_restored")
+        if status=="ADMIN_DEALER_CART_PRICE_VERIFIED":
+            if mutated is not False or restored is not True:
+                return {"status":"TECHNICAL_ERROR","error_code":"CART_RESTORATION_UNVERIFIED"}
+        elif mutated is not True or restored is not True:
+            return {"status":"TECHNICAL_ERROR","error_code":"CART_RESTORATION_UNVERIFIED"}
+        resolved=str(result.get("resolved_oem") or "")
+        if OEM_RE.fullmatch(resolved) is None:
+            return {"status":"TECHNICAL_ERROR","error_code":"OEM_UNVERIFIED"}
+        price=float(result.get("admin_unit_price_usd"))
+        if not (price>0):
+            return {"status":"TECHNICAL_ERROR","error_code":"DEALER_PRICE_UNVERIFIED"}
+        identity_ref=dealer_identity_proof_ref or _dealer_identity_ref(expected)
+        from polaris_dealer_cart_completion_contract import SOURCE
+        proof={
+            "status":status,
+            "dealer_authenticated":True,
+            "dealer_context_verified":True,
+            "trusted_preflight":True,
+            "cart_restored":True,
+            "production_found":False,
+            "dealer_price_usd":None,
+            "requested_oem":oem,
+            "resolved_oem":resolved,
+            "matched_sku":resolved,
+            "currency":"USD",
+            "quantity":1,
+            "unit_price_usd":price,
+            "subtotal_usd":price,
+            "dealer_identity_proof_ref":identity_ref,
+            "category_source_kind":evidence["category_source_kind"],
+            "category_source_ref":evidence["category_source_ref"],
+            "category_verified_at":evidence["category_verified_at"],
+        }
+        return {
+            "status":"FOUND","manufacturer":"Polaris","query_oem":oem,
+            "matched_sku":resolved,"current_oem":resolved,
+            "dealer_price_usd":price,"currency":"USD","source":SOURCE,
+            "name":None,"dealer_cart_proof":proof,
+        }
+    except Exception as exc:
+        return {"status":"TECHNICAL_ERROR","error_code":classify_failure(exc)}

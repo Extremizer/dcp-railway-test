@@ -138,6 +138,18 @@ def complete_result(db_file, payload: dict) -> dict:
                     verify_polaris_cart_proof(payload,requested_oem=requested_oem,resolved_oem=current_oem,category_evidence=authority)
                 except CartProofError:
                     raise CompletionError(409, "DEALER_CART_UNVERIFIED") from None
+                proof=payload["dealer_cart_proof"]
+                # Preserve correlation/evidence inside the existing cache source field;
+                # no second cache and no DB migration.
+                source = (
+                    source
+                    + "|requested_oem=" + requested_oem
+                    + "|resolved_oem=" + current_oem
+                    + "|request_id=" + str(row["request_id"])
+                    + "|producer_id=" + str(payload["producer_id"])
+                    + "|dealer_identity_ref=" + str(proof["dealer_identity_proof_ref"])
+                    + "|category_ref=" + str(authority["category_source_ref"])
+                )
                 _write_cache(conn, manufacturer, requested_oem, price, source, now)
                 if current_oem != requested_oem:
                     _write_cache(conn, manufacturer, current_oem, price, source, now)

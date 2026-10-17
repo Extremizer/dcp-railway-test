@@ -251,11 +251,29 @@ def _validated_result(item, result):
             or sku not in {query, current} or type(price) not in (int, float)
             or not math.isfinite(price) or price <= 0 or result.get("currency", "USD") != "USD"):
             raise ValueError("invalid_producer_identity_or_price")
-        _dealer_source(result.get("source"), manufacturer, query)
-        # Exact DCP .c2 .dbl parser produces dealer_price_usd, not Retail/MSRP.
-        return {"status": "FOUND", "manufacturer": manufacturer, "query_oem": query,
-                "matched_sku": sku, "current_oem": current, "dealer_price_usd": price,
-                "currency": "USD", "source": result["source"], "name": result.get("name")}
+        if manufacturer == "Polaris":
+            from polaris_dealer_cart_completion_contract import (
+                SOURCE, verify_polaris_cart_proof,
+            )
+            if sku != current or result.get("source") != SOURCE:
+                raise ValueError("invalid_polaris_cart_identity")
+            verify_polaris_cart_proof(
+                result,
+                requested_oem=query,
+                resolved_oem=current,
+                category_evidence=item,
+            )
+            proof=result.get("dealer_cart_proof")
+        else:
+            _dealer_source(result.get("source"), manufacturer, query)
+            proof=None
+        # Exact verified dealer semantics only; MSRP/client values are never accepted.
+        value={"status": "FOUND", "manufacturer": manufacturer, "query_oem": query,
+               "matched_sku": sku, "current_oem": current, "dealer_price_usd": price,
+               "currency": "USD", "source": result["source"], "name": result.get("name")}
+        if proof is not None:
+            value["dealer_cart_proof"]=proof
+        return value
     except Exception:
         return {"status": "TECHNICAL_ERROR", "error_code": "producer_result_contract_rejected"}
 

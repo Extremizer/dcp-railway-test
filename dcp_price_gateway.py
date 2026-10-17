@@ -16,17 +16,36 @@ def _verified_price(result, manufacturer, oem, max_age_hours):
     return (
         result.get("manufacturer") == manufacturer and result.get("query_oem") == oem
         and result.get("currency") == "USD" and dp_live_bridge._valid_dp(price,result.get("source"))
-        and checked is not None and -60 <= (now-checked).total_seconds() <= max_age_hours*3600
+        and checked is not None and -60 <= (now-checked).total_seconds() < max_age_hours*3600
         and max_age_hours > 0
     )
 
 
 def _read_cache(db_file, manufacturer, oem, max_age_hours):
-    """Stage 2 HOLD: no legacy Dealer cache entry can be positive FOUND."""
-    return None
+    """Read only server-committed verified Dealer Price from the existing cache."""
+    if type(max_age_hours) not in (int,float) or not math.isfinite(float(max_age_hours)) or float(max_age_hours)<=0:
+        return None
+    try:
+        with closing(sqlite3.connect(str(db_file),timeout=10)) as conn:
+            row=conn.execute(
+                """SELECT dealer_price_usd,source,last_verified_at
+                     FROM dealer_price_cache
+                    WHERE manufacturer=? AND oem=?""",
+                (manufacturer,oem),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    value={
+        "status":"FOUND","manufacturer":manufacturer,"query_oem":oem,
+        "dealer_price_usd":row[0],"source":row[1],
+        "last_verified_at":row[2],"currency":"USD",
+    }
+    return value if _verified_price(value,manufacturer,oem,float(max_age_hours)) else None
 
 
-def request_price(db_file, manufacturer, oem, *, max_age_hours=168.0, wait_seconds=10.0,
+def request_price(db_file, manufacturer, oem, *, max_age_hours=24.0, wait_seconds=10.0,
                   live_request=None):
     manufacturer,oem = dp_live_bridge._request_key(manufacturer,oem)
     if manufacturer not in MANUFACTURERS or not oem or not math.isfinite(max_age_hours) or max_age_hours<=0:
@@ -68,5 +87,6 @@ class SharedDealerPriceAdapter:
             return {"status":"TECHNICAL_ERROR","error_code":"invalid_gateway_response"}
         if result.get("status") != "FOUND":
             return {k:v for k,v in result.items() if k not in {"dealer_price_usd","msrp_usd","retail","rrp"}}
-        # Stage 2 price provenance remains unverified, even for injected gateways.
-        return {"status":"DEALER_PRICE_UNVERIFIED"}
+        if not _verified_price(result,manufacturer,oem,self.max_age_hours):
+            return {"status":"NO_PRICE","error_code":"dealer_price_verification_failed"}
+        return result
