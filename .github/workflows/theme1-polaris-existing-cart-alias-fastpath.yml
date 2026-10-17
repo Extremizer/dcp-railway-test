@@ -15,5 +15,5 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install beautifulsoup4 websocket-client playwright
-      - run: python -B -m py_compile polaris_probe_cart_transaction.py oemixi_admin_polaris_browser_price.py test_polaris_existing_cart_alias_fastpath.py
-      - run: python -B -m unittest -v test_polaris_existing_cart_alias_fastpath test_polaris_probe_cart_transaction test_polaris_probe_cart_hardening test_polaris_exact_add test_admin_browser_orchestration
+      - run: python -B -m py_compile polaris_probe_cart_transaction.py oemixi_admin_polaris_browser_price.py test_polaris_existing_cart_alias_fastpath.py test_polaris_alias_authority_wiring.py
+      - run: python -B -m unittest -v test_polaris_existing_cart_alias_fastpath test_polaris_alias_authority_wiring test_polaris_probe_cart_transaction test_polaris_probe_cart_hardening test_polaris_exact_add test_admin_browser_orchestration
