@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import math
 import re
 import shutil
 import sqlite3
@@ -202,6 +203,7 @@ def lookup_oem(oem: str | None) -> dict | None:
         if str(weight_state or "") == "APPROX_LEGACY"
         and safe_actual_weight is None
         and actual_weight_kg is not None
+        and math.isfinite(float(actual_weight_kg))
         and float(actual_weight_kg) > 0
         and not bool(actual_weight_conflict)
         and not bool(needs_review)
@@ -281,3 +283,20 @@ def health() -> dict:
         "unique_oem": int(count),
         "item_types": types,
     }
+
+
+def reference_client_calculation_weight_kg(reference: dict | None) -> float | None:
+    """Preliminary calculation weight; never an actual/measured weight."""
+    from decimal import Decimal, ROUND_CEILING
+    if not isinstance(reference, dict):
+        return None
+    raw = reference.get("actual_weight_kg")
+    if raw is None:
+        raw = reference.get("reference_calculation_weight_kg")
+    try:
+        value = Decimal(str(raw))
+        if not value.is_finite() or value <= 0:
+            return None
+        return float((value * 10).to_integral_value(rounding=ROUND_CEILING) / 10)
+    except (ValueError, TypeError, ArithmeticError):
+        return None
