@@ -95,7 +95,10 @@ jobs:
 
       - name: Common PriceSource and consumer regressions
         run: |
-          python -B -m unittest -v             test_polaris_consumer_pricesource.py             test_procenka_dp_bridge.py             test_oemixibot_railway_runtime.py             test_web2_host_integration.py
+          python -B -m unittest -v             test_polaris_consumer_pricesource.py             test_procenka_dp_bridge.py             test_oemixibot_railway_runtime.py
+          # This fixture patches process environment before importing web_app/core.
+          # Its own header requires a fresh interpreter.
+          python -B -m unittest -v test_web2_host_integration.py
 
       - name: Non-Polaris and no-MSRP fallback regressions
         run: |
@@ -117,7 +120,8 @@ jobs:
 
       - name: WEB2 core compatibility
         run: |
-          python -B -m unittest -v             test_web2_contract.py             test_web2_client_mvp.py             test_web2_functional_hardening.py             test_web2_search_ux_m1.py             test_web2_product_card_m2.py             test_web2_cart_m3.py             test_web2_mobile_m4.py             test_web2_host_integration.py
+          python -B -m unittest -v             test_web2_contract.py             test_web2_client_mvp.py             test_web2_functional_hardening.py             test_web2_search_ux_m1.py             test_web2_product_card_m2.py             test_web2_cart_m3.py             test_web2_mobile_m4.py
+          python -B -m unittest -v test_web2_host_integration.py
 
       - name: No forbidden release-scope changes
         shell: bash
