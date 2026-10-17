@@ -113,7 +113,7 @@ class RuntimeGatewayTests(unittest.TestCase):
         source=source.replace('    if adapter is not None:\n        app.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter\n','')
         data=source.encode()
         blob=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
-        self.assertEqual(blob,'19e9dd9025e2730dd2d016852221e465c2c9f21b')  # PR39 + approved Stage B MSRP-only admin display
+        self.assertEqual(blob,'027e33cbb98792e2a4033dc6c197aefb3ec26ace')  # PR39 + Stage B + approved Arctic Cat reference-weight card argument
 
 
 if __name__=='__main__': unittest.main()
