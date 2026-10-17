@@ -29,6 +29,7 @@ from oemixibot_poller_fence import (
     build_fence_router,
     read_fence,
     transition_to_railway,
+    transition_to_windows,
 )
 from oemixibot_railway_runtime import (
     DEALER_MAX_AGE_HOURS,
@@ -604,6 +605,99 @@ class PollerFenceTests(unittest.TestCase):
                 fence_client.require_railway_owner()["active_owner"],
                 OWNER_RAILWAY,
             )
+
+    def test_round_trip_rollback_requires_railway_stop_evidence(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "coordination.db"
+            initial = read_fence(db)
+            railway = transition_to_railway(
+                db,
+                expected_generation=initial["generation"],
+                windows_stop_evidence="verified-windows-stop-evidence-roundtrip",
+                actor="release-control",
+            )
+            self.assertEqual(railway["active_owner"], OWNER_RAILWAY)
+            self.assertEqual(railway["generation"], 2)
+
+            with self.assertRaisesRegex(ValueError, "railway_stop_evidence_required"):
+                transition_to_windows(
+                    db,
+                    expected_generation=railway["generation"],
+                    railway_stop_evidence="too-short",
+                    actor="release-control",
+                )
+
+            windows = transition_to_windows(
+                db,
+                expected_generation=railway["generation"],
+                railway_stop_evidence="verified-railway-stop-evidence-roundtrip",
+                actor="release-control",
+            )
+            self.assertEqual(windows["active_owner"], OWNER_WINDOWS)
+            self.assertEqual(windows["generation"], 3)
+            self.assertEqual(windows["actor"], "release-control")
+            self.assertEqual(
+                windows["evidence_sha256"],
+                hashlib.sha256(
+                    b"verified-railway-stop-evidence-roundtrip"
+                ).hexdigest(),
+            )
+
+            api = FastAPI()
+            api.include_router(build_fence_router(db_file=db, root_secret=SECRET))
+            client = TestClient(api)
+            self.addCleanup(client.close)
+            fence_client = PollerFenceClient(
+                "http://dcp-railway-test.railway.internal:8080",
+                SECRET,
+                opener=local_opener(client),
+                allow_railway_private_http=True,
+            )
+            with self.assertRaisesRegex(RuntimeError, "blocks_railway"):
+                fence_client.require_railway_owner()
+
+    def test_rollback_compare_and_swap_and_owner_are_fail_closed(self):
+        with tempfile.TemporaryDirectory() as td:
+            db = Path(td) / "coordination.db"
+            initial = read_fence(db)
+            with self.assertRaisesRegex(
+                ValueError, "expected_generation_invalid|not_owned_by_railway"
+            ):
+                transition_to_windows(
+                    db,
+                    expected_generation=1,
+                    railway_stop_evidence="verified-railway-stop-evidence",
+                    actor="release-control",
+                )
+
+            railway = transition_to_railway(
+                db,
+                expected_generation=1,
+                windows_stop_evidence="verified-windows-stop-evidence",
+                actor="release-control",
+            )
+            with self.assertRaisesRegex(ValueError, "generation_mismatch"):
+                transition_to_windows(
+                    db,
+                    expected_generation=railway["generation"] + 1,
+                    railway_stop_evidence="verified-railway-stop-evidence",
+                    actor="release-control",
+                )
+            windows = transition_to_windows(
+                db,
+                expected_generation=railway["generation"],
+                railway_stop_evidence="verified-railway-stop-evidence",
+                actor="release-control",
+            )
+            with self.assertRaisesRegex(
+                ValueError, "generation_mismatch|not_owned_by_railway"
+            ):
+                transition_to_windows(
+                    db,
+                    expected_generation=windows["generation"],
+                    railway_stop_evidence="second-rollback-evidence",
+                    actor="release-control",
+                )
 
     def test_transition_requires_stop_evidence_and_compare_and_swap(self):
         with tempfile.TemporaryDirectory() as td:
