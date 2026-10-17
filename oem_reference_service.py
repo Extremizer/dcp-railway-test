@@ -196,7 +196,22 @@ def lookup_oem(oem: str | None) -> dict | None:
         else None
     )
 
+    # Keep legacy approximations separate from authoritative actual_weight_kg.
+    legacy_reference = (
+        float(actual_weight_kg)
+        if str(weight_state or "") == "APPROX_LEGACY"
+        and safe_actual_weight is None
+        and actual_weight_kg is not None
+        and float(actual_weight_kg) > 0
+        and not bool(actual_weight_conflict)
+        and not bool(needs_review)
+        else None
+    )
+
     return {
+        "reference_calculation_weight_kg": legacy_reference,
+        "reference_weight_quality": "approximate_legacy" if legacy_reference is not None else None,
+        "reference_weight_source": "arctic_cat_legacy:oem_reference_db" if legacy_reference is not None else None,
         "oem": str(stored_oem),
         "item_type": safe_item_type,
         "actual_weight_kg": safe_actual_weight,
