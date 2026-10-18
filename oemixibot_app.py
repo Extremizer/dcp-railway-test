@@ -10,6 +10,7 @@ from dcp_price_gateway import SharedDealerPriceAdapter
 from oemixibot_finance import FinanceEngine
 from supplier_admin_auth import is_telegram_admin, telegram_admin_ids
 from oemixibot_analytics_client import send_oem_request_async
+import unified_analytics_producer
 from oemixibot_identity_client import lookup_shared_identity
 import oem_identity_service
 from oemixibot_identity_client import lookup_shared_identity
@@ -571,6 +572,9 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if u:
             context.application.create_task(send_oem_request_async(
                 telegram_user_id=u.id,
+                telegram_message_id=update.effective_message.message_id,
+                source_chat_id=update.effective_chat.id,
+                producer_db=STORE.path,
                 username=u.username,
                 first_name=u.first_name,
                 last_name=u.last_name,
@@ -593,7 +597,18 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                     offer.get("actual_weight_kg"),offer.get("volume_weight_kg"))
     cart=STORE.cart_view(dealer["id"])
     cart_qty=sum(int(r["qty"]) for r in cart["items"])
-    rows=[[InlineKeyboardButton("➕ В корзину",callback_data="add:"+oem)]]
+    add_callback="add:"+oem
+    if unified_analytics_producer.enabled() and u:
+        token=unified_analytics_producer.register_dealer_card(
+            STORE.path, dealer_id=dealer["id"], telegram_user_id=u.id,
+            chat_id=update.effective_chat.id,
+            message_id=update.effective_message.message_id,
+            oem=offer.get("oem") or oem,
+        )
+        if token:
+            context.user_data["offer_token:"+token]=dict(offer)
+            add_callback="add:"+token
+    rows=[[InlineKeyboardButton("➕ В корзину",callback_data=add_callback)]]
     if cart_qty:
         rows.append([InlineKeyboardButton(f"🛒 Корзина · {cart_qty} шт. · ${cart['total_usd']:,.2f}",callback_data="cart")])
     kb=InlineKeyboardMarkup(rows)
@@ -601,6 +616,9 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if u:
         context.application.create_task(send_oem_request_async(
             telegram_user_id=u.id,
+            telegram_message_id=update.effective_message.message_id,
+            source_chat_id=update.effective_chat.id,
+            producer_db=STORE.path,
             username=u.username,
             first_name=u.first_name,
             last_name=u.last_name,
@@ -1144,6 +1162,12 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     await q.edit_message_text(cart_message(cart) if cart["items"] else "🛒 Корзина пуста.",reply_markup=_cart_keyboard(cart))
 
 
+async def _unified_analytics_post_init(application):
+    unified_analytics_producer.begin_replay(application, STORE.path)
+
+async def _unified_analytics_post_shutdown(application):
+    await unified_analytics_producer.stop_replay(application)
+
 def build_application(
     token=None,
     *,
@@ -1164,9 +1188,15 @@ def build_application(
         )
     )
     STORE.init(); STORE.ensure_cart_schema()
+    if unified_analytics_producer.enabled():
+        unified_analytics_producer.initialize(STORE.path)
+        unified_analytics_producer.initialize_dealer_provenance(STORE.path)
     token=token or os.getenv("OEMIXIBOT_TOKEN","").strip()
     if not token: raise RuntimeError("OEMIXIBOT_TOKEN is not configured")
-    app=Application.builder().token(token).build()
+    builder=Application.builder().token(token)
+    if unified_analytics_producer.enabled():
+        builder=builder.post_init(_unified_analytics_post_init).post_shutdown(_unified_analytics_post_shutdown)
+    app=builder.build()
     if adapter is not None:
         app.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter
     app.add_handler(CommandHandler("start",start))

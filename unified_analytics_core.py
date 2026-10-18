@@ -23,6 +23,11 @@ def initialize(db):
     with _conn(db) as c:
         c.execute("CREATE TABLE IF NOT EXISTS analytics_delivery_keys (source_bot TEXT NOT NULL, delivery_key TEXT NOT NULL, request_id INTEGER NOT NULL REFERENCES pricing_crm_requests(id), PRIMARY KEY(source_bot,delivery_key))")
         c.execute("CREATE TABLE IF NOT EXISTS analytics_pending (source_bot TEXT NOT NULL, delivery_key TEXT NOT NULL, payload_json TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error_code TEXT, next_attempt_at TEXT, PRIMARY KEY(source_bot,delivery_key))")
+        c.execute("""CREATE TABLE IF NOT EXISTS analytics_conversion_events (
+          request_id INTEGER NOT NULL REFERENCES pricing_crm_requests(id),
+          event_type TEXT NOT NULL CHECK(event_type IN ('CART','ORDER_PLACED')),
+          order_id TEXT NOT NULL DEFAULT '', event_at TEXT NOT NULL,
+          PRIMARY KEY(request_id,event_type,order_id))""")
 
 def begin(db,*,source_bot,source_kind,oem,delivery_key,**identity):
     if source_bot not in SOURCES or not delivery_key or not oem:raise ValueError("invalid_event_identity")
@@ -34,28 +39,30 @@ def begin(db,*,source_bot,source_kind,oem,delivery_key,**identity):
             if row:
                 original=c.execute("SELECT source_kind,oem,manufacturer,telegram_user_id,source_chat_id,telegram_message_id FROM pricing_crm_requests WHERE id=?",(row[0],)).fetchone()
                 expected=(source_kind,oem,identity.get('manufacturer'),identity.get('telegram_user_id'),identity.get('source_chat_id'),identity.get('telegram_message_id'))
-                if original is None or tuple(original)!=expected:
+                if original is None or any(a!=b for i,(a,b) in enumerate(zip(original,expected)) if i!=2) or (expected[2] is not None and original[2] not in (None,expected[2])):
                     raise ValueError("delivery_identity_conflict")
+                if original[2] is None and expected[2] is not None:
+                    c.execute("UPDATE pricing_crm_requests SET manufacturer=? WHERE id=? AND manufacturer IS NULL",(expected[2],row[0]))
                 return int(row[0])
             cur=c.execute("""INSERT INTO pricing_crm_requests
-               (created_at,updated_at,source_bot,source_kind,oem,manufacturer,telegram_user_id,source_chat_id,telegram_message_id)
-               VALUES(?,?,?,?,?,?,?,?,?)""",(now,now,source_bot,source_kind,oem,identity.get('manufacturer'),identity.get('telegram_user_id'),identity.get('source_chat_id'),identity.get('telegram_message_id')))
+               (created_at,updated_at,source_bot,source_kind,oem,manufacturer,telegram_user_id,source_chat_id,telegram_message_id,username,first_name,last_name,source_chat_title)
+               VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",(now,now,source_bot,source_kind,oem,identity.get('manufacturer'),identity.get('telegram_user_id'),identity.get('source_chat_id'),identity.get('telegram_message_id'),identity.get('username'),identity.get('first_name'),identity.get('last_name'),identity.get('source_chat_title')))
             rid=cur.lastrowid
             c.execute("INSERT INTO analytics_delivery_keys VALUES(?,?,?)",(source_bot,delivery_key,rid))
             return rid
     except (sqlite3.Error, FileNotFoundError):
         return None
 
-def complete(db,request_id,*,result_status,price_status,price=None,currency=None,stock_status=None,stock=None):
+def complete(db,request_id,*,result_status,price_status,price=None,currency=None,stock_status=None,stock=None,manufacturer=None):
     if request_id is None:return False
     if price is not None and (currency not in ('RUB','USD') or price<0):return False
     if price is None and currency is not None:return False
     try:
         with _conn(db) as c:
             result=c.execute("""UPDATE pricing_crm_requests SET updated_at=?,
-              result_status=?,price_status=?,display_price_amount=?,display_price_currency=?,
+              manufacturer=COALESCE(?,manufacturer),result_status=?,price_status=?,display_price_amount=?,display_price_currency=?,
               stock_rf_status=?,stock_rf_json=?
-              WHERE id=? AND result_status IS NULL""",(datetime.now(timezone.utc).isoformat(),result_status,price_status,price,currency,stock_status,json.dumps(stock,ensure_ascii=False) if stock is not None else None,request_id))
+              WHERE id=? AND result_status IS NULL""",(datetime.now(timezone.utc).isoformat(),manufacturer,result_status,price_status,price,currency,stock_status,json.dumps(stock,ensure_ascii=False) if stock is not None else None,request_id))
             if result.rowcount==1:return True
             old=c.execute("SELECT result_status,price_status,display_price_amount,display_price_currency,stock_rf_status,stock_rf_json FROM pricing_crm_requests WHERE id=?",(request_id,)).fetchone()
             return bool(old and old[0]==result_status and old[1]==price_status and old[2]==price and old[3]==currency and old[4]==stock_status and (json.loads(old[5]) if old[5] is not None else None)==stock)
@@ -103,3 +110,44 @@ def query(db,*,filters,limit=50,offset=0):
         return {'total':total,'items':out,'limit':limit,'offset':offset}
     finally:
         ro.close()
+
+def link_exact(db,*,source_bot,delivery_key,oem,telegram_user_id,action,order_id=None):
+    """Resolve ONLY the immutable source delivery identity to its exact request_id.
+
+    Conversion never uses the latest OEM / same-user heuristic. Returns None
+    for missing or mismatching identity; never creates an analytics request.
+    """
+    if (source_bot not in ('pricing','oemixibot') or not delivery_key or not oem
+        or telegram_user_id is None or action not in ('CART','ORDER_PLACED')):
+        return None
+    if action=='ORDER_PLACED' and not str(order_id or '').strip():
+        return None
+    if action=='CART' and order_id is not None:return None
+    stamp=datetime.now(timezone.utc).isoformat()
+    try:
+        with _conn(db) as c:
+            c.execute('BEGIN IMMEDIATE')
+            row=c.execute("""SELECT r.id,r.oem,r.telegram_user_id,r.cart_added,r.order_id
+                FROM analytics_delivery_keys k JOIN pricing_crm_requests r
+                ON r.id=k.request_id
+                WHERE k.source_bot=? AND k.delivery_key=? AND r.source_bot=?""",
+                (source_bot,delivery_key,source_bot)).fetchone()
+            if (row is None or row['oem']!=oem or row['telegram_user_id']!=int(telegram_user_id)):
+                return None
+            rid=row['id']
+            if action=='CART':
+                if row['order_id']:return None
+                c.execute("""UPDATE pricing_crm_requests SET cart_added=1,
+                   cart_added_at=COALESCE(cart_added_at,?),updated_at=? WHERE id=?""",
+                   (stamp,stamp,rid))
+            else:
+                if not row['cart_added'] or row['order_id'] not in (None,str(order_id)):
+                    return None
+                c.execute("""UPDATE pricing_crm_requests SET order_id=?,
+                   ordered_at=COALESCE(ordered_at,?),updated_at=? WHERE id=?""",
+                   (str(order_id),stamp,stamp,rid))
+            c.execute("""INSERT OR IGNORE INTO analytics_conversion_events
+              (request_id,event_type,order_id,event_at) VALUES(?,?,?,?)""",
+              (rid,action,str(order_id or ''),stamp))
+            return int(rid)
+    except (sqlite3.Error,FileNotFoundError,ValueError,TypeError):return None
