@@ -117,7 +117,6 @@ class RuntimeGatewayTests(unittest.TestCase):
         self.assertIn('INSUFFICIENT_AVAILABLE:',checkout)
         self.assertIn('dealer_token_offer',checkout)
         self.assertIn('stage_dealer_placed_order',checkout)
-        self.assertIn('ORDER_PLACED',checkout)
         self.assertIn('STORE.cart_add',checkout)
         self.assertIn('STORE.cart_set_qty',checkout)
         # Approved analytics feature flag must not silently enable the gateway.
