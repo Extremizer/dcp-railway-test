@@ -1165,7 +1165,14 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         else:
             raise RuntimeError("Could not generate unique order ID")
         try:
-            total=STORE.checkout_cart(dealer["id"],oid)
+            analytics_hook=None
+            if unified_analytics_producer.enabled() and update.effective_user:
+                uid=update.effective_user.id
+                def analytics_hook(conn,dealer_id,order_id,items):
+                    unified_analytics_producer.stage_dealer_placed_order(
+                        STORE.path,dealer_id=dealer_id,telegram_user_id=uid,
+                        order_id=order_id,cart_oems=sorted({r["oem"] for r in items}),conn=conn)
+            total=STORE.checkout_cart(dealer["id"],oid,order_analytics=analytics_hook) if analytics_hook else STORE.checkout_cart(dealer["id"],oid)
         except ValueError as e:
             msg=str(e)
             if msg.startswith("INSUFFICIENT_AVAILABLE:"):
@@ -1176,16 +1183,10 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 text="\n".join(["⛔ Недостаточно предоплаченного USD-баланса для заказа.","",f"Доступно для заказа: {usd(available)}",f"Сумма корзины: {usd(required)}",f"Не хватает: {usd(shortage)}","","Пополните баланс или уменьшите корзину."])
                 await q.edit_message_text(text,reply_markup=_cart_keyboard(cart)); return
             raise
-        # Failed checkout never reaches this point. Preserve immutable
-        # request→CART→ORDER lineage only for OEMs in the placed order.
-        if unified_analytics_producer.enabled() and update.effective_user:
-            recorded=unified_analytics_producer.stage_dealer_placed_order(
-                STORE.path,dealer_id=dealer["id"],
-                telegram_user_id=update.effective_user.id,order_id=oid,
-                cart_oems=sorted({r["oem"] for r in cart["items"]}))
-            if recorded:
-                context.application.create_task(
-                    asyncio.to_thread(unified_analytics_producer.flush_pending,STORE.path))
+        # ORDER_PLACED is committed in the same SQLite transaction as checkout.
+        if analytics_hook is not None:
+            context.application.create_task(
+                asyncio.to_thread(unified_analytics_producer.flush_pending,STORE.path))
         await q.edit_message_text("✅ Заказ "+oid+" подтверждён.\nСумма заказа: $"+format(total,".2f")); return
     cart=STORE.cart_view(dealer["id"])
     if audit:
