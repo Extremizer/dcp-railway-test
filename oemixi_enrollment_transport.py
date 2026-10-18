@@ -38,13 +38,26 @@ def make_headers(secret,body,*,timestamp=None,nonce=None):
     return {"X-Enrollment-Ts":ts,"X-Enrollment-Nonce":n,
             "X-Enrollment-Signature":sign(secret,ts,n,body)}
 
+def initialize_nonce_store(nonce_db):
+    """Explicit preflight/migration step, never invoked by HTTP requests."""
+    with sqlite3.connect(nonce_db, timeout=3) as c:
+        c.execute("""CREATE TABLE IF NOT EXISTS oemixi_enrollment_nonces
+                  (nonce TEXT PRIMARY KEY,received INTEGER NOT NULL)""")
+        c.commit()
+
+
 def create_router(*,db_file,secret,verifier,nonce_db=None):
     """Explicit trusted-server registration, never an OEMixi consumer route."""
     if not callable(verifier):
         raise ValueError("trusted_catalog_verifier_required")
     _key(secret)
+    if not nonce_db or str(nonce_db)==str(db_file):
+        raise ValueError("dedicated_persistent_nonce_db_required")
+    with sqlite3.connect(nonce_db, timeout=3) as c:
+        if not c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='oemixi_enrollment_nonces'").fetchone():
+            raise ValueError("nonce_schema_preflight_required")
     router=APIRouter()
-    used=nonce_db or db_file
+    used=nonce_db
 
     @router.post(PATH)
     async def enroll(request:Request,
@@ -71,8 +84,6 @@ def create_router(*,db_file,secret,verifier,nonce_db=None):
             raise HTTPException(403,"invalid_enrollment_auth")
         with sqlite3.connect(used,timeout=3) as c:
             c.execute("BEGIN IMMEDIATE")
-            c.execute("""CREATE TABLE IF NOT EXISTS oemixi_enrollment_nonces
-                      (nonce TEXT PRIMARY KEY,received INTEGER NOT NULL)""")
             c.execute("DELETE FROM oemixi_enrollment_nonces WHERE received<?",(ts-180,))
             try:
                 c.execute("INSERT INTO oemixi_enrollment_nonces VALUES(?,?)",

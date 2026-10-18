@@ -43,6 +43,19 @@ def bind_admin_polaris_price_resolver(application, resolver):
     return resolver
 
 
+def bind_verified_category_bootstrap(application, bootstrap):
+    """Explicit opt-in after trusted producer/server evidence wiring review."""
+    if getattr(application,'running',False):
+        raise ValueError('category_bootstrap_bind_after_start_denied')
+    if not callable(bootstrap):
+        raise ValueError('trusted_category_bootstrap_callable_required')
+    key='oemixi_verified_category_bootstrap'
+    if key in application.bot_data:
+        raise ValueError('category_bootstrap_already_bound')
+    application.bot_data[key]=bootstrap
+    return bootstrap
+
+
 def bind_shared_price_gateway(application, gateway, *, dealer_max_age_hours):
     """Explicit application-local injection; no environment/runtime auto-switch."""
     if getattr(application, 'running', False):

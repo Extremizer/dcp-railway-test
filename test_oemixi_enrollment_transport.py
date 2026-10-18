@@ -8,7 +8,7 @@ from pathlib import Path
 from datetime import datetime,timezone
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from oemixi_enrollment_transport import create_router,make_headers,canonical_payload,PATH
+from oemixi_enrollment_transport import create_router,make_headers,canonical_payload,initialize_nonce_store,PATH
 
 SECRET="synthetic-only-secret-abcdefghijklmnopqrstuvwxyz-123456"
 
@@ -32,8 +32,10 @@ class EnrollmentTransportTests(unittest.TestCase):
           current_oem TEXT,alias_kind TEXT,PRIMARY KEY(manufacturer,alias_oem));
         """)
         c.close()
+        self.nonce_db=str(Path(self.tmp.name)/"nonces.db")
+        initialize_nonce_store(self.nonce_db)
         app=FastAPI()
-        app.include_router(create_router(db_file=self.db,secret=SECRET,verifier=proof))
+        app.include_router(create_router(db_file=self.db,secret=SECRET,verifier=proof,nonce_db=self.nonce_db))
         self.client=TestClient(app)
     def tearDown(self):
         self.client.close()
@@ -56,6 +58,23 @@ class EnrollmentTransportTests(unittest.TestCase):
         self.assertEqual(self.submit(body,h).status_code,200)
         self.assertEqual(self.submit(body,h).status_code,409)
         self.assertEqual(self.count(),1)
+    def test_restart_persistent_replay_denied(self):
+        body=canonical_payload("Polaris","3211070")
+        headers=make_headers(SECRET,body)
+        self.assertEqual(self.submit(body,headers).status_code,200)
+        restarted=FastAPI()
+        restarted.include_router(create_router(db_file=self.db,secret=SECRET,verifier=proof,
+                                                nonce_db=self.nonce_db))
+        with TestClient(restarted) as client:
+            self.assertEqual(client.post(PATH,content=body,headers=headers).status_code,409)
+        self.assertEqual(self.count(),1)
+
+    def test_schema_preflight_required(self):
+        absent=str(Path(self.tmp.name)/"never_initialized.db")
+        with self.assertRaises(ValueError):
+            create_router(db_file=self.db,secret=SECRET,verifier=proof,nonce_db=absent)
+        self.assertEqual(self.count(),0)
+
     def test_tampered_body_denied(self):
         original=canonical_payload("Polaris","3211070")
         h=make_headers(SECRET,original)
@@ -67,9 +86,11 @@ class EnrollmentTransportTests(unittest.TestCase):
         self.assertEqual(self.submit(b,h).status_code,403)
         self.assertEqual(self.count(),0)
     def test_untrusted_verifier_blocks_authority(self):
+        self.nonce_db=str(Path(self.tmp.name)/"nonces.db")
+        initialize_nonce_store(self.nonce_db)
         app=FastAPI()
         app.include_router(create_router(db_file=self.db,secret=SECRET,
-                         verifier=lambda m,o:{**proof(m,o),"verified":False}))
+                         verifier=lambda m,o:{**proof(m,o),"verified":False},nonce_db=self.nonce_db))
         with TestClient(app) as client:
             b=canonical_payload("Polaris","3211070")
             r=client.post(PATH,content=b,headers=make_headers(SECRET,b))
