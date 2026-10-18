@@ -25,6 +25,7 @@ jobs:
             test_unified_analytics_oemixi_callback_e2e \
             test_unified_analytics_real_dealer_checkout \
             test_unified_analytics_admin_integration \
+            test_unified_analytics_client_checkout_regression \
             test_oemixi_secure_gateway_transport \
             test_oemixi_shared_price_runtime \
             test_oemixibot_railway_runtime
