@@ -267,5 +267,5 @@ def stage_dealer_placed_order(db,*,dealer_id,telegram_user_id,order_id,cart_oems
                   (delivery_key,payload_json,created_at) VALUES(?,?,?)""",
                   (event_key,body,time.time()))
             c.execute('DELETE FROM analytics_dealer_cart_provenance WHERE dealer_id=?',(str(dealer_id),))
-        return True
+        return bool(links)
     except (OSError,sqlite3.Error,ValueError):return False
