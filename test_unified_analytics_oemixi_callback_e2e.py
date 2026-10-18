@@ -73,6 +73,9 @@ class RealCallbackTests(unittest.TestCase):
             token,offers=self.token()
             self.call("add:"+token,offers=offers,user=43)
             self.assertEqual(self.store.items,{})
+            with patch.object(app,"_dealer",return_value={"id":"D2","price_coefficient":1}):
+                self.call("add:"+token,offers=offers,user=42)
+            self.assertEqual(self.store.items,{})
             self.call("add:"+token,offers=offers,user=42)
             self.assertEqual(self.store.items,{"3211070":1})
             with sqlite3.connect(self.path) as c:
