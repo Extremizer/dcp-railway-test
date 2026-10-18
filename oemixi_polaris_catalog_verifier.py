@@ -44,17 +44,21 @@ def verify_exact_polaris(manufacturer,oem,*,tabs=None,evaluate=None,session_guar
         tab=candidates[0]
         canonical,slug=dcp._parts_slug("Polaris")
         endpoint=f"/oemparts/partsearch/{slug}?partsearch={oem}"
-        expr="""(async()=>{{
+        # Only inspect a page already opened via normal browser navigation.
+        # Never issue background fetch or navigate automatically after Cloudflare 403.
+        if urlsplit(str(tab.get('url') or '')).path != f'/oemparts/partsearch/{slug}':
+            return None
+        if urlsplit(str(tab.get('url') or '')).query != f'partsearch={oem}':
+            return None
+        expr="""(()=>{{
           const before=location.href;
           if(location.protocol!=='https:' || location.hostname!=='www.dealercostparts.com')
              return {{stop:'origin'}};
           const text=document.body?.innerText||'';
           if(!/sign out/i.test(text) || /just a moment|cloudflare|verify you are human/i.test(text))
              return {{stop:'auth'}};
-          const r=await fetch({url},{{credentials:'include',cache:'no-store',method:'GET'}});
-          if(r.status!==200)return {{stop:'http'}};
-          const html=await r.text();
-          const doc=new DOMParser().parseFromString(html,'text/html');
+          const doc=document;
+          if(location.pathname+location.search!=={path})return {{stop:'wrong_page'}};
           const output=doc.body?.innerText||'';
           if(!/sign out/i.test(output) || /just a moment|cloudflare|verify you are human/i.test(output))
              return {{stop:'auth'}};

@@ -3,10 +3,10 @@ import unittest
 from unittest.mock import Mock
 from oemixi_polaris_catalog_verifier import verify_exact_polaris
 
-TAB={"type":"page","url":"https://www.dealercostparts.com/account/"}
+TAB={"type":"page","url":"https://www.dealercostparts.com/oemparts/partsearch/polaris?partsearch=3211070"}
 GOOD={"origin":"https://www.dealercostparts.com",
-      "before":"https://www.dealercostparts.com/account/",
-      "after":"https://www.dealercostparts.com/account/",
+      "before":"https://www.dealercostparts.com/oemparts/partsearch/polaris?partsearch=3211070",
+      "after":"https://www.dealercostparts.com/oemparts/partsearch/polaris?partsearch=3211070",
       "exact_sku":"3211070","current_oem":"3211070","name":"DRIVE BELT",
       "msrp":"$114.99","catalog":"Parts",
       "source_path":"/oemparts/partsearch/polaris?partsearch=3211070"}
@@ -31,6 +31,24 @@ class PolarisVerifierTests(unittest.TestCase):
         result=verify_exact_polaris("Polaris","3211070",tabs=lambda:[TAB],
             evaluate=evaluate,session_guard=lambda:True)
         self.assertEqual(result["msrp_usd"],114.99)
+
+    def test_no_hidden_fetch_or_navigation(self):
+        def inspect(tab, expr):
+            self.assertNotIn('fetch(',expr)
+            self.assertNotIn('location.assign(',expr)
+            self.assertIn('const doc=document',expr)
+            self.assertIn('wrong_page',expr)
+            return GOOD
+        self.assertIsNotNone(verify_exact_polaris('Polaris','3211070',
+            tabs=lambda:[TAB],evaluate=inspect,session_guard=lambda:True))
+
+    def test_nonmatching_page_fails_without_evaluate(self):
+        calls=[]
+        result=verify_exact_polaris('Polaris','3211070',
+            tabs=lambda:[{'type':'page','url':'https://www.dealercostparts.com/oemparts/c/ski_doo/parts'}],
+            evaluate=lambda *_:calls.append('bad'),session_guard=lambda:True)
+        self.assertIsNone(result)
+        self.assertEqual(calls,[])
 
     def test_session_fail_closed(self):
         self.assertIsNone(self.verify(guard=False))
