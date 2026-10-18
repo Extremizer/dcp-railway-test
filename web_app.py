@@ -75,6 +75,45 @@ app = FastAPI(
 )
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
+# Isolated, explicit opt-in. Missing source secrets fail at startup.
+# No analytics route is visible in the established production config.
+if os.getenv("EXTREMIZER_UNIFIED_ANALYTICS_ENABLE") == "1":
+    import unified_analytics_transport
+    import unified_analytics_admin_api
+
+    _analytics_secrets = {
+        "probnik": os.getenv("EXTREMIZER_ANALYTICS_PROBNIK_SECRET", ""),
+        "pricing": os.getenv("EXTREMIZER_ANALYTICS_PRICING_SECRET", ""),
+        "oemixibot": os.getenv("EXTREMIZER_ANALYTICS_OEMIXIBOT_SECRET", ""),
+    }
+    app.include_router(unified_analytics_transport.build_router(
+        canonical_db=core.ORDERS_DB_FILE,
+        secrets_by_source=_analytics_secrets,
+    ))
+
+    def _analytics_require_web_admin(request: Request) -> str:
+        try:
+            supplier_admin_auth.require_web_admin_access(
+                session_cookie=request.cookies.get(supplier_admin_auth.WEB_ADMIN_COOKIE),
+            )
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="admin_forbidden")
+        return "web_admin"
+
+    def _analytics_audit_read(*, actor: str, action: str, filters: dict) -> None:
+        # Do not log Telegram IDs, chat names, usernames, or query values.
+        import logging
+        logging.getLogger("extremizer.analytics").info(
+            "ADMIN_ANALYTICS_READ actor=%s action=%s filter_fields=%s",
+            actor, action, sorted(filters),
+        )
+
+    app.include_router(unified_analytics_admin_api.create_admin_router(
+        canonical_db=core.ORDERS_DB_FILE,
+        require_admin=_analytics_require_web_admin,
+        audit=_analytics_audit_read,
+    ))
+
 # Supplier Orders uses the exact same persistent orders DB as Telegram.
 supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
 # Schema-only migration for the independent partner-settlement ledger.
@@ -676,6 +715,9 @@ def _init_web1() -> None:
     dp_live_bridge.init(core.ORDERS_DB_FILE)
     dp_live_health.init(core.ORDERS_DB_FILE)
     pricing_analytics.init_analytics(core.ORDERS_DB_FILE)
+    if os.getenv("EXTREMIZER_UNIFIED_ANALYTICS_ENABLE") == "1":
+        import unified_analytics_core
+        unified_analytics_core.initialize(core.ORDERS_DB_FILE)
 
 
 @app.on_event("startup")

@@ -28,6 +28,7 @@ import dealercostparts_manufacturer_finder_v6_6 as finder
 import warehouse_stock_service
 import dp_live_bridge
 import pricing_analytics
+import unified_analytics_producer
 
 TOKEN = os.getenv("PROBNIK_BOT_TOKEN", "").strip()
 ORDERS_DB = Path(
@@ -805,7 +806,7 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     source_chat_id = context.user_data.get("pricing_source_chat_id")
     source_kind = "workchat" if source_chat_id is not None else "private"
-    analytics_request_id = pricing_analytics.begin_request_from_update(
+    analytics_request_id = (unified_analytics_producer if unified_analytics_producer.enabled() else pricing_analytics).begin_request_from_update(
         ORDERS_DB,
         source_bot="probnik",
         source_kind=source_kind,
@@ -832,7 +833,7 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             and float(row["available_quantity"]) > 0
         ]
         price_found = info.get("customer_rub") is not None
-        pricing_analytics.complete_request(
+        (unified_analytics_producer if unified_analytics_producer.enabled() else pricing_analytics).complete_request(
             ORDERS_DB,
             analytics_request_id,
             manufacturer=info.get("manufacturer"),
@@ -855,11 +856,20 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+async def _unified_analytics_post_init(application):
+    unified_analytics_producer.begin_replay(application, ORDERS_DB)
+
+async def _unified_analytics_post_shutdown(application):
+    await unified_analytics_producer.stop_replay(application)
+
 def build_application(token: str | None = None) -> Application:
     token = token or TOKEN
     if not token:
         raise RuntimeError("PROBNIK_BOT_TOKEN is not configured")
-    app = Application.builder().token(token).build()
+    builder = Application.builder().token(token)
+    if unified_analytics_producer.enabled():
+        builder = builder.post_init(_unified_analytics_post_init).post_shutdown(_unified_analytics_post_shutdown)
+    app = builder.build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pricebutton", price_button))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, oem_message))
@@ -874,7 +884,10 @@ def main() -> None:
     )
     logging.getLogger("httpx").setLevel(logging.WARNING)
     init_probnik_identity()
-    pricing_analytics.init_analytics(ORDERS_DB)
+    if unified_analytics_producer.enabled():
+        unified_analytics_producer.initialize(ORDERS_DB)
+    else:
+        pricing_analytics.init_analytics(ORDERS_DB)
     logging.info("PROBNIK polling runtime starting")
     build_application().run_polling(drop_pending_updates=False)
 

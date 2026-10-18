@@ -1,0 +1,31 @@
+name: Theme1 Unified Analytics Combined Linux
+on:
+  push:
+    branches: [theme1-unified-analytics-20261018]
+  workflow_dispatch:
+jobs:
+  combined:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime and test dependencies
+        run: pip install -r requirements.txt
+      - name: Linux combined gate
+        run: |
+          python -B -m unittest -v \
+            test_unified_analytics_isolated \
+            test_unified_analytics_outbox \
+            test_unified_analytics_transport \
+            test_unified_analytics_conversion \
+            test_unified_analytics_three_producer_e2e \
+            test_unified_analytics_blocker_fixes \
+            test_unified_analytics_oemixi_callback_e2e \
+            test_unified_analytics_real_dealer_checkout \
+            test_unified_analytics_admin_integration \
+            test_unified_analytics_client_checkout_regression \
+            test_oemixi_secure_gateway_transport \
+            test_oemixi_shared_price_runtime \
+            test_oemixibot_railway_runtime

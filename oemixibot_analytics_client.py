@@ -9,6 +9,7 @@ One call = one completed dealer OEM request.
 from __future__ import annotations
 
 import asyncio
+import unified_analytics_producer
 import hashlib
 import hmac
 import json
@@ -60,11 +61,25 @@ def send_oem_request(
     display_price_currency: str | None = None,
     base_url: str | None = None,
     timeout: float = 8.0,
+    telegram_message_id: int | None = None,
+    source_chat_id: int | None = None,
+    producer_db: str | None = None,
 ) -> bool:
     """Send one completed OEM request to the shared Railway CRM.
 
     Failure is intentionally non-blocking for the dealer bot.
     """
+    if unified_analytics_producer.enabled():
+        if not producer_db:
+            return False
+        return unified_analytics_producer.send_dealer_completed(
+            producer_db, telegram_user_id=telegram_user_id, oem=oem,
+            telegram_message_id=telegram_message_id, source_chat_id=source_chat_id,
+            username=username, first_name=first_name, last_name=last_name,
+            manufacturer=manufacturer, result_status=result_status,
+            price_status=price_status, display_price_amount=display_price_amount,
+            display_price_currency=display_price_currency,
+        )
     payload: dict[str, Any] = {
         "telegram_user_id": int(telegram_user_id),
         "username": username,

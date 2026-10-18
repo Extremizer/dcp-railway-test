@@ -1,5 +1,5 @@
 """OEMixiBOT Telegram application. Isolated: not wired into current production runtime."""
-import os, secrets, logging, asyncio, asyncio, asyncio, asyncio
+import os, re, secrets, logging, asyncio, asyncio, asyncio, asyncio
 from datetime import datetime
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
@@ -10,6 +10,7 @@ from dcp_price_gateway import SharedDealerPriceAdapter
 from oemixibot_finance import FinanceEngine
 from supplier_admin_auth import is_telegram_admin, telegram_admin_ids
 from oemixibot_analytics_client import send_oem_request_async
+import unified_analytics_producer
 from oemixibot_identity_client import lookup_shared_identity
 import oem_identity_service
 from oemixibot_identity_client import lookup_shared_identity
@@ -571,6 +572,9 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
         if u:
             context.application.create_task(send_oem_request_async(
                 telegram_user_id=u.id,
+                telegram_message_id=update.effective_message.message_id,
+                source_chat_id=update.effective_chat.id,
+                producer_db=STORE.path,
                 username=u.username,
                 first_name=u.first_name,
                 last_name=u.last_name,
@@ -593,7 +597,18 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
                     offer.get("actual_weight_kg"),offer.get("volume_weight_kg"))
     cart=STORE.cart_view(dealer["id"])
     cart_qty=sum(int(r["qty"]) for r in cart["items"])
-    rows=[[InlineKeyboardButton("➕ В корзину",callback_data="add:"+oem)]]
+    add_callback="add:"+oem
+    if unified_analytics_producer.enabled() and u:
+        token=unified_analytics_producer.register_dealer_card(
+            STORE.path, dealer_id=dealer["id"], telegram_user_id=u.id,
+            chat_id=update.effective_chat.id,
+            message_id=update.effective_message.message_id,
+            oem=offer.get("oem") or oem,
+        )
+        if token:
+            context.user_data["offer_token:"+token]=dict(offer)
+            add_callback="add:"+token
+    rows=[[InlineKeyboardButton("➕ В корзину",callback_data=add_callback)]]
     if cart_qty:
         rows.append([InlineKeyboardButton(f"🛒 Корзина · {cart_qty} шт. · ${cart['total_usd']:,.2f}",callback_data="cart")])
     kb=InlineKeyboardMarkup(rows)
@@ -601,6 +616,9 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if u:
         context.application.create_task(send_oem_request_async(
             telegram_user_id=u.id,
+            telegram_message_id=update.effective_message.message_id,
+            source_chat_id=update.effective_chat.id,
+            producer_db=STORE.path,
             username=u.username,
             first_name=u.first_name,
             last_name=u.last_name,
@@ -1090,15 +1108,38 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         await q.edit_message_text(cart_message(cart) if cart["items"] else "🛒 Корзина пуста.",reply_markup=_cart_keyboard(cart)); return
     audit=None
     if data.startswith("add:"):
-        oem=data[4:]; offer=context.user_data.get("offer:"+oem)
+        selector=data[4:]
+        offer=context.user_data.get("offer:"+selector)
+        exact_attribution=None
+        # New analytics cards use opaque tokens, not OEMs. Never trust a
+        # token without both persistent dealer/user binding and the offer.
+        if unified_analytics_producer.enabled() and re.fullmatch(r"ua[0-9a-f]{18}",selector):
+            user=update.effective_user
+            bound=(unified_analytics_producer.dealer_token_offer(
+                STORE.path,token=selector,dealer_id=dealer["id"],
+                telegram_user_id=user.id) if user else None)
+            token_offer=context.user_data.get("offer_token:"+selector)
+            if (not bound or not isinstance(token_offer,dict)
+                or token_offer.get("oem") != bound[0]):
+                await q.edit_message_text("Карточка устарела. Повторите поиск OEM."); return
+            offer=token_offer
+            exact_attribution=(bound[0],bound[1],user.id)
         if not offer:
             await q.edit_message_text("Карточка устарела. Повторите поиск OEM."); return
+        oem=offer.get("oem") or selector
         before=STORE.cart_view(dealer["id"])
-        oldrow=next((x for x in before["items"] if x["oem"]==(offer.get("oem") or oem)),None)
+        oldrow=next((x for x in before["items"] if x["oem"]==oem),None)
         qty_before=oldrow["qty"] if oldrow else 0
-        STORE.cart_add(dealer["id"],offer.get("oem") or oem,offer["dl_usd"],offer.get("manufacturer"),
+        STORE.cart_add(dealer["id"],oem,offer["dl_usd"],offer.get("manufacturer"),
                        offer.get("name"),offer.get("item_type"),1)
-        audit=("add",offer.get("oem") or oem,qty_before,offer["dl_usd"])
+        # Only after the business cart mutation succeeded; failures are
+        # fail-open for checkout, never a second order/CRM database.
+        if exact_attribution:
+            bound_oem,delivery_key,telegram_user_id=exact_attribution
+            unified_analytics_producer.dealer_cart_record(
+                STORE.path,dealer_id=dealer["id"],oem=bound_oem,
+                delivery_key=delivery_key,telegram_user_id=telegram_user_id)
+        audit=("add",oem,qty_before,offer["dl_usd"])
     elif data.startswith(("q+:","q-:","del:")):
         prefix,oem=data.split(":",1); cart=STORE.cart_view(dealer["id"])
         row=next((x for x in cart["items"] if x["oem"]==oem),None)
@@ -1106,6 +1147,9 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
             qty_before=row["qty"]
             qty=0 if prefix=="del" else row["qty"]+(1 if prefix=="q+" else -1)
             STORE.cart_set_qty(dealer["id"],oem,qty)
+            if qty<=0 and unified_analytics_producer.enabled():
+                unified_analytics_producer.clear_dealer_cart(
+                    STORE.path,dealer_id=dealer["id"],oem=oem)
             audit=(prefix,oem,qty_before,row["dl_usd"])
     elif data=="checkout":
         cart=STORE.cart_view(dealer["id"])
@@ -1121,7 +1165,14 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
         else:
             raise RuntimeError("Could not generate unique order ID")
         try:
-            total=STORE.checkout_cart(dealer["id"],oid)
+            analytics_hook=None
+            if unified_analytics_producer.enabled() and update.effective_user:
+                uid=update.effective_user.id
+                def analytics_hook(conn,dealer_id,order_id,items):
+                    unified_analytics_producer.stage_dealer_placed_order(
+                        STORE.path,dealer_id=dealer_id,telegram_user_id=uid,
+                        order_id=order_id,cart_oems=sorted({r["oem"] for r in items}),conn=conn)
+            total=STORE.checkout_cart(dealer["id"],oid,order_analytics=analytics_hook) if analytics_hook else STORE.checkout_cart(dealer["id"],oid)
         except ValueError as e:
             msg=str(e)
             if msg.startswith("INSUFFICIENT_AVAILABLE:"):
@@ -1132,6 +1183,10 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
                 text="\n".join(["⛔ Недостаточно предоплаченного USD-баланса для заказа.","",f"Доступно для заказа: {usd(available)}",f"Сумма корзины: {usd(required)}",f"Не хватает: {usd(shortage)}","","Пополните баланс или уменьшите корзину."])
                 await q.edit_message_text(text,reply_markup=_cart_keyboard(cart)); return
             raise
+        # ORDER_PLACED is committed in the same SQLite transaction as checkout.
+        if analytics_hook is not None:
+            context.application.create_task(
+                asyncio.to_thread(unified_analytics_producer.flush_pending,STORE.path))
         await q.edit_message_text("✅ Заказ "+oid+" подтверждён.\nСумма заказа: $"+format(total,".2f")); return
     cart=STORE.cart_view(dealer["id"])
     if audit:
@@ -1143,6 +1198,12 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
                      datetime.now().isoformat(timespec="seconds"),dealer["id"],action,oem,qty_before,qty_after,unit_price,total_after)
     await q.edit_message_text(cart_message(cart) if cart["items"] else "🛒 Корзина пуста.",reply_markup=_cart_keyboard(cart))
 
+
+async def _unified_analytics_post_init(application):
+    unified_analytics_producer.begin_replay(application, STORE.path)
+
+async def _unified_analytics_post_shutdown(application):
+    await unified_analytics_producer.stop_replay(application)
 
 def build_application(
     token=None,
@@ -1164,9 +1225,15 @@ def build_application(
         )
     )
     STORE.init(); STORE.ensure_cart_schema()
+    if unified_analytics_producer.enabled():
+        unified_analytics_producer.initialize(STORE.path)
+        unified_analytics_producer.initialize_dealer_provenance(STORE.path)
     token=token or os.getenv("OEMIXIBOT_TOKEN","").strip()
     if not token: raise RuntimeError("OEMIXIBOT_TOKEN is not configured")
-    app=Application.builder().token(token).build()
+    builder=Application.builder().token(token)
+    if unified_analytics_producer.enabled():
+        builder=builder.post_init(_unified_analytics_post_init).post_shutdown(_unified_analytics_post_shutdown)
+    app=builder.build()
     if adapter is not None:
         app.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter
     app.add_handler(CommandHandler("start",start))
