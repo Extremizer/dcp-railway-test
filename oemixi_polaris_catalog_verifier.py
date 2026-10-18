@@ -65,9 +65,12 @@ def verify_exact_polaris(manufacturer,oem,*,tabs=None,evaluate=None,session_guar
           const current=(f.querySelector('.itemnumnew')?.textContent||
               f.querySelector('.itemnum')?.textContent||
               f.querySelector('input[name="sku"]')?.value||'').trim();
+          const exactMsrp=[...doc.querySelectorAll('div.c2.act_'+{oem}+' span.dbl')];
           const msrp=(f.getAttribute('data-retail')||
               f.querySelector('input[name="retail"]')?.value||
-              f.querySelector('input[name="msrp"]')?.value||'').trim();
+              f.querySelector('input[name="msrp"]')?.value||
+              f.querySelector('.c2 .dbl')?.textContent||
+              (exactMsrp.length===1 ? exactMsrp[0].textContent : '')||'').trim();
           const name=(f.querySelector('.c1a')?.textContent||'').trim();
           return {{origin:location.origin,before,after:location.href,exact_sku:
               f.querySelector('input[name="sku"]')?.value,current_oem:current,

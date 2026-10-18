@@ -21,6 +21,17 @@ class PolarisVerifierTests(unittest.TestCase):
         self.assertEqual(result["current_oem"],"3211070")
         self.assertEqual(result["msrp_usd"],114.99)
         self.assertEqual(result["source_kind"],"live_public_form_metadata")
+    def test_live_dom_msrp_selector_is_exact_oem_scoped(self):
+        def evaluate(tab, expr):
+            self.assertIn("div.c2.act_'+\"3211070\"+' span.dbl'", expr)
+            self.assertIn("forms.length!==1",expr)
+            self.assertIn("exactMsrp.length===1",expr)
+            self.assertIn("f.querySelector('.c2 .dbl')",expr)
+            return GOOD
+        result=verify_exact_polaris("Polaris","3211070",tabs=lambda:[TAB],
+            evaluate=evaluate,session_guard=lambda:True)
+        self.assertEqual(result["msrp_usd"],114.99)
+
     def test_session_fail_closed(self):
         self.assertIsNone(self.verify(guard=False))
     def test_bad_origin_fail_closed(self):
