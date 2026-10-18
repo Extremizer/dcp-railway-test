@@ -22,6 +22,15 @@ class UnifiedTests(unittest.TestCase):
   for s,i in zip(('probnik','pricing','oemixibot'),ids):
    self.assertEqual(self.event(s,'telegram:42'),i)
   self.assertEqual(core.query(self.db,filters={})['total'],3)
+ def test_conflicting_delivery_key_rejected(self):
+  original=self.event('pricing','fixed')
+  with self.assertRaises(ValueError):
+   core.begin(self.db,source_bot='pricing',source_kind='private',oem='9999999',
+              delivery_key='fixed',telegram_user_id=123,source_chat_id=456)
+  with self.assertRaises(ValueError):
+   core.begin(self.db,source_bot='pricing',source_kind='private',oem='3211070',
+              delivery_key='fixed',telegram_user_id=777,source_chat_id=456)
+  self.assertEqual(core.query(self.db,filters={})['total'],1)
  def test_batch_same_oem_distinct_keys(self):
   self.assertNotEqual(self.event('pricing','batch:1'),self.event('pricing','batch:2'))
  def test_currency_completion_and_conflicting_retry(self):
@@ -39,7 +48,7 @@ class UnifiedTests(unittest.TestCase):
   self.assertEqual([r['order_id'] for r in rows], [None,'order-1'])
  def test_failure_nonblocking_and_no_shadow_db(self):
   self.assertIsNone(core.begin(str(Path(self.t.name)/'missing.sqlite'),source_bot='pricing',
-                              source_kind='private',oem='1234567',delivery_key='k')) if False else None
+                              source_kind='private',oem='1234567',delivery_key='k'))
   self.assertFalse((Path(self.t.name)/'missing.sqlite').exists())
  def test_admin_rbac_masked_pagination(self):
   self.event('probnik','p')

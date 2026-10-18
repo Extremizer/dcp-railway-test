@@ -1,6 +1,7 @@
 """Isolated unified analytics candidate; same canonical orders SQLite DB, no sidecar DB."""
 from __future__ import annotations
 import hashlib,json,sqlite3,time
+from urllib.parse import quote
 from contextlib import contextmanager
 from pathlib import Path
 from datetime import datetime,timezone
@@ -30,14 +31,19 @@ def begin(db,*,source_bot,source_kind,oem,delivery_key,**identity):
         with _conn(db) as c:
             c.execute("BEGIN IMMEDIATE")
             row=c.execute("SELECT request_id FROM analytics_delivery_keys WHERE source_bot=? AND delivery_key=?",(source_bot,delivery_key)).fetchone()
-            if row:return int(row[0])
+            if row:
+                original=c.execute("SELECT source_kind,oem,manufacturer,telegram_user_id,source_chat_id,telegram_message_id FROM pricing_crm_requests WHERE id=?",(row[0],)).fetchone()
+                expected=(source_kind,oem,identity.get('manufacturer'),identity.get('telegram_user_id'),identity.get('source_chat_id'),identity.get('telegram_message_id'))
+                if original is None or tuple(original)!=expected:
+                    raise ValueError("delivery_identity_conflict")
+                return int(row[0])
             cur=c.execute("""INSERT INTO pricing_crm_requests
                (created_at,updated_at,source_bot,source_kind,oem,manufacturer,telegram_user_id,source_chat_id,telegram_message_id)
                VALUES(?,?,?,?,?,?,?,?,?)""",(now,now,source_bot,source_kind,oem,identity.get('manufacturer'),identity.get('telegram_user_id'),identity.get('source_chat_id'),identity.get('telegram_message_id')))
             rid=cur.lastrowid
             c.execute("INSERT INTO analytics_delivery_keys VALUES(?,?,?)",(source_bot,delivery_key,rid))
             return rid
-    except sqlite3.Error:
+    except (sqlite3.Error, FileNotFoundError):
         return None
 
 def complete(db,request_id,*,result_status,price_status,price=None,currency=None,stock_status=None,stock=None):
@@ -77,7 +83,12 @@ def query(db,*,filters,limit=50,offset=0):
     if filters.get('from_date'):where.append('created_at>=?');args.append(filters['from_date'])
     if filters.get('to_date'):where.append('created_at<?');args.append(filters['to_date'])
     condition=' WHERE '+' AND '.join(where) if where else ''
-    with _conn(db) as c:
+    # URI mode=ro plus query_only guard make the reporting path non-mutating.
+    ro=sqlite3.connect(Path(db).resolve().as_uri()+"?mode=ro",uri=True,timeout=2)
+    ro.row_factory=sqlite3.Row
+    try:
+        ro.execute("PRAGMA query_only=ON")
+        c=ro
         total=c.execute('SELECT COUNT(*) FROM pricing_crm_requests'+condition,args).fetchone()[0]
         rows=c.execute("""SELECT id,created_at,updated_at,source_bot,source_kind,oem,manufacturer,
            result_status,price_status,display_price_amount,display_price_currency,stock_rf_status,
@@ -90,3 +101,5 @@ def query(db,*,filters,limit=50,offset=0):
                 x[key]=('***'+hashlib.sha256(str(x[key]).encode()).hexdigest()[:8]) if x[key] is not None else None
             out.append(x)
         return {'total':total,'items':out,'limit':limit,'offset':offset}
+    finally:
+        ro.close()
