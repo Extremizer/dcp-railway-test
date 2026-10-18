@@ -3,6 +3,7 @@
 Writes delivery state into the EXISTING producer runtime SQLite; never a CRM DB.
 """
 import asyncio,hashlib,json,os,sqlite3,time,urllib.error,urllib.request
+from contextlib import nullcontext
 from urllib.parse import urlsplit
 import ipaddress
 import unified_analytics_outbox as outbox
@@ -245,14 +246,14 @@ def dealer_token_offer(db,*,token,dealer_id,telegram_user_id):
         return row if row else None
     except (OSError,sqlite3.Error,ValueError):return None
 
-def stage_dealer_placed_order(db,*,dealer_id,telegram_user_id,order_id,cart_oems):
+def stage_dealer_placed_order(db,*,dealer_id,telegram_user_id,order_id,cart_oems,conn=None):
     """Commit exact order conversion events to existing producer outbox atomically.
 
     Called only after successful store checkout, never on unpaid/failed checkout.
     """
     if not order_id or not cart_oems:return False
     try:
-        with outbox.database(db) as c:
+        with (nullcontext(conn) if conn is not None else outbox.database(db)) as c:
             placeholders=','.join('?' for _ in cart_oems)
             links=c.execute(f"""SELECT oem,delivery_key FROM analytics_dealer_cart_provenance
                WHERE dealer_id=? AND oem IN ({placeholders})""",
@@ -268,4 +269,6 @@ def stage_dealer_placed_order(db,*,dealer_id,telegram_user_id,order_id,cart_oems
                   (event_key,body,time.time()))
             c.execute('DELETE FROM analytics_dealer_cart_provenance WHERE dealer_id=?',(str(dealer_id),))
         return bool(links)
-    except (OSError,sqlite3.Error,ValueError):return False
+    except (OSError,sqlite3.Error,ValueError):
+        if conn is not None:raise
+        return False
