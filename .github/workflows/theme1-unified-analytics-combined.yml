@@ -23,6 +23,7 @@ jobs:
             test_unified_analytics_three_producer_e2e \
             test_unified_analytics_blocker_fixes \
             test_unified_analytics_oemixi_callback_e2e \
+            test_unified_analytics_admin_integration \
             test_oemixi_secure_gateway_transport \
             test_oemixi_shared_price_runtime \
             test_oemixibot_railway_runtime
