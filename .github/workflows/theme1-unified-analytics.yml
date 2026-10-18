@@ -12,4 +12,4 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install 'fastapi>=0.115,<1' 'httpx>=0.27,<0.29'
-      - run: python -B -m unittest -v test_unified_analytics_isolated test_unified_analytics_outbox test_unified_analytics_transport test_unified_analytics_conversion test_unified_analytics_three_producer_e2e
+      - run: python -B -m unittest -v test_unified_analytics_isolated test_unified_analytics_outbox test_unified_analytics_transport test_unified_analytics_conversion test_unified_analytics_three_producer_e2e test_unified_analytics_blocker_fixes
