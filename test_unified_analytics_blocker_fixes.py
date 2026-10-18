@@ -31,6 +31,37 @@ class BlockerFixTests(unittest.TestCase):
             self.assertIn('"action":"CART"',rows[0][0])
             self.assertIn('"action":"ORDER_PLACED"',rows[1][0])
         self.assertFalse(producer.stage_dealer_placed_order(self.db,dealer_id="D1",telegram_user_id=42,order_id="E-2",cart_oems=["3211070"]))
+    def test_order_event_rolls_back_with_business_transaction(self):
+        token=producer.register_dealer_card(self.db,dealer_id="D1",
+            telegram_user_id=42,chat_id=42,message_id=17,oem="3211070")
+        delivery=producer.dealer_card_delivery(self.db,token=token,
+            dealer_id="D1",telegram_user_id=42,oem="3211070")
+        producer.dealer_cart_record(self.db,dealer_id="D1",oem="3211070",
+            delivery_key=delivery,telegram_user_id=42)
+        with sqlite3.connect(self.db) as c:
+            c.execute("CREATE TABLE dealer_checkout_proof(order_id TEXT)")
+        try:
+            with sqlite3.connect(self.db) as c:
+                c.execute("BEGIN IMMEDIATE")
+                c.execute("INSERT INTO dealer_checkout_proof VALUES('E-ROLLBACK')")
+                self.assertTrue(producer.stage_dealer_placed_order(
+                    self.db,dealer_id="D1",telegram_user_id=42,
+                    order_id="E-ROLLBACK",cart_oems=["3211070"],conn=c))
+                raise RuntimeError("simulate crash before commit")
+        except RuntimeError:
+            pass
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM dealer_checkout_proof").fetchone()[0],0)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM analytics_delivery_outbox WHERE delivery_key LIKE '%:order:%'").fetchone()[0],0)
+        with sqlite3.connect(self.db) as c:
+            c.execute("BEGIN IMMEDIATE")
+            c.execute("INSERT INTO dealer_checkout_proof VALUES('E-SUCCESS')")
+            self.assertTrue(producer.stage_dealer_placed_order(
+                self.db,dealer_id="D1",telegram_user_id=42,
+                order_id="E-SUCCESS",cart_oems=["3211070"],conn=c))
+        with sqlite3.connect(self.db) as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM dealer_checkout_proof").fetchone()[0],1)
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM analytics_delivery_outbox WHERE delivery_key LIKE '%:order:%'").fetchone()[0],1)
     def test_transport_rejects_arbitrary_http_and_no_secret(self):
         event={"source_bot":"pricing","oem":"3211070"}
         with patch.dict(os.environ,{"EXTREMIZER_UNIFIED_ANALYTICS_BASE_URL":"http://example.com",
