@@ -634,7 +634,7 @@ CREATE TABLE IF NOT EXISTS dealer_cart_items(
             rows=[dict(r) for r in c.execute("SELECT * FROM dealer_cart_items WHERE dealer_id=? ORDER BY id",(dealer_id,))]
         return {"items":rows,"total_usd":round(sum(r["dlp_usd"]*r["qty"] for r in rows),2)}
 
-    def checkout_cart(self,dealer_id,order_id):
+    def checkout_cart(self,dealer_id,order_id,*,order_analytics=None):
         self.ensure_commercial_schema(); self.ensure_cart_schema()
         with self.db() as c:
             c.execute('BEGIN IMMEDIATE')
@@ -647,4 +647,7 @@ CREATE TABLE IF NOT EXISTS dealer_cart_items(
                 self.add_item(order_id,r["oem"],r["qty"],r["brand"],r["item_type"],"Принята",r["dl_usd"],r["coefficient"],r["dlp_usd"],round(r["dlp_usd"]*r["qty"],2),conn=c)
             self.confirm_order_and_charge(order_id,conn=c)
             c.execute("DELETE FROM dealer_cart_items WHERE dealer_id=?",(dealer_id,))
+            # Commit order, charge and durable conversion in one SQLite transaction.
+            if order_analytics is not None:
+                order_analytics(c,dealer_id,order_id,items)
             return total
