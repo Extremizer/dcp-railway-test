@@ -4,6 +4,7 @@ Writes delivery state into the EXISTING producer runtime SQLite; never a CRM DB.
 """
 import asyncio,hashlib,json,os,sqlite3,time,urllib.error,urllib.request
 from urllib.parse import urlsplit
+import ipaddress
 import unified_analytics_outbox as outbox
 from unified_analytics_transport import PATH,PATH_CONVERSION,signed_headers
 
@@ -46,13 +47,26 @@ def _transmit(payload):
     secret=os.getenv("EXTREMIZER_ANALYTICS_"+source.upper()+"_SECRET","")
     base=os.getenv("EXTREMIZER_UNIFIED_ANALYTICS_BASE_URL","").rstrip("/")
     target=urlsplit(base)
-    if target.scheme!="https" or not target.hostname or len(secret)<32:return False
+    private=(target.scheme=="http" and target.hostname is not None
+             and target.hostname.lower().endswith(".railway.internal")
+             and target.hostname.lower()!=".railway.internal")
+    public=(target.scheme=="https" and target.hostname is not None)
+    if (not (private or public) or target.username or target.password
+        or target.query or target.fragment or target.path not in ("","/")
+        or len(secret)<32):return False
+    try:
+        if ipaddress.ip_address(target.hostname).is_private:return False
+    except ValueError:
+        pass
     body=json.dumps(payload,sort_keys=True,separators=(",",":"),ensure_ascii=False).encode("utf-8")
     try:
         path=PATH_CONVERSION if payload.get('action') else PATH
         request=urllib.request.Request(base+path,data=body,method="POST",
                                       headers=signed_headers(secret,source,body,path=path))
-        with urllib.request.urlopen(request,timeout=4) as response:
+        # Signed payload must never follow an HTTP(S) redirect to another host.
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self,*args,**kwargs):return None
+        with urllib.request.build_opener(NoRedirect).open(request,timeout=4) as response:
             if response.status!=200:return False
             data=json.loads(response.read(1024))
             accepted='CONVERSION_ACCEPTED' if path==PATH_CONVERSION else 'ANALYTICS_ACCEPTED'
