@@ -113,6 +113,12 @@ if os.getenv("EXTREMIZER_UNIFIED_ANALYTICS_ENABLE") == "1":
         require_admin=_analytics_require_web_admin,
         audit=_analytics_audit_read,
     ))
+    import unified_analytics_admin_page
+    app.include_router(unified_analytics_admin_page.build_router(
+        canonical_db=core.ORDERS_DB_FILE,
+        require_admin=_analytics_require_web_admin,
+        audit=_analytics_audit_read,
+    ))
 
 # Supplier Orders uses the exact same persistent orders DB as Telegram.
 supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
