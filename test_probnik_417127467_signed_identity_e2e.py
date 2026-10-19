@@ -88,7 +88,7 @@ class ThreeInterfaceIdentity(unittest.TestCase):
         with patch.object(probnik,"ORDERS_DB",self.db),patch.object(
             probnik.dp_live_bridge,"request_live_dp",return_value={"status":"ADMISSION_CLOSED"}
         ) as dp:
-            found=probnik._identity_and_price("417127467")
+            found=probnik._identity_and_price("417127467", "Ski-Doo")
         self.assertEqual(found["manufacturer"],"Ski-Doo")
         self.assertIsNone(found["dp_usd"])
         dp.assert_called_once()
@@ -108,16 +108,16 @@ class ThreeInterfaceIdentity(unittest.TestCase):
             payload=remote.lookup_shared_identity("417127467",base_url="https://isolated.test")
         self.assertEqual(payload["manufacturer"],"Ski-Doo")
         seen=[]
-        async def runtime(oem,ctx):
-            return {"status":"FOUND","manufacturer":"Ski-Doo","dl_usd":None} if seen else {"status":"IDENTITY_REQUIRED"}
+        async def runtime(oem,ctx,manufacturer=None):
+            assert manufacturer == "Ski-Doo"
+            return {"status":"PRICE_UNAVAILABLE","manufacturer":"Ski-Doo","dl_usd":None}
         with patch.object(bot,"_resolve_runtime_offer",side_effect=runtime),patch.object(
             bot,"lookup_shared_identity",return_value=payload
         ),patch.object(bot.oem_identity_service,"remember",side_effect=lambda *a,**kw:seen.append(a) or True):
             offer=asyncio.run(bot._resolve_admin_oem_offer(
                 "417127467",SimpleNamespace(application=SimpleNamespace(bot_data={}))))
         self.assertEqual(offer["manufacturer"],"Ski-Doo")
-        self.assertEqual(len(seen),1)
-        self.assertIn("417127467",seen[0])
+        self.assertEqual(len(seen),0)  # Explicit selection must not persist inferred identity.
 
     def test_absent_conflicting_and_invalid_signature_fail_closed(self):
         unsigned=self.client.get("/internal/oemixibot/identity?oem=417127467")
@@ -136,14 +136,15 @@ class ThreeInterfaceIdentity(unittest.TestCase):
         from unittest.mock import Mock
         polaris=Mock(side_effect=AssertionError("wrong Polaris cart"))
         calls=[]
-        async def runtime(oem, context):
+        async def runtime(oem, context, manufacturer=None):
+            assert manufacturer == "Ski-Doo"
             calls.append(oem)
-            return {"status":"IDENTITY_REQUIRED"} if len(calls)==1 else {"status":"PRICE_UNAVAILABLE","manufacturer":"Ski-Doo","dl_usd":None}
+            return {"status":"PRICE_UNAVAILABLE","manufacturer":"Ski-Doo","dl_usd":None}
         ctx=SimpleNamespace(application=SimpleNamespace(bot_data={bot._ADMIN_POLARIS_PRICE_RESOLVER_KEY:polaris}))
         with patch.object(bot,"lookup_shared_identity",return_value=signed),patch.object(
             bot,"_resolve_runtime_offer",side_effect=runtime),patch.object(
             bot.oem_identity_service,"remember",return_value=True):
-            result=asyncio.run(bot._resolve_admin_oem_offer("417127467",ctx))
+            result=asyncio.run(bot._resolve_admin_oem_offer("417127467",ctx,manufacturer="Ski-Doo"))
         self.assertEqual(result["manufacturer"],"Ski-Doo")
         polaris.assert_not_called()
 
@@ -156,17 +157,18 @@ class ThreeInterfaceIdentity(unittest.TestCase):
             async def reply_text(self, message,**kwargs):
                 messages.append(message)
         calls=[]
-        async def runtime(oem,context):
+        async def runtime(oem,context,manufacturer=None):
+            assert manufacturer == "Ski-Doo"
             calls.append(oem)
-            return {"status":"IDENTITY_REQUIRED"} if len(calls)==1 else {"status":"PRICE_UNAVAILABLE","manufacturer":"Ski-Doo","dl_usd":None}
+            return {"status":"PRICE_UNAVAILABLE","manufacturer":"Ski-Doo","dl_usd":None}
         update=SimpleNamespace(effective_user=None,effective_message=Msg())
-        ctx=SimpleNamespace(user_data={},application=SimpleNamespace(bot_data={},create_task=lambda coro:coro.close()))
+        ctx=SimpleNamespace(user_data={"manufacturer":"Ski-Doo"},application=SimpleNamespace(bot_data={},create_task=lambda coro:coro.close()))
         with patch.object(bot,"_dealer",return_value={"id":1}),patch.object(
             bot,"_resolve_runtime_offer",side_effect=runtime),patch.object(
             bot,"lookup_shared_identity",return_value=signed),patch.object(
             bot.oem_identity_service,"remember",return_value=True):
             asyncio.run(bot.oem_message(update,ctx))
-        self.assertGreaterEqual(len(calls),2)
+        self.assertEqual(len(calls),1)  # No automatic identity retry in manufacturer-first flow.
         self.assertTrue(any("Цена из США сейчас недоступна" in m for m in messages))
 
 
