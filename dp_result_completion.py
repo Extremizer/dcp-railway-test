@@ -131,28 +131,27 @@ def complete_result(db_file, payload: dict) -> dict:
                 authority = dcp_category_authority.resolve(conn, requested_manufacturer, requested_oem)
                 if (authority is None or any(row[k] != authority[k] for k in ("item_category","category_source_kind","category_source_ref","category_verified_at"))):
                     raise CompletionError(409, "CATEGORY_UNVERIFIED")
-                if manufacturer != "Polaris":
-                    raise CompletionError(409, "CATEGORY_UNVERIFIED")
-                from polaris_dealer_cart_completion_contract import verify_polaris_cart_proof,CartProofError
-                if authority.get("resolved_oem") != current_oem:
-                    raise CompletionError(409, "CATEGORY_UNVERIFIED")
-                try:
-                    verify_polaris_cart_proof(payload,requested_oem=requested_oem,resolved_oem=current_oem,category_evidence=authority)
-                except CartProofError:
-                    raise CompletionError(409, "DEALER_CART_UNVERIFIED") from None
-                proof=payload["dealer_cart_proof"]
-                # Keep the cache source canonical. Request/resolved identity and
-                # immutable proof correlation live in the existing recovery journal.
-                evidence_digest=hashlib.sha256(json.dumps(
-                    proof,sort_keys=True,
-                    separators=(",",":"),ensure_ascii=True).encode()).hexdigest()
-                authority_digest=hashlib.sha256(json.dumps(
-                    authority,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode()).hexdigest()
-                conn.execute("""INSERT INTO dp_live_recovery_events
-                    (request_id,claim_generation,event_type,actor,evidence_sha256,plan_sha256,created_at)
-                    VALUES(?,?,'polaris_cart_verified_found',?,?,?,?)""",
-                    (row["request_id"],generation,payload["producer_id"],
-                     evidence_digest,authority_digest,now))
+                if manufacturer == "Polaris":
+                    from polaris_dealer_cart_completion_contract import verify_polaris_cart_proof,CartProofError
+                    if authority.get("resolved_oem") != current_oem:
+                        raise CompletionError(409, "CATEGORY_UNVERIFIED")
+                    try:
+                        verify_polaris_cart_proof(payload,requested_oem=requested_oem,resolved_oem=current_oem,category_evidence=authority)
+                    except CartProofError:
+                        raise CompletionError(409, "DEALER_CART_UNVERIFIED") from None
+                    proof=payload["dealer_cart_proof"]
+                    # Keep the cache source canonical. Request/resolved identity and
+                    # immutable proof correlation live in the existing recovery journal.
+                    evidence_digest=hashlib.sha256(json.dumps(
+                        proof,sort_keys=True,
+                        separators=(",",":"),ensure_ascii=True).encode()).hexdigest()
+                    authority_digest=hashlib.sha256(json.dumps(
+                        authority,sort_keys=True,separators=(",",":"),ensure_ascii=True).encode()).hexdigest()
+                    conn.execute("""INSERT INTO dp_live_recovery_events
+                        (request_id,claim_generation,event_type,actor,evidence_sha256,plan_sha256,created_at)
+                        VALUES(?,?,'polaris_cart_verified_found',?,?,?,?)""",
+                        (row["request_id"],generation,payload["producer_id"],
+                         evidence_digest,authority_digest,now))
 
                 _write_cache(conn, manufacturer, requested_oem, price, source, now)
                 if current_oem != requested_oem:
