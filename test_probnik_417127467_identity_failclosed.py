@@ -43,7 +43,7 @@ class ProbnikIdentityP0(unittest.TestCase):
 
     def test_no_approved_identity_never_requests_auto(self):
         database(self.path)
-        info,bridge=self.lookup()
+        info,bridge=self.lookup(None)
         self.assertIsNone(info["manufacturer"])
         self.assertIsNone(info["dp_usd"])
         bridge.assert_not_called()
