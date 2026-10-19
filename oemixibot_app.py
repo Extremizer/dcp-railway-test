@@ -67,11 +67,14 @@ async def _resolve_runtime_offer(oem, context, manufacturer=None):
 def _mfg_keyboard(*, admin=False):
     prefix = "adm_mfg:" if admin else "mfg:"
     values = mfgux.MANUFACTURERS
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(values[j], callback_data=prefix+str(j))
-         for j in range(i,min(i+2,len(values)))]
-        for i in range(0,len(values),2)
-    ])
+    rows = [[InlineKeyboardButton(values[j], callback_data=prefix+str(j))
+             for j in range(i,min(i+2,len(values)))]
+            for i in range(0,len(values),2)]
+    if not admin:
+        # Preserve dealer access to finance/orders on the start screen.
+        rows.extend([[InlineKeyboardButton("💵 Мой баланс",callback_data="balance")],
+                     [InlineKeyboardButton("📦 Мои заказы",callback_data="orders")]])
+    return InlineKeyboardMarkup(rows)
 
 def _mfg_actions(*, admin=False):
     prefix="adm_" if admin else ""
