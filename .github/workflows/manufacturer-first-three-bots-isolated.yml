@@ -24,4 +24,4 @@ jobs:
       - name: Manufacturer-first selected-pair tests
         run: python -m pytest -q test_manufacturer_first_three_bots.py
       - name: Existing targeted bot regressions
-        run: python -m pytest -q test_oemixibot_admin_oem_search.py test_probnik_oem_warehouse.py
+        run: python -m pytest -q test_oemixibot_admin_oem_search.py test_oemixibot_railway_runtime.py
