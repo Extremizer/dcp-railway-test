@@ -210,7 +210,7 @@ def request_live_dp(
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         # Lookup and insert must share the write lock across all bot processes.
         conn.execute("BEGIN IMMEDIATE")
-        authority = dcp_category_authority.resolve(conn, manufacturer, oem)
+        authority = dcp_category_authority.resolve_search_route(conn, manufacturer, oem)
         if authority is None:
             conn.rollback()
             return {"status": "CATEGORY_UNVERIFIED"}
@@ -329,7 +329,7 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             conn.commit()
             return None
         # Server-only alias resolution; never take resolved identity from producer.
-        authority = dcp_category_authority.resolve(conn, str(row[1]), str(row[2]))
+        authority = dcp_category_authority.resolve_search_route(conn, str(row[1]), str(row[2]))
         if authority is None or any(row[i] != authority[key] for i,key in (
             (4,"item_category"),(5,"category_source_kind"),
             (6,"category_source_ref"),(7,"category_verified_at"))):

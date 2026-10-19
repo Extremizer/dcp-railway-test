@@ -23,7 +23,7 @@ jobs:
           python -B -c "import manufacturer_first_ux, probnik_app, extremizer_bot, oemixibot_app, dp_result_completion, dp_live_bridge"
       - name: Manufacturer-first and three-bot regressions
         run: |
-          python -B -m pytest -q test_manufacturer_first_three_bots.py test_oemixibot_admin_oem_search.py test_oemixibot_railway_runtime.py
+          python -B -m pytest -q test_manufacturer_first_three_bots.py test_oemixibot_admin_oem_search.py test_oemixibot_railway_runtime.py test_dcp_authenticated_parts_search.py
       - name: P0 identity and DCP dealer contracts
         run: |
           python -B -m pytest -q test_probnik_417127467_identity_failclosed.py test_probnik_417127467_signed_identity_e2e.py test_probnik_417127467_warehouse_guard.py test_dcp_admission.py test_dp_result_completion.py test_polaris_dealer_cart_contract.py

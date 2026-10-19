@@ -37,6 +37,12 @@ def _dealer_source(source, manufacturer, oem):
     allowed = {f"live_dom:#add_{oem} .c2 .dbl", f"server_html:#add_{oem} .c2 .dbl"}
     if manufacturer == "Ski-Doo":
         allowed.add("catalog_product:exact_sku_price")
+    if manufacturer != "Polaris":
+        # Current OEM displayed beside struck-through former SKUs in signed DCP SEARCH.
+        # Explicit SIGN OUT is required upstream; retail/MSRP is never accepted.
+        for origin in ("live_dom","server_html"):
+            allowed.add(f"{origin}:current_oem_{oem}")
+            allowed.add(f"{origin}:previous_oem_{oem}")
     if value not in allowed:
         raise CompletionError(400, "unverified_dealer_source")
     return "verified_local_dcp:" + value
@@ -112,7 +118,7 @@ def complete_result(db_file, payload: dict) -> dict:
                     raise CompletionError(400, "result_identity_mismatch")
                 _, current_oem = _identity(manufacturer, payload.get("current_oem") or requested_oem)
                 _, matched_sku = _identity(manufacturer, payload.get("matched_sku"))
-                if manufacturer != "Polaris" and (matched_sku != requested_oem or current_oem != requested_oem):
+                if manufacturer != "Polaris" and matched_sku != requested_oem:
                     raise CompletionError(400, "result_sku_mismatch")
                 value = payload.get("dealer_price_usd")
                 if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
@@ -128,9 +134,14 @@ def complete_result(db_file, payload: dict) -> dict:
                 else:
                     source = _dealer_source(payload.get("source"), manufacturer, requested_oem)
                 name = str(payload.get("name") or "")[:300] or None
-                authority = dcp_category_authority.resolve(conn, requested_manufacturer, requested_oem)
+                authority = dcp_category_authority.resolve_search_route(conn, requested_manufacturer, requested_oem)
                 if (authority is None or any(row[k] != authority[k] for k in ("item_category","category_source_kind","category_source_ref","category_verified_at"))):
                     raise CompletionError(409, "CATEGORY_UNVERIFIED")
+                if manufacturer != "Polaris" and current_oem != requested_oem:
+                    old_source = any(payload.get("source") == f"{origin}:previous_oem_{requested_oem}"
+                                     for origin in ("live_dom","server_html"))
+                    if not old_source or authority.get("resolved_oem") != current_oem:
+                        raise CompletionError(409, "unverified_previous_oem")
                 if manufacturer == "Polaris":
                     from polaris_dealer_cart_completion_contract import verify_polaris_cart_proof,CartProofError
                     if authority.get("resolved_oem") != current_oem:
