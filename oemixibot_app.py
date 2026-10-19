@@ -5,6 +5,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
 from oemixibot_store import OemixiStore
 from oemixibot_telegram import DealerAccess, ACCESS_DENIED, WELCOME, price_card, cart_message, normalize_oem
+import manufacturer_first_ux as mfgux
 from oemixibot_catalog import resolve_offer
 from dcp_price_gateway import SharedDealerPriceAdapter
 from oemixibot_finance import FinanceEngine
@@ -52,16 +53,33 @@ def bind_shared_price_gateway(application, gateway, *, dealer_max_age_hours):
     return adapter
 
 
-async def _resolve_runtime_offer(oem, context):
+async def _resolve_runtime_offer(oem, context, manufacturer=None):
     data = context.application.bot_data
     if _SHARED_PRICE_ADAPTER_KEY not in data:
-        return resolve_offer(oem)  # Unchanged legacy mode; activation is a separate GO.
+        return resolve_offer(oem, manufacturer=manufacturer)  # Explicit manufacturer; legacy gateway configuration unchanged.
     adapter = data[_SHARED_PRICE_ADAPTER_KEY]
     if not isinstance(adapter, SharedDealerPriceAdapter):
         return {'status': 'TECHNICAL_ERROR', 'oem': oem, 'dl_usd': None,
                 'price_error': 'shared_price_adapter_not_configured'}
     # The broker may wait for producer completion. Do not block the Telegram loop.
-    return await asyncio.to_thread(resolve_offer, oem, price_gateway=adapter)
+    return await asyncio.to_thread(resolve_offer, oem, manufacturer=manufacturer, price_gateway=adapter)
+
+def _mfg_keyboard(*, admin=False):
+    prefix = "adm_mfg:" if admin else "mfg:"
+    values = mfgux.MANUFACTURERS
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(values[j], callback_data=prefix+str(j))
+         for j in range(i,min(i+2,len(values)))]
+        for i in range(0,len(values),2)
+    ])
+
+def _mfg_actions(*, admin=False):
+    prefix="adm_" if admin else ""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton("🔎 Искать ещё",callback_data=prefix+"search_again"),
+        InlineKeyboardButton("🏭 Сменить производителя",callback_data=prefix+"change_mfg"),
+    ]])
+
 
 def _dealer(update):
     u=update.effective_user
@@ -159,6 +177,7 @@ async def start(update:Update,context:ContextTypes.DEFAULT_TYPE):
     dealer=_dealer(update)
     if not dealer:
         await update.effective_message.reply_text(ACCESS_DENIED); return
+    mfgux.clear_search(context.user_data)
     kb=InlineKeyboardMarkup([
         [InlineKeyboardButton("💵 Мой баланс",callback_data="balance")],
         [InlineKeyboardButton("📦 Мои заказы",callback_data="orders")],
@@ -167,7 +186,7 @@ async def start(update:Update,context:ContextTypes.DEFAULT_TYPE):
     available=FINANCE.available_to_order(dealer["id"],"dealer","USD")
     def usd(v): return ("−" if v<0 else "")+f"${abs(v):,.2f}"
     start_text="\n".join(["OEMixiBOT","","Дилерский OEM-поиск и заказы.","",f"💵 Баланс: {usd(balance)}",f"Доступно для заказа: {usd(available)}"])
-    await update.effective_message.reply_text(start_text,reply_markup=kb)
+    await update.effective_message.reply_text(start_text,reply_markup=_mfg_keyboard())
 
 async def balance_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
     dealer=_dealer(update)
@@ -227,14 +246,18 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
             context.user_data.pop("admin_oem_search",None)
             await update.effective_message.reply_text(ACCESS_DENIED)
             return
-        oem=normalize_oem(update.effective_message.text)
+        manufacturer=mfgux.selected(context.user_data)
+        if not manufacturer:
+            await update.effective_message.reply_text("🏭 Сначала выберите производителя.",reply_markup=_mfg_keyboard(admin=True))
+            return
+        oem=mfgux.exact_oem(update.effective_message.text)
         if not oem:
             await update.effective_message.reply_text(
                 "Введите один OEM-номер.",
                 reply_markup=_admin_search_keyboard(),
             )
             return
-        await _queue_admin_oem_probe(update,context,oem)
+        await _queue_admin_oem_probe(update,context,oem,manufacturer)
         return
     state=context.user_data.get("admin_topup")
     if state and u and is_telegram_admin(u.id):
@@ -278,295 +301,15 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
     dealer=_dealer(update)
     if not dealer:
         await update.effective_message.reply_text(ACCESS_DENIED); return
-    oem=normalize_oem(update.effective_message.text)
+    manufacturer=mfgux.selected(context.user_data)
+    if not manufacturer:
+        await update.effective_message.reply_text("🏭 Сначала выберите производителя.",reply_markup=_mfg_keyboard())
+        return
+    oem=mfgux.exact_oem(update.effective_message.text)
     if not oem:
-        await update.effective_message.reply_text("Введите OEM одним сообщением."); return
-    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
-    if offer.get("status")=="IDENTITY_REQUIRED":
-        try:
-            shared_identity=await asyncio.to_thread(lookup_shared_identity,oem)
-        except Exception:
-            logging.exception("OEMixiBOT shared identity lookup failed oem=%s",oem)
-            shared_identity=None
-        if shared_identity:
-            try:
-                saved=oem_identity_service.remember(
-                    oem,
-                    shared_identity.get("manufacturer"),
-                    item_type=shared_identity.get("item_type"),
-                    source="shared_production_identity",
-                )
-            except Exception:
-                logging.exception("OEMixiBOT shared identity save failed oem=%s",oem)
-            else:
-                if saved:
-                    offer=await _resolve_runtime_offer(oem, context)
+        await update.effective_message.reply_text("Введите один OEM без названия производителя.",reply_markup=_mfg_actions())
+        return
+    offer=await _resolve_runtime_offer(oem, context, manufacturer=manufacturer)
     if offer.get("status")!="FOUND" or offer.get("dl_usd") is None:
         if u:
             context.application.create_task(send_oem_request_async(
@@ -585,6 +328,9 @@ async def oem_message(update:Update,context:ContextTypes.DEFAULT_TYPE):
             await update.effective_message.reply_text("OEM найден не полностью. Требуется уточнение производителя администратором.")
         else:
             await update.effective_message.reply_text("Цена из США сейчас недоступна. Попробуйте повторить запрос позже.")
+        return
+    if offer.get("manufacturer") != manufacturer:
+        await update.effective_message.reply_text("Цена сейчас недоступна: производитель не подтверждён.")
         return
     context.user_data["offer:"+oem]=offer
     display_price_usd=round(float(offer["dl_usd"])*float(dealer["price_coefficient"])+1e-9,2)
@@ -666,10 +412,7 @@ def _admin_root_keyboard(dealers):
 
 
 def _admin_search_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🔎 Искать ещё", callback_data="admsearch")],
-        [InlineKeyboardButton("← В ADMIN", callback_data="admhome")],
-    ])
+    return _mfg_actions(admin=True)
 
 
 def _admin_offer_text(requested_oem, offer):
@@ -727,11 +470,11 @@ def _admin_offer_text(requested_oem, offer):
     return "\n".join(lines)
 
 
-async def _admin_oem_probe_background(oem,context,chat_id,user_id):
+async def _admin_oem_probe_background(oem,context,chat_id,user_id,manufacturer):
     key=(int(chat_id),int(user_id))
     pending=context.application.bot_data.setdefault(_ADMIN_POLARIS_PENDING_KEY,set())
     try:
-        offer=await _resolve_admin_oem_offer(oem,context)
+        offer=await _resolve_admin_oem_offer(oem,context,manufacturer=manufacturer)
         await context.bot.send_message(
             chat_id=chat_id,
             text=_admin_offer_text(oem,offer),
@@ -754,7 +497,7 @@ async def _admin_oem_probe_background(oem,context,chat_id,user_id):
         pending.discard(key)
 
 
-async def _queue_admin_oem_probe(update,context,oem):
+async def _queue_admin_oem_probe(update,context,oem,manufacturer):
     u=update.effective_user
     chat=update.effective_chat
     if not u or not chat:
@@ -776,7 +519,7 @@ async def _queue_admin_oem_probe(update,context,oem):
     )
     try:
         context.application.create_task(
-            _admin_oem_probe_background(oem,context,chat.id,u.id),
+            _admin_oem_probe_background(oem,context,chat.id,u.id,manufacturer),
             name=f"admin_oem_probe:{u.id}:{oem}",
         )
     except Exception:
@@ -785,9 +528,9 @@ async def _queue_admin_oem_probe(update,context,oem):
     return True
 
 
-async def _resolve_admin_oem_offer(oem, context):
+async def _resolve_admin_oem_offer(oem, context, manufacturer=None):
     admin_resolver=context.application.bot_data.get(_ADMIN_POLARIS_PRICE_RESOLVER_KEY)
-    if admin_resolver is not None:
+    if admin_resolver is not None and manufacturer == "Polaris":
         if not callable(admin_resolver):
             return {"status":"DEALER_PRICE_UNVERIFIED","oem":oem,
                     "admin_unit_price_usd":None,"dealer_price_usd":None,
@@ -805,7 +548,9 @@ async def _resolve_admin_oem_offer(oem, context):
                 "admin_unit_price_usd":None,"dealer_price_usd":None,
                 "production_found":False,"reason":"admin_polaris_resolver_invalid_result"}
 
-    offer=await _resolve_runtime_offer(oem,context)
+    offer=await _resolve_runtime_offer(oem,context,manufacturer=manufacturer)
+    if manufacturer is not None:
+        return offer if offer.get("manufacturer")==manufacturer else {"status":"PRICE_UNAVAILABLE","oem":oem,"manufacturer":manufacturer}
     if offer.get("status")!="IDENTITY_REQUIRED":
         return offer
     try:
@@ -887,6 +632,7 @@ async def admin_command(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if not u or not is_telegram_admin(u.id):
         await update.effective_message.reply_text(ACCESS_DENIED); return
     context.user_data.pop("admin_oem_search",None)
+    mfgux.clear_search(context.user_data)
     dealers=_admin_dealers()
     await update.effective_message.reply_text("⚙️ OEMixiBOT ADMIN",reply_markup=_admin_root_keyboard(dealers))
 
@@ -896,12 +642,27 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     if data.startswith("adm"):
         u=update.effective_user
         if not u or not is_telegram_admin(u.id): await q.edit_message_text(ACCESS_DENIED); return
-        if data=="admsearch":
-            context.user_data["admin_oem_search"]=True
+        if data in ("admsearch","adm_change_mfg"):
+            context.user_data.pop("admin_oem_search",None)
+            mfgux.clear_search(context.user_data)
+            await q.edit_message_text("🏭 Выберите производителя:",reply_markup=_mfg_keyboard(admin=True))
+            return
+        if data=="adm_search_again":
+            manufacturer=mfgux.selected(context.user_data)
+            context.user_data["admin_oem_search"]=bool(manufacturer)
             await q.edit_message_text(
-                "🔎 Поиск по OEM\n\nВведите один OEM-номер.",
-                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("← В ADMIN",callback_data="admhome")]]),
-            )
+                f"Производитель: {manufacturer}\\nВведите каталожный номер." if manufacturer else "🏭 Выберите производителя:",
+                reply_markup=_admin_search_keyboard() if manufacturer else _mfg_keyboard(admin=True))
+            return
+        if data.startswith("adm_mfg:"):
+            try: index=int(data.split(":",1)[1])
+            except ValueError: index=-1
+            manufacturer=mfgux.MANUFACTURERS[index] if 0<=index<len(mfgux.MANUFACTURERS) else None
+            if not manufacturer or not mfgux.choose(context.user_data,manufacturer):
+                await q.edit_message_text("🏭 Выберите производителя:",reply_markup=_mfg_keyboard(admin=True))
+                return
+            context.user_data["admin_oem_search"]=True
+            await q.edit_message_text(f"Производитель: {manufacturer}\\nВведите каталожный номер.",reply_markup=_admin_search_keyboard())
             return
         if data=="admhome":
             context.user_data.pop("admin_oem_search",None)
@@ -982,6 +743,25 @@ async def callback(update:Update,context:ContextTypes.DEFAULT_TYPE):
     dealer=_dealer(update)
     if not dealer:
         await q.edit_message_text(ACCESS_DENIED); return
+    if data=="change_mfg":
+        mfgux.clear_search(context.user_data)
+        await q.edit_message_text("🏭 Выберите производителя:",reply_markup=_mfg_keyboard())
+        return
+    if data=="search_again":
+        manufacturer=mfgux.selected(context.user_data)
+        await q.edit_message_text(
+            f"Производитель: {manufacturer}\\nВведите каталожный номер." if manufacturer else "🏭 Выберите производителя:",
+            reply_markup=_mfg_actions() if manufacturer else _mfg_keyboard())
+        return
+    if data.startswith("mfg:"):
+        try: index=int(data.split(":",1)[1])
+        except ValueError: index=-1
+        manufacturer=mfgux.MANUFACTURERS[index] if 0<=index<len(mfgux.MANUFACTURERS) else None
+        if not manufacturer or not mfgux.choose(context.user_data,manufacturer):
+            await q.edit_message_text("🏭 Выберите производителя:",reply_markup=_mfg_keyboard())
+            return
+        await q.edit_message_text(f"Производитель: {manufacturer}\\nВведите каталожный номер.",reply_markup=_mfg_actions())
+        return
     if data=="noop": return
     if data=="balance":
         context.user_data.pop("finance_custom_wizard",None)
@@ -1174,7 +954,7 @@ def build_application(
     app.add_handler(CommandHandler("orders",orders_command))
     app.add_handler(CommandHandler("balance",balance_command))
     app.add_handler(CommandHandler("admin",admin_command))
-    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhome$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admsearch$|admhome$|admdealer:|admdealers$|admfin:(?:view|history|topup|debit):|admfinevent:|admdebit:|admtopup:|noop$)"))
+    app.add_handler(CallbackQueryHandler(callback,pattern=r"^(?:mfg:|search_again$|change_mfg$|adm_mfg:|adm_search_again$|adm_change_mfg$|add:|q\+:|q-:|del:|checkout$|cart$|orders$|order:|history:|receive:|receive_yes:|balance$|finhome$|finhist:|finevent:|paymethods$|paymethod:|fcp:|admsearch$|admhome$|admdealer:|admdealers$|admfin:(?:view|history|topup|debit):|admfinevent:|admdebit:|admtopup:|noop$)"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,oem_message))
     return app
 
