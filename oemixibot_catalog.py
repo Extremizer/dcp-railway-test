@@ -42,11 +42,14 @@ def confirm_identity(oem,manufacturer,item_type=None,source="dcp_confirmed"):
     ref=oem_reference_service.lookup_oem(oem) or {}
     return oem_identity_service.remember(oem,manufacturer,item_type or ref.get("item_type"),source)
 def resolve_offer(oem,manufacturer=None,*,price_gateway=None):
-    ident=resolve_identity(oem); ref=oem_reference_service.lookup_oem(ident["oem"]) or {}
-    if manufacturer:
-        canonical=finder.manufacturer_alias(manufacturer)
-        if not canonical: return {**ident,"status":"IDENTITY_REQUIRED"}
-        ident["manufacturer"]=canonical
+    oem=finder.normalize_oem(oem)
+    ref=oem_reference_service.lookup_oem(oem) or {}
+    # Manufacturer-first: a user-selected canonical manufacturer is mandatory.
+    # Do not invoke resolve_identity(), which may infer from other sources
+    # and persist an auto-confirmed manufacturer.
+    canonical=finder.manufacturer_alias(manufacturer) if manufacturer else None
+    ident={"oem":oem,"manufacturer":canonical,"item_type":ref.get("item_type"),
+           "source":"customer_selected_manufacturer"}
     if not ident.get("manufacturer"):
         return {**ident,"status":"IDENTITY_REQUIRED","actual_weight_kg":ref.get("actual_weight_kg"),
                 "volume_weight_kg":ref.get("volume_weight_kg")}
@@ -59,9 +62,9 @@ def resolve_offer(oem,manufacturer=None,*,price_gateway=None):
                 "volume_weight_kg":ref.get("volume_weight_kg"),"price_error":type(exc).__name__}
     if dp.get("status")=="FOUND" and dp.get("dealer_price_usd") is not None:
         current=dp.get("current_oem") or ident["oem"]
-        confirm_identity(ident["oem"],ident["manufacturer"],ident.get("item_type"),"dcp_dl_confirmed")
+        # Do not mutate identity during an ordinary manufacturer-first lookup.
         if current != ident["oem"]:
-            confirm_identity(current,ident["manufacturer"],ident.get("item_type"),"dcp_dl_confirmed")
+            pass  # exact alias resolution remains on the verified DCP source.
     return {**ident,"status":dp.get("status"),"oem":dp.get("current_oem") or ident["oem"],
             "requested_oem":ident["oem"],"name":dp.get("name"),"dl_usd":dp.get("dealer_price_usd"),
             "actual_weight_kg":ref.get("actual_weight_kg"),"volume_weight_kg":ref.get("volume_weight_kg"),

@@ -148,10 +148,31 @@ def get_dealer_price(manufacturer: str, oem: str, *, category_evidence=None) -> 
     if category.lower() != "parts":
         return DealerPriceResult("CATEGORY_UNVERIFIED", manufacturer, _normalize_oem(oem),
                                  message="approved_supplier_adapter_missing")
-    # Even an exact Parts route does not prove dealer price field semantics.
-    # Do not invoke legacy browser adapter or allow positive FOUND on selector name.
-    return DealerPriceResult("DEALER_PRICE_UNVERIFIED", manufacturer, _normalize_oem(oem),
-                             message="independent_dealer_price_semantics_required")
+    # Owner-confirmed DCP semantics: SIGN OUT = dealer price for non-Polaris.
+    # Polaris still only uses the verified cart path above.
+    from dcp_authenticated_parts_search import extract_parts_rows, parts_dom_expression
+    canonical, slug = _parts_slug(manufacturer)
+    requested = _normalize_oem(oem).upper()
+    expected = f"/oemparts/partsearch/{slug}"
+    try:
+        for tab in _tabs():
+            if not _is_dcp_page(tab):
+                continue
+            parsed = urlsplit(str(tab.get("url") or ""))
+            if parsed.path != expected or parse_qs(parsed.query).get("partsearch") != [requested]:
+                continue
+            observed = _runtime_evaluate(tab, parts_dom_expression(slug, requested, live=True))
+            result = extract_parts_rows(canonical, requested, observed, origin="live_dom")
+            if result.status != "NOT_FOUND":
+                return result
+            # Already-open exact result is authoritative: never retry a miss.
+            return result
+        tab = _pick_authorized_dcp_tab()
+        observed = _runtime_evaluate(tab, parts_dom_expression(slug, requested, live=False))
+        return extract_parts_rows(canonical, requested, observed, origin="server_html")
+    except Exception:
+        return DealerPriceResult("TECHNICAL_ERROR",canonical,requested,
+                                 message="authorized_dcp_search_unavailable")
 
 
 def _legacy_get_dealer_price_unverified_route(manufacturer: str, oem: str) -> DealerPriceResult:
@@ -521,6 +542,9 @@ def get_dealer_price_dict(manufacturer: str, oem: str, *, category_evidence=None
     # DealerPriceResult predates the signed-v2 top-level currency field.  For the
     # targeted Polaris cart path, preserve currency only from the already
     # verified cart proof; missing/tampered proof remains fail-closed downstream.
+    if value.get("status") == "FOUND" and value.get("manufacturer") != "Polaris":
+        # Actual browser result is USD in the owner's authorized dealer account.
+        value["currency"] = "USD"
     if value.get("status") == "FOUND" and value.get("manufacturer") == "Polaris":
         proof = value.get("dealer_cart_proof")
         if isinstance(proof, dict) and isinstance(proof.get("currency"), str):

@@ -22,7 +22,8 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+import manufacturer_first_ux as mfgux
 
 import dealercostparts_manufacturer_finder_v6_6 as finder
 import warehouse_stock_service
@@ -35,6 +36,8 @@ ORDERS_DB = Path(
     or Path(__file__).with_name("extremizer_orders.db")
 )
 DP_MAX_AGE_HOURS = float(os.getenv("EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "24") or "24")
+# Owner dealer-price freshness: never trust a legacy 168h environment setting.
+DP_MAX_AGE_HOURS = max(0.0, min(DP_MAX_AGE_HOURS, 24.0))
 PRICE_COEFFICIENT = float(os.getenv("EXTREMIZER_PRICE_COEFFICIENT", "1.34") or "1.34")
 USD_RUB_RATE = float((os.getenv("EXTREMIZER_USD_RUB_RATE", "0") or "0").replace(",", "."))
 
@@ -273,7 +276,7 @@ def _identity_and_price_legacy(oem: str) -> dict:
     return result
 
 
-def _identity_and_price(oem: str) -> dict:
+def _identity_and_price(oem: str, selected_manufacturer: str | None = None) -> dict:
     """Resolve customer pricing only from verified public catalog + fresh DP cache.
 
     Safe order:
@@ -377,11 +380,14 @@ def _identity_and_price(oem: str) -> dict:
             if canonical(row["manufacturer"])
         }
         confirmed_manufacturers = identity_manufacturers | catalog_manufacturers
-        if len(confirmed_manufacturers) > 1:
+        manufacturer = mfgux.selected({'manufacturer':selected_manufacturer})
+        if not manufacturer:
+            # No inferred identity is allowed in manufacturer-first searches.
             return result
-
-        manufacturer = next(iter(confirmed_manufacturers), None)
-
+        # A contradictory verified catalog/identity record must fail closed.
+        if confirmed_manufacturers and confirmed_manufacturers != {manufacturer}:
+            return result
+        result['manufacturer'] = manufacturer
         identity_row = None
         if manufacturer:
             identity_row = next(
@@ -435,76 +441,6 @@ def _identity_and_price(oem: str) -> dict:
                         alias = normalize_oem(str(row[0] or ""))
                         if alias and alias not in equivalent_oems:
                             equivalent_oems.append(alias)
-
-        # If verified catalog identity is unavailable, infer only from trusted
-        # existing data and require a single unambiguous manufacturer.
-        if not manufacturer:
-            candidates: set[str] = set()
-
-            if "dealer_price_cache" in tables:
-                placeholders = ",".join("?" for _ in equivalent_oems)
-                for row in conn.execute(
-                    f"""SELECT DISTINCT manufacturer
-                          FROM dealer_price_cache
-                         WHERE oem IN ({placeholders})""",
-                    tuple(equivalent_oems),
-                ):
-                    value = canonical(row[0])
-                    if value:
-                        candidates.add(value)
-
-            if "warehouse_stock_current" in tables:
-                for row in conn.execute(
-                    """SELECT DISTINCT manufacturer,name
-                         FROM warehouse_stock_current
-                        WHERE oem=?
-                          AND manufacturer IS NOT NULL
-                          AND TRIM(manufacturer)<>''""",
-                    (oem,),
-                ):
-                    raw = str(row["manufacturer"] or "").strip()
-                    value = canonical(raw)
-                    name = str(row["name"] or "").lower()
-                    if raw.upper() == "BRP":
-                        if "ski-doo" in name or "ski doo" in name:
-                            value = "Ski-Doo"
-                        elif "sea-doo" in name or "sea doo" in name:
-                            value = "Sea-Doo"
-                        elif "can-am" in name or "can am" in name:
-                            value = "Can-Am"
-                    if value:
-                        candidates.add(value)
-                    if not result["name"] and row["name"]:
-                        result["name"] = str(row["name"]).strip()
-
-            if len(candidates) != 1:
-                # NEW OEM: ask the trusted local DCP agent to discover identity.
-                # The cloud never guesses manufacturer and MSRP is never used as DP.
-                live = dp_live_bridge.request_live_dp(
-                    ORDERS_DB, "__AUTO__", oem, wait_seconds=10.0,
-                )
-                live_manufacturer = finder.manufacturer_alias(
-                    str(live.get("manufacturer") or "").strip()
-                )
-                if (
-                    str(live.get("status") or "").upper() == "FOUND"
-                    and live_manufacturer
-                    and isinstance(live.get("dealer_price_usd"), (int, float))
-                    and float(live["dealer_price_usd"]) > 0
-                ):
-                    result["manufacturer"] = live_manufacturer
-                    result["dp_usd"] = float(live["dealer_price_usd"])
-                    result["customer_rub"] = _customer_price_rub(result["dp_usd"])
-                    result["price_fresh"] = True
-                    result["dp_oem"] = normalize_oem(
-                        str(live.get("current_oem") or "")
-                    ) or oem
-                    if live.get("name"):
-                        result["name"] = str(live["name"]).strip()
-                return result
-            manufacturer = next(iter(candidates))
-
-        result["manufacturer"] = manufacturer
 
         if "dealer_price_cache" not in tables:
             return result
@@ -698,7 +634,36 @@ async def _is_chat_member(
     return str(member.status) in {"creator", "administrator", "member", "restricted"}
 
 
+def manufacturer_keyboard():
+    vals = mfgux.MANUFACTURERS
+    return InlineKeyboardMarkup([[InlineKeyboardButton(vals[j], callback_data=f'mfg:{j}')
+       for j in range(i, min(i + 2, len(vals)))] for i in range(0, len(vals), 2)])
+
+def search_keyboard():
+    return InlineKeyboardMarkup([[InlineKeyboardButton('🔎 Искать ещё', callback_data='search_again'),
+      InlineKeyboardButton('🏭 Сменить производителя', callback_data='change_mfg')]])
+
+async def manufacturer_callback(update, context):
+    q = update.callback_query
+    await q.answer()
+    data = q.data or ''
+    if data == 'change_mfg':
+        mfgux.clear_search(context.user_data)
+        await q.edit_message_text('🏭 Выберите производителя:', reply_markup=manufacturer_keyboard())
+        return
+    if data == 'search_again':
+        manufacturer = mfgux.selected(context.user_data)
+        await q.edit_message_text(('Производитель: ' + manufacturer + '\nВведите каталожный номер.') if manufacturer else '🏭 Выберите производителя:',
+          reply_markup=search_keyboard() if manufacturer else manufacturer_keyboard())
+        return
+    manufacturer = mfgux.CALLBACK_TO_MANUFACTURER.get(data)
+    if not manufacturer or not mfgux.choose(context.user_data, manufacturer):
+        await q.edit_message_text('🏭 Выберите производителя:', reply_markup=manufacturer_keyboard())
+        return
+    await q.edit_message_text('Производитель: ' + manufacturer + '\nВведите каталожный номер.', reply_markup=search_keyboard())
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    mfgux.clear_search(context.user_data)
     payload = str(context.args[0]).strip() if context.args else ""
     if payload.startswith("price_"):
         source_chat_id = _parse_price_link_payload(payload)
@@ -726,11 +691,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except Exception:
             context.user_data["pricing_source_chat_title"] = None
         await update.effective_message.reply_text(
-            "Отправь OEM-каталожный номер одним сообщением."
+            "🏭 Выберите производителя:", reply_markup=manufacturer_keyboard()
         )
         return
 
-    await update.effective_message.reply_text(WELCOME, parse_mode=ParseMode.HTML)
+    await update.effective_message.reply_text("🏭 Выберите производителя:", reply_markup=manufacturer_keyboard())
 
 
 async def price_button(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -789,20 +754,14 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     chat = update.effective_chat
     if chat is None or str(chat.type) != "private":
         return
-    raw = str(update.effective_message.text or "").strip()
-    parts = [x for x in raw.replace(",", " ").replace(";", " ").split() if x]
-    if len(parts) != 1:
-        await update.effective_message.reply_text(
-            "Отправьте один OEM-каталожный номер одним сообщением."
-        )
+    manufacturer = mfgux.selected(context.user_data)
+    if not manufacturer:
+        await update.effective_message.reply_text('Сначала выберите производителя.', reply_markup=manufacturer_keyboard())
         return
-    oem = normalize_oem(parts[0])
+    oem = mfgux.exact_oem(update.effective_message.text)
     if not oem:
-        await update.effective_message.reply_text(
-            "Не удалось распознать OEM. Проверьте номер и повторите."
-        )
+        await update.effective_message.reply_text('Введите один каталожный номер без названия производителя.', reply_markup=search_keyboard())
         return
-
     source_chat_id = context.user_data.get("pricing_source_chat_id")
     source_kind = "workchat" if source_chat_id is not None else "private"
     analytics_request_id = pricing_analytics.begin_request_from_update(
@@ -817,7 +776,7 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     status = await update.effective_message.reply_text("🔎 Проверяю цену и наличие…")
     try:
-        info_task = asyncio.to_thread(_identity_and_price, oem)
+        info_task = asyncio.to_thread(_identity_and_price, oem, manufacturer)
         stock_task = _stock_with_refresh(oem)
         info, rows = await asyncio.gather(info_task, stock_task)
         stock_rows = [
@@ -835,7 +794,7 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         pricing_analytics.complete_request(
             ORDERS_DB,
             analytics_request_id,
-            manufacturer=info.get("manufacturer"),
+            manufacturer=manufacturer,
             result_status="FOUND" if price_found or stock_rows else "UNAVAILABLE",
             price_status="FOUND" if price_found else "UNAVAILABLE",
             display_price_amount=info.get("customer_rub"),
@@ -846,6 +805,7 @@ async def oem_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await status.edit_text(
             _compose(oem, info, rows),
             parse_mode=ParseMode.HTML,
+            reply_markup=search_keyboard(),
         )
     except Exception:
         import logging
@@ -862,6 +822,7 @@ def build_application(token: str | None = None) -> Application:
     app = Application.builder().token(token).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("pricebutton", price_button))
+    app.add_handler(CallbackQueryHandler(manufacturer_callback, pattern=r"^(?:mfg:\d+|search_again|change_mfg)$"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, oem_message))
     return app
 

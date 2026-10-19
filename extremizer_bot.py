@@ -48,6 +48,7 @@ from telegram.ext import (
 from playwright.async_api import async_playwright
 
 import dealercostparts_manufacturer_finder_v6_6 as finder
+import manufacturer_first_ux as mfgux
 from dcp_private_price import get_dealer_price
 import warehouse_admin
 import warehouse_store
@@ -94,6 +95,8 @@ try:
     DP_CACHE_MAX_AGE_HOURS = max(0.0, float(DP_CACHE_MAX_AGE_HOURS_RAW))
 except ValueError:
     DP_CACHE_MAX_AGE_HOURS = 24.0
+# Owner dealer-price freshness: clamp stale Railway settings to <=24h.
+DP_CACHE_MAX_AGE_HOURS = min(DP_CACHE_MAX_AGE_HOURS, 24.0)
 
 DCP_MODE = os.getenv("EXTREMIZER_DCP_MODE", "live").strip().lower()
 DCP_CACHE_ONLY = DCP_MODE == "cache_only"
@@ -2067,26 +2070,8 @@ def save_order_to_history(
             raise
 
 
-MANUFACTURERS = [
-    "Arctic Cat",
-    "Can-Am",
-    "CFMoto",
-    "Honda",
-    "Indian",
-    "Kawasaki",
-    "KTM",
-    "Polaris",
-    "Sea-Doo",
-    "Ski-Doo",
-    "Suzuki",
-    "Yamaha",
-    "Aftermarket",
-]
-
-CALLBACK_TO_MANUFACTURER = {
-    f"mfg:{i}": manufacturer
-    for i, manufacturer in enumerate(MANUFACTURERS)
-}
+MANUFACTURERS = list(mfgux.MANUFACTURERS)
+CALLBACK_TO_MANUFACTURER = mfgux.CALLBACK_TO_MANUFACTURER
 
 MAX_CONCURRENT_SEARCHES = 1
 
@@ -8199,7 +8184,7 @@ async def _revalidate_warehouse_cart_item(item: dict) -> dict:
 
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.pop("manufacturer", None)
+    mfgux.clear_search(context.user_data)
     _activate_group_session(update, context)
 
     user = update.effective_user
@@ -8252,20 +8237,12 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if _is_group_chat(update) else ""
     )
 
-    await safe_reply_text(update.effective_message, 
-        "👋 <b>Extremizer_bot</b>\n\n"
-        "Помогу сориентироваться в ценах."
-        + group_note + "\n\n"
-        "<b>Можно отправить запрос двумя способами:</b>\n\n"
-        "<b>1. Один производитель</b>\n"
-        "Выбери производителя кнопкой ниже и отправь один или несколько OEM-номеров.\n\n"
-        "<b>2. Разные производители</b>\n"
-        "Укажи производителя перед каждым номером, например:\n"
-        "<code>Ski-Doo 417224332\nArctic Cat 0746-933</code>",
+    await safe_reply_text(
+        update.effective_message,
+        "🏭 <b>Выбери производителя:</b>" + group_note,
         parse_mode=ParseMode.HTML,
         reply_markup=manufacturer_keyboard(),
     )
-
 
 
 async def _shadow_checkout_confirm(
@@ -11075,8 +11052,7 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
         return
 
     if data == "change_mfg":
-        context.user_data.pop("manufacturer", None)
-        context.user_data.pop("last_oem", None)
+        mfgux.clear_search(context.user_data)
         await query.edit_message_text(
             "🏭 <b>Выбери производителя:</b>",
             parse_mode=ParseMode.HTML,
@@ -11088,7 +11064,7 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
         manufacturer = context.user_data.get("manufacturer")
         last_search_was_mixed = bool(context.user_data.get("last_search_was_mixed"))
 
-        if last_search_was_mixed or not manufacturer:
+        if not manufacturer:
             await query.edit_message_text(
                 "Отправь новый запрос.\n\n"
                 "Для разных производителей укажи производителя перед OEM, например:\n"
@@ -11157,8 +11133,7 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text("Неизвестный производитель. Отправь /start.")
         return
 
-    context.user_data["manufacturer"] = manufacturer
-    context.user_data["last_search_was_mixed"] = False
+    mfgux.choose(context.user_data, manufacturer)
 
     await query.edit_message_text(
         f"Выбран производитель: <b>{escape(manufacturer)}</b>\n\n"
@@ -11826,78 +11801,22 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 return
 
-    selected_manufacturer = context.user_data.get("manufacturer")
-
-    # V2.4 first checks only the Telegram input for explicit manufacturer names.
-    # If none are present, V2.3 behavior remains unchanged and the selected
-    # manufacturer is used for every OEM.
-    try:
-        mixed_jobs = parse_mixed_manufacturer_batch(raw_text)
-    except OverflowError:
-        await safe_reply_text(message, 
-            f"Слишком много номеров в одном сообщении.\n\n"
-            f"Отправь не больше <b>{MAX_BATCH_OEMS}</b> OEM за один раз.",
-            parse_mode=ParseMode.HTML,
+    selected_manufacturer=mfgux.selected(context.user_data)
+    if not selected_manufacturer:
+        await safe_reply_text(
+            message, "🏭 Сначала выбери производителя кнопкой.",
+            reply_markup=manufacturer_keyboard(),
         )
         return
-    except ValueError:
-        await safe_reply_text(message, 
-            "Не удалось разобрать смешанный запрос.\n\n"
-            "Укажи производителя перед номером, например:\n"
-            "<code>Ski-Doo 417300571\nArctic Cat 0746-933</code>\n\n"
-            "Или используй блоки:\n"
-            "<code>Ski-Doo:\n417300571\n417300574\n\nArctic Cat:\n0746-933</code>",
-            parse_mode=ParseMode.HTML,
+    oems=mfgux.oem_batch(raw_text,max_count=MAX_BATCH_OEMS)
+    if not oems:
+        await safe_reply_text(
+            message, "Отправь только каталожные номера для выбранного производителя.",
+            reply_markup=change_manufacturer_keyboard(),
         )
         return
-
-    mixed_mode = mixed_jobs is not None
-
-    context.user_data["last_search_was_mixed"] = mixed_mode
-
-    if mixed_mode:
-        jobs = mixed_jobs
-    else:
-        try:
-            inferred_oems = parse_oem_batch(raw_text)
-        except (OverflowError, ValueError):
-            inferred_oems = []
-        if len(inferred_oems) == 1:
-            identity = resolve_oem_identity(inferred_oems[0])
-            inferred_manufacturer = identity.get("manufacturer")
-            if inferred_manufacturer:
-                selected_manufacturer = inferred_manufacturer
-                context.user_data["manufacturer"] = inferred_manufacturer
-        if not selected_manufacturer:
-                await safe_reply_text(message, 
-                    "Сначала выбери производителя или укажи производителя прямо в сообщении:\n\n"
-                    "<code>Ski-Doo 417300571\nArctic Cat 0746-933</code>",
-                    parse_mode=ParseMode.HTML,
-                    reply_markup=manufacturer_keyboard(),
-                )
-                return
-
-        try:
-            oems = parse_oem_batch(raw_text)
-        except OverflowError:
-            await safe_reply_text(message, 
-                f"Слишком много номеров в одном сообщении.\n\n"
-                f"Отправь не больше <b>{MAX_BATCH_OEMS}</b> OEM за один раз.",
-                parse_mode=ParseMode.HTML,
-            )
-            return
-        except ValueError:
-            await safe_reply_text(message, 
-                "Не удалось распознать OEM / каталожные номера.\n\n"
-                "Можно отправить один номер или несколько — каждый с новой строки, "
-                "через пробел или запятую.\n\n"
-                "Например:\n"
-                "<code>417300571\n417300574\n417224332</code>",
-                parse_mode=ParseMode.HTML,
-            )
-            return
-
-        jobs = [(selected_manufacturer, oem) for oem in oems]
+    jobs=[(selected_manufacturer, oem) for oem in oems]
+    context.user_data["last_search_was_mixed"]=False
 
     context.user_data["last_oem"] = jobs[-1][1]
     context.user_data["last_oems"] = [oem for _, oem in jobs]
@@ -11927,17 +11846,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            identity = resolve_oem_identity(oem)
             result = await finder_service.search(manufacturer, oem)
-            if str(result.get("status") or "").upper() != "FOUND" and identity.get("identified"):
-                result = dict(result)
-                result["status"] = "PARTIAL"
-                result["manufacturer"] = identity.get("manufacturer") or manufacturer
-                result["query_oem"] = oem
-                result["oem"] = oem
-                result["item_sku"] = oem
-                result["name"] = identity.get("name") or result.get("name")
-                result["_resolved_item_type"] = identity.get("item_type")
             result = await enrich_found_result_with_dealer_price(result)
             status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(

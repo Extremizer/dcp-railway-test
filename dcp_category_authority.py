@@ -59,3 +59,29 @@ def resolve(conn: sqlite3.Connection, manufacturer: str, requested_oem: str) -> 
         "category_verified_at": str(checked),
         "resolved_oem": str(current),
     }
+
+
+# Manufacturer-first Parts SEARCH admission for a *new* OEM with no MSRP/catalog row.
+# This is an explicit search route, NOT a verified catalog identity, and must not
+# be persisted as MSRP authority. A price can be written ONLY after the separately
+# signed, fenced producer returns a verified authorized DCP result.
+def resolve_search_route(conn: sqlite3.Connection, manufacturer: str, requested_oem: str) -> dict | None:
+    approved = resolve(conn, manufacturer, requested_oem)
+    if approved is not None:
+        return approved
+    import re
+    import dealercostparts_manufacturer_finder_v6_6 as finder
+    # Polaris dealer price requires existing verified category + actual CART proof.
+    if manufacturer == "Polaris":
+        return None
+    if manufacturer not in {c.manufacturer for c in finder.CATALOGS if c.kind == "parts"}:
+        return None
+    if not isinstance(requested_oem,str) or not re.fullmatch(r"[A-Z0-9-]{4,40}",requested_oem):
+        return None
+    return {
+        "item_category": "Parts",
+        "category_source_kind": "explicit_manufacturer_parts_search",
+        "category_source_ref": "manufacturer_first_oem_request",
+        "category_verified_at": "1970-01-01T00:00:00+00:00",
+        "resolved_oem": requested_oem,
+    }
