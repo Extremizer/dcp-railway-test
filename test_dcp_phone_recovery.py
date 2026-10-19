@@ -114,5 +114,26 @@ class RecoveryAppTests(unittest.TestCase):
         self.assertEqual(response.headers["referrer-policy"],"no-referrer")
 
 
+
+class CloudHostGateTests(unittest.TestCase):
+    def test_producer_enable_rejected_and_no_secrets_accepted(self):
+        import dcp_cloud_browser_host as host
+        for changes in ({"DCP_CLOUD_BROWSER_HOST_ENABLED":"0"},
+                        {"DCP_CLOUD_BROWSER_HOST_ENABLED":"1","DCP_CLOUD_PRODUCER_ENABLED":"1"},
+                        {"DCP_CLOUD_BROWSER_HOST_ENABLED":"1","DCP_CLOUD_PRODUCER_ENABLED":"0",
+                         "DCP_PHONE_RECOVERY_ENABLED":"1"}):
+            with self.subTest(changes=changes),self.assertRaises(host.HostConfigurationError):
+                host.configuration(changes,platform="linux")
+        with self.assertRaises(host.HostConfigurationError):
+            host.configuration({"DCP_CLOUD_BROWSER_HOST_ENABLED":"1"},platform="win32")
+
+    def test_browser_host_never_invokes_agent_claims(self):
+        from pathlib import Path
+        code=Path(__file__).with_name("dcp_cloud_browser_host.py").read_text()
+        self.assertNotIn("dp_sync_agent",code.replace("does NOT run dp_sync_agent",""))
+        self.assertNotIn("claim_next(",code)
+        self.assertIn("--remote-debugging-address=127.0.0.1",code)
+
+
 if __name__=="__main__":
     unittest.main()
