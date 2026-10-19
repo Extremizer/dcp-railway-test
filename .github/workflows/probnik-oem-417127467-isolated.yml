@@ -22,7 +22,7 @@ jobs:
           python -B -m py_compile probnik_app.py dp_live_bridge.py dcp_category_authority.py oemixibot_app.py
           python -B -c "import probnik_app, oemixibot_app, dp_live_bridge"
       - name: P0 identity / warehouse safety
-        run: python -B -m pytest -q test_probnik_417127467_identity_failclosed.py test_probnik_417127467_warehouse_guard.py
+        run: python -B -m pytest -q test_probnik_417127467_identity_failclosed.py test_probnik_417127467_warehouse_guard.py test_probnik_417127467_signed_identity_e2e.py
       - name: Relevant DCP and dealer regressions
         run: |
           python -B -m pytest -q test_dcp_admission.py test_dp_result_completion.py test_polaris_dealer_cart_contract.py test_oemixibot_admin_oem_search.py
