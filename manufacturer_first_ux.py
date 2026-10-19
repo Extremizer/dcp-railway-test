@@ -32,7 +32,7 @@ def clear_search(state):
 def exact_oem(raw):
     """One OEM token, never a manufacturer header or mixed-brand request."""
     raw = str(raw or "").strip()
-    if not raw or len(raw.split()) != 1:
+    if not raw or len(raw.split()) != 1 or finder.manufacturer_alias(raw) in MANUFACTURERS:
         return None
     try:
         return finder.normalize_oem(raw)
