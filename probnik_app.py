@@ -36,6 +36,8 @@ ORDERS_DB = Path(
     or Path(__file__).with_name("extremizer_orders.db")
 )
 DP_MAX_AGE_HOURS = float(os.getenv("EXTREMIZER_DP_CACHE_MAX_AGE_HOURS", "24") or "24")
+# Owner dealer-price freshness: never trust a legacy 168h environment setting.
+DP_MAX_AGE_HOURS = max(0.0, min(DP_MAX_AGE_HOURS, 24.0))
 PRICE_COEFFICIENT = float(os.getenv("EXTREMIZER_PRICE_COEFFICIENT", "1.34") or "1.34")
 USD_RUB_RATE = float((os.getenv("EXTREMIZER_USD_RUB_RATE", "0") or "0").replace(",", "."))
 
