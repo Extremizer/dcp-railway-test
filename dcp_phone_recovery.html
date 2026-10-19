@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>EXTREMIZER — DCP Recovery</title>
+<style>body{background:#080808;color:#f4f4f4;font:16px system-ui,sans-serif;margin:0;padding:16px}h1{font-size:21px}button{border:1px solid #BFF803;background:#BFF803;color:#080808;border-radius:12px;min-height:48px;padding:10px 16px;font-weight:700}input{background:#202123;color:#fff;border:1px solid #555;min-height:48px;border-radius:10px;padding:0 12px;flex:1;min-width:0}.bar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0}.viewport{position:relative;background:#141516;border:1px solid #555;border-radius:12px;overflow:hidden;touch-action:manipulation;max-width:900px}.viewport img{display:block;width:100%;height:auto}.muted{color:#b6b6b6;font-size:13px}#status{color:#BFF803}#app{display:none}</style>
+<script src="https://telegram.org/js/telegram-web-app.js"></script><script src="/recovery.js" defer></script></head>
+<body><h1>EXTREMIZER / DCP</h1><p class="muted">Ручное восстановление дилерской сессии. Никаких автоматических решений Cloudflare.</p>
+<p id="status" aria-live="polite">Проверка доступа…</p>
+<div id="app"><div class="bar"><button id="refresh">Обновить экран</button><button id="state">Проверить SIGN OUT</button><button id="close">Закрыть доступ</button></div>
+<div id="viewport" class="viewport"><img id="frame" alt="Удалённый браузер DCP — управление касанием"></div>
+<div class="bar"><input id="typing" autocomplete="off" placeholder="Ввести текст в выбранное поле" aria-label="Текст для браузера"><button id="type">Ввести</button></div>
+<div class="bar"><button id="up">↑ Прокрутить</button><button id="down">↓ Прокрутить</button></div>
+<p class="muted">Данные вводятся напрямую в удалённую сессию. Не отправляйте логин и пароль в чат. Ссылка на восстановление одноразовая.</p></div></body></html>
