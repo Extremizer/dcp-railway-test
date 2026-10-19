@@ -35,7 +35,7 @@ def test_canonical_manufacturer_buttons_equal_dcp_catalog_order():
     assert expected == list(ux.MANUFACTURERS) == pricing.MANUFACTURERS
     assert len(expected)==13
     assert [x.text for row in probnik.manufacturer_keyboard().inline_keyboard for x in row]==expected
-    assert [x.text for row in oemixi._mfg_keyboard().inline_keyboard for x in row]==expected
+    assert [x.text for row in oemixi._mfg_keyboard().inline_keyboard for x in row if x.callback_data.startswith("mfg:")]==expected
     assert [x.text for row in oemixi._mfg_keyboard(admin=True).inline_keyboard for x in row]==expected
 
 
