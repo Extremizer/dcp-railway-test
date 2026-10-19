@@ -40,6 +40,8 @@ def configuration(env=None, *, platform=None):
     # Require separate state mount, not ephemeral repo checkout or root fs.
     if str(root) in {"/","/tmp","/app","/home"} or root.parent == Path("/tmp"):
         raise HostConfigurationError("ephemeral_or_root_state_forbidden")
+    if not env.get("DISPLAY"):
+        raise HostConfigurationError("interactive_display_required")
     executable=env.get("DCP_CHROMIUM_EXECUTABLE","")
     if not executable or not Path(executable).is_absolute() or not Path(executable).is_file():
         raise HostConfigurationError("explicit_installed_chromium_required")
