@@ -788,6 +788,15 @@ async def _queue_admin_oem_probe(update,context,oem):
 async def _resolve_admin_oem_offer(oem, context):
     admin_resolver=context.application.bot_data.get(_ADMIN_POLARIS_PRICE_RESOLVER_KEY)
     if admin_resolver is not None:
+        # An independently verified non-Polaris OEM must not enter the
+        # Polaris dealer-cart provider. Retain the original Polaris path.
+        try:
+            shared_category=await asyncio.to_thread(lookup_shared_identity,oem)
+        except Exception:
+            shared_category=None
+        if shared_category and shared_category.get("manufacturer") != "Polaris":
+            admin_resolver=None
+    if admin_resolver is not None:
         if not callable(admin_resolver):
             return {"status":"DEALER_PRICE_UNVERIFIED","oem":oem,
                     "admin_unit_price_usd":None,"dealer_price_usd":None,
