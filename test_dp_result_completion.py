@@ -27,6 +27,7 @@ import dp_result_completion as completion
 import dp_sync_protocol as protocol
 import dp_claim_recovery as recovery
 from dcp_admission_test_support import approve_mode
+from dcp_isolated_category_fixture import seed_test_category_authority
 
 ROOT=Path(__file__).resolve().parent
 KEY=b"isolated-producer-key-not-a-production-secret"
@@ -67,6 +68,7 @@ class CompletionFixture(unittest.TestCase):
         self.network=patch.object(socket.socket,"connect",side_effect=AssertionError("external network forbidden"))
         self.network.start();self.addCleanup(self.network.stop)
         bridge.init(self.db);health.set_health(self.db,"READY")
+        seed_test_category_authority(self.db)
         approve_mode(self.db,"OPEN")
         with sqlite3.connect(self.db) as c:
             completion._write_cache(c,"Arctic Cat","2670-265",99,"verified_local_dcp:"+RAW_SOURCE,health._now())
@@ -115,7 +117,7 @@ class CompletionFixture(unittest.TestCase):
 
 class AtomicHttpTests(CompletionFixture):
     def test_found_commits_cache_identity_and_request_together(self):
-        claim=self.claim("__AUTO__")
+        claim=self.claim()
         before=self.snapshot()
         response=self.post(self.payload(claim,current_oem="2670-266"))
         self.assertEqual(response.status_code,200,response.text)
@@ -186,13 +188,13 @@ class AtomicHttpTests(CompletionFixture):
     def test_auto_conflicting_confirmed_identity_cannot_be_overwritten(self):
         with sqlite3.connect(self.db) as c:
             completion._write_identity(c,"Honda","2670-265","2670-265","existing","existing",health._now())
-        claim=self.claim("__AUTO__");before=self.snapshot()
+        claim=self.claim();before=self.snapshot()
         response=self.post(self.payload(claim))
         self.assertEqual(response.status_code,409,response.text)
         self.assertEqual(before,self.snapshot())
 
     def test_failure_after_cache_write_rolls_everything_back(self):
-        claim=self.claim("__AUTO__")
+        claim=self.claim()
         with sqlite3.connect(self.db) as c:
             c.execute("CREATE TRIGGER fail_identity BEFORE INSERT ON probnik_oem_identity BEGIN SELECT RAISE(ABORT,'fixture failure'); END")
         before=self.snapshot()
@@ -208,7 +210,7 @@ class AtomicHttpTests(CompletionFixture):
         self.assertEqual(before,self.snapshot())
 
     def test_failure_on_request_completion_rolls_identity_and_cache_back(self):
-        claim=self.claim("__AUTO__")
+        claim=self.claim()
         with sqlite3.connect(self.db) as c:
             c.execute("CREATE TRIGGER fail_finish BEFORE UPDATE ON dp_live_requests WHEN NEW.status='finished' BEGIN SELECT RAISE(ABORT,'fixture failure'); END")
         before=self.snapshot()
@@ -216,7 +218,7 @@ class AtomicHttpTests(CompletionFixture):
         self.assertEqual(before,self.snapshot())
 
     def test_blocked_auto_result_finishes_without_false_identity(self):
-        claim=self.claim("__AUTO__")
+        claim=self.claim()
         response=self.post(self.payload(claim,status="CLOUDFLARE",manufacturer=None,query_oem=None,matched_sku=None))
         self.assertEqual(response.status_code,200,response.text)
         with sqlite3.connect(self.db) as c:
@@ -232,7 +234,7 @@ class AtomicHttpTests(CompletionFixture):
             self.assertEqual(before,self.snapshot()["dealer_price_cache"])
 
     def test_commit_failure_rolls_all_result_writes_back(self):
-        claim=self.claim("__AUTO__")
+        claim=self.claim()
         with sqlite3.connect(self.db) as c:
             c.execute("CREATE TABLE fk_parent(id INTEGER PRIMARY KEY)")
             c.execute("CREATE TABLE fk_child(parent_id INTEGER REFERENCES fk_parent(id) DEFERRABLE INITIALLY DEFERRED)")
