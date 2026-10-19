@@ -119,14 +119,14 @@ class AtomicHttpTests(CompletionFixture):
     def test_found_commits_cache_identity_and_request_together(self):
         claim=self.claim()
         before=self.snapshot()
-        response=self.post(self.payload(claim,current_oem="2670-266"))
+        response=self.post(self.payload(claim))
         self.assertEqual(response.status_code,200,response.text)
         after=self.snapshot()
         self.assertEqual(after["orders"],before["orders"])
         self.assertEqual(after["finance_ledger"],before["finance_ledger"])
         with sqlite3.connect(self.db) as c:
-            self.assertEqual(c.execute("SELECT dealer_price_usd FROM dealer_price_cache WHERE manufacturer='Arctic Cat' ORDER BY oem").fetchall(),[(31.25,),(31.25,)])
-            self.assertEqual(c.execute("SELECT manufacturer,current_oem FROM probnik_oem_identity WHERE oem='2670-265'").fetchone(),("Arctic Cat","2670-266"))
+            self.assertEqual(c.execute("SELECT dealer_price_usd FROM dealer_price_cache WHERE manufacturer='Arctic Cat' ORDER BY oem").fetchall(),[(31.25,)])
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM probnik_oem_identity WHERE oem='2670-265'").fetchone()[0],0)
             self.assertEqual(c.execute("SELECT status,result_status FROM dp_live_requests").fetchone(),("finished","FOUND"))
 
     def test_duplicate_is_409_and_no_second_write(self):
@@ -196,7 +196,7 @@ class AtomicHttpTests(CompletionFixture):
     def test_failure_after_cache_write_rolls_everything_back(self):
         claim=self.claim()
         with sqlite3.connect(self.db) as c:
-            c.execute("CREATE TRIGGER fail_identity BEFORE INSERT ON probnik_oem_identity BEGIN SELECT RAISE(ABORT,'fixture failure'); END")
+            c.execute("CREATE TRIGGER fail_cache BEFORE UPDATE ON dealer_price_cache BEGIN SELECT RAISE(ABORT,'fixture failure'); END")
         before=self.snapshot()
         self.assertEqual(self.post(self.payload(claim)).status_code,500)
         self.assertEqual(before,self.snapshot())
@@ -204,9 +204,9 @@ class AtomicHttpTests(CompletionFixture):
     def test_failure_on_alias_cache_write_rolls_first_upsert_back(self):
         claim=self.claim()
         with sqlite3.connect(self.db) as c:
-            c.execute("CREATE TRIGGER fail_alias BEFORE INSERT ON dealer_price_cache WHEN NEW.oem='2670-266' BEGIN SELECT RAISE(ABORT,'fixture failure'); END")
+            c.execute("CREATE TRIGGER fail_cache BEFORE UPDATE ON dealer_price_cache WHEN NEW.oem='2670-265' BEGIN SELECT RAISE(ABORT,'fixture failure'); END")
         before=self.snapshot()
-        self.assertEqual(self.post(self.payload(claim,current_oem="2670-266")).status_code,500)
+        self.assertEqual(self.post(self.payload(claim)).status_code,500)
         self.assertEqual(before,self.snapshot())
 
     def test_failure_on_request_completion_rolls_identity_and_cache_back(self):
