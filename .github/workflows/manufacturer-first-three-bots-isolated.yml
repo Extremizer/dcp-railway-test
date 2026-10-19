@@ -1,0 +1,27 @@
+name: Manufacturer First Three Bots Isolated
+on:
+  push:
+    branches:
+      - theme4-manufacturer-first-three-bots-20261019
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  manufacturer-first:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Dependencies
+        run: python -m pip install -r requirements.txt pytest beautifulsoup4
+      - name: Syntax and startup imports
+        run: |
+          python -m compileall -q manufacturer_first_ux.py probnik_app.py extremizer_bot.py oemixibot_app.py
+          python -B -c "import manufacturer_first_ux, probnik_app, extremizer_bot, oemixibot_app"
+      - name: Manufacturer-first selected-pair tests
+        run: python -m pytest -q test_manufacturer_first_three_bots.py
+      - name: Existing targeted bot regressions
+        run: python -m pytest -q test_oemixibot_admin_oem_search.py test_oemixibot_railway_runtime.py

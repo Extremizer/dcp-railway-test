@@ -71,9 +71,9 @@ class AdminOemSearchTests(unittest.TestCase):
         update = self._update(callback_data="admsearch")
         with patch.object(app, "is_telegram_admin", return_value=True):
             asyncio.run(app.callback(update, context))
-        self.assertTrue(context.user_data["admin_oem_search"])
+        self.assertNotIn("admin_oem_search", context.user_data)
         self.assertIn(
-            "Введите один OEM",
+            "Выберите производителя",
             update.callback_query.edit_message_text.await_args.args[0],
         )
 
@@ -89,6 +89,7 @@ class AdminOemSearchTests(unittest.TestCase):
     def test_admin_search_uses_runtime_offer_without_dealer_or_finance_side_effects(self):
         update = self._update(text="2206328")
         context = self._context(admin_search=True)
+        context.user_data["manufacturer"] = "Polaris"
         offer = {
             "status": "FOUND",
             "manufacturer": "Polaris",
