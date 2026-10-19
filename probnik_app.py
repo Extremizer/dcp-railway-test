@@ -478,29 +478,9 @@ def _identity_and_price(oem: str) -> dict:
                         result["name"] = str(row["name"]).strip()
 
             if len(candidates) != 1:
-                # NEW OEM: ask the trusted local DCP agent to discover identity.
-                # The cloud never guesses manufacturer and MSRP is never used as DP.
-                live = dp_live_bridge.request_live_dp(
-                    ORDERS_DB, "__AUTO__", oem, wait_seconds=10.0,
-                )
-                live_manufacturer = finder.manufacturer_alias(
-                    str(live.get("manufacturer") or "").strip()
-                )
-                if (
-                    str(live.get("status") or "").upper() == "FOUND"
-                    and live_manufacturer
-                    and isinstance(live.get("dealer_price_usd"), (int, float))
-                    and float(live["dealer_price_usd"]) > 0
-                ):
-                    result["manufacturer"] = live_manufacturer
-                    result["dp_usd"] = float(live["dealer_price_usd"])
-                    result["customer_rub"] = _customer_price_rub(result["dp_usd"])
-                    result["price_fresh"] = True
-                    result["dp_oem"] = normalize_oem(
-                        str(live.get("current_oem") or "")
-                    ) or oem
-                    if live.get("name"):
-                        result["name"] = str(live["name"]).strip()
+                # No unverified manufacturer discovery, and no "__AUTO__"
+                # request: the broker requires canonical manufacturer authority.
+                # Preserve fail-closed behavior for absent/conflicting identity.
                 return result
             manufacturer = next(iter(candidates))
 
