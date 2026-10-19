@@ -153,6 +153,20 @@ def complete_result(db_file, payload: dict) -> dict:
                         (row["request_id"],generation,payload["producer_id"],
                          evidence_digest,authority_digest,now))
 
+                # A conflicting confirmed manufacturer must never be overwritten.
+                if "probnik_oem_identity" in {
+                    name for (name,) in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )
+                }:
+                    conflict = conn.execute(
+                        """SELECT 1 FROM probnik_oem_identity
+                           WHERE (oem=? OR current_oem=?) AND verified=1
+                             AND manufacturer<>? LIMIT 1""",
+                        (requested_oem, requested_oem, manufacturer),
+                    ).fetchone()
+                    if conflict:
+                        raise CompletionError(409, "identity_conflict")
                 _write_cache(conn, manufacturer, requested_oem, price, source, now)
                 if current_oem != requested_oem:
                     _write_cache(conn, manufacturer, current_oem, price, source, now)
