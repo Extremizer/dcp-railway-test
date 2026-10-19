@@ -11845,15 +11845,6 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             result = await finder_service.search(manufacturer, oem)
-            if False: # Never auto-infer a manufacturer in selected search.
-                result = dict(result)
-                result["status"] = "PARTIAL"
-                result["manufacturer"] = identity.get("manufacturer") or manufacturer
-                result["query_oem"] = oem
-                result["oem"] = oem
-                result["item_sku"] = oem
-                result["name"] = identity.get("name") or result.get("name")
-                result["_resolved_item_type"] = identity.get("item_type")
             result = await enrich_found_result_with_dealer_price(result)
             status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(
