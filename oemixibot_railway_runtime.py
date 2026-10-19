@@ -225,6 +225,8 @@ def apply_runtime_environment(config: dict[str, Any]) -> None:
     # Existing identity + analytics clients use this base URL. Keep them on
     # the same Railway private service boundary as the price gateway.
     os.environ["EXTREMIZER_ANALYTICS_BASE_URL"] = str(config["gateway_url"])
+    if os.getenv('EXTREMIZER_UNIFIED_ANALYTICS_ENABLE') == '1':
+        os.environ.setdefault('EXTREMIZER_UNIFIED_ANALYTICS_BASE_URL', str(config['gateway_url']))
 
 
 

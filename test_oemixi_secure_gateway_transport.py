@@ -590,6 +590,9 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                 "ContextTypes": SimpleNamespace(DEFAULT_TYPE=object),
                 "Update": object,
                 "asyncio": asyncio,
+                # Isolated actual_functions has no module imports. Explicit
+                # opt-out preserves the legacy gateway-only scenario.
+                "unified_analytics_producer": SimpleNamespace(enabled=lambda: False),
                 "resolve_offer": dealer["resolve_offer"],
                 "_dealer": lambda update: {
                     "id": "mock-dealer",

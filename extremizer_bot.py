@@ -69,6 +69,8 @@ import supplier_telegram_admin
 import supplier_telegram_handlers
 import warehouse_recipient
 import pricing_analytics
+import unified_analytics_producer
+import hashlib
 import dp_live_bridge
 import dp_live_health
 
@@ -2197,9 +2199,17 @@ def _warehouse_offer_key(result: dict, warehouse_id: int) -> str:
     return _cart_item_key(result, f"warehouse:{int(warehouse_id)}")
 
 
+def _analytics_offer_key(result: dict, source_token: str) -> str:
+    delivery = result.get("_analytics_delivery_key")
+    if not unified_analytics_producer.enabled() or not delivery:
+        return _cart_item_key(result, source_token)
+    digest = hashlib.sha256((delivery + "|" + source_token).encode()).hexdigest()[:20]
+    return "ua" + digest
+
+
 def found_keyboard(result: dict) -> InlineKeyboardMarkup:
     rows = []
-    usa_key = _cart_item_key(result, "usa")
+    usa_key = _analytics_offer_key(result, "usa")
     customer_price_rub = customer_rub_price_from_dp(
         result.get("_dealer_price_usd"),
         rate=load_usd_rub_rate(),
@@ -2223,7 +2233,7 @@ def found_keyboard(result: dict) -> InlineKeyboardMarkup:
         price_rub = offer.get("price_rub")
         if available is None or float(available) <= 0 or price_rub is None:
             continue
-        key = _warehouse_offer_key(result, int(offer["warehouse_id"]))
+        key = _analytics_offer_key(result, f"warehouse:{int(offer['warehouse_id'])}")
         rows.append([
             InlineKeyboardButton(
                 f"🛒 В корзину: 🇷🇺 {offer['public_name']} • {format_rub(float(price_rub))}",
@@ -2290,10 +2300,40 @@ async def restore_found_item_from_cache(query, key: str) -> dict | None:
 def cache_client_offer_result(context, result: dict) -> None:
     found = context.user_data.setdefault("found_items", {})
     found[_cart_item_key(result, "usa")] = result
+    if unified_analytics_producer.enabled() and result.get("_analytics_delivery_key"):
+        found[_analytics_offer_key(result, "usa")] = {
+            **result, "_analytics_source_token": "usa",
+        }
     oem = _client_stock_oem(result)
     for offer in warehouse_stock_service.client_stock_summary(oem, db_file=ORDERS_DB_FILE):
         if offer.get("is_fresh") and offer.get("available_quantity") is not None:
+            token = f"warehouse:{int(offer['warehouse_id'])}"
             found[_warehouse_offer_key(result, int(offer["warehouse_id"]))] = result
+            if unified_analytics_producer.enabled() and result.get("_analytics_delivery_key"):
+                found[_analytics_offer_key(result, token)] = {
+                    **result, "_analytics_source_token": token,
+                }
+
+def _analytics_mark_client_order(cart: dict, order_id: str, user) -> None:
+    if user is None:
+        return
+    for item in cart.values():
+        oem = str(item.get("requested_oem") or item.get("oem") or "").strip()
+        if not oem:
+            continue
+        if unified_analytics_producer.enabled():
+            # Only keys actually attached to this cart item; never latest OEM.
+            for delivery in item.get("_analytics_delivery_keys") or ():
+                unified_analytics_producer.queue_conversion(
+                    ORDERS_DB_FILE, source_bot="pricing", delivery_key=delivery,
+                    oem=oem, telegram_user_id=int(user.id),
+                    action="ORDER_PLACED", order_id=order_id,
+                )
+        else:
+            pricing_analytics.mark_latest_matching_order(
+                ORDERS_DB_FILE, source_bot="pricing",
+                telegram_user_id=int(user.id), oem=oem, order_id=order_id,
+            )
 
 
 def keyboard_for_result(result: dict) -> InlineKeyboardMarkup:
@@ -8456,23 +8496,7 @@ async def _shadow_checkout_confirm(
         )
 
     def pricing_analytics_hook():
-        if user is None:
-            return None
-        for analytics_item in cart.values():
-            analytics_oem = str(
-                analytics_item.get("requested_oem")
-                or analytics_item.get("oem")
-                or ""
-            ).strip()
-            if not analytics_oem:
-                continue
-            pricing_analytics.mark_latest_matching_order(
-                ORDERS_DB_FILE,
-                source_bot="pricing",
-                telegram_user_id=int(user.id),
-                oem=analytics_oem,
-                order_id=order_id,
-            )
+        _analytics_mark_client_order(cart, order_id, user)
         return None
 
     def supplier_orders():
@@ -10395,7 +10419,8 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             return
 
         cart = context.user_data.setdefault("cart", {})
-        source_token = key.rsplit("|", 1)[-1]
+        source_token = (result.get('_analytics_source_token') if key.startswith('ua') else key.rsplit('|', 1)[-1])
+        cart_key = _cart_item_key(result, source_token) if key.startswith('ua') else key
         offer_source = "usa"
         warehouse_id = None
         warehouse_public_name = None
@@ -10438,16 +10463,16 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 rate=load_usd_rub_rate(),
             )
 
-        if key in cart:
+        if cart_key in cart:
             if (
                 offer_source == "warehouse"
-                and float(cart[key].get("qty", 1)) + 1 > float(available_snapshot)
+                and float(cart[cart_key].get("qty", 1)) + 1 > float(available_snapshot)
             ):
                 await query.answer("На складе недостаточно свободного остатка.", show_alert=True)
                 return
-            cart[key]["qty"] += 1
+            cart[cart_key]["qty"] += 1
         else:
-            cart[key] = {
+            cart[cart_key] = {
                 "manufacturer": result.get("manufacturer"),
                 "oem": result.get("item_sku") or result.get("oem"),
                 "requested_oem": (
@@ -10469,6 +10494,12 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
                 "_dealer_price_status": result.get("_dealer_price_status"),
                 "qty": 1,
             }
+        if unified_analytics_producer.enabled():
+            delivery_key = result.get("_analytics_delivery_key")
+            if delivery_key and cart_key in cart:
+                keys = cart[cart_key].setdefault("_analytics_delivery_keys", [])
+                if delivery_key not in keys:
+                    keys.append(delivery_key)
         analytics_user = update.effective_user
         analytics_oem = str(
             result.get("query_oem")
@@ -10476,12 +10507,20 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             or result.get("oem")
             or ""
         ).strip()
-        if analytics_user is not None and analytics_oem:
+        if not unified_analytics_producer.enabled() and analytics_user is not None and analytics_oem:
             pricing_analytics.mark_latest_matching_cart(
                 ORDERS_DB_FILE,
                 source_bot="pricing",
                 telegram_user_id=int(analytics_user.id),
                 oem=analytics_oem,
+            )
+        if (unified_analytics_producer.enabled() and analytics_user is not None
+            and analytics_oem and result.get("_analytics_delivery_key")):
+            unified_analytics_producer.queue_conversion(
+                ORDERS_DB_FILE, source_bot="pricing",
+                delivery_key=result["_analytics_delivery_key"],
+                oem=analytics_oem, telegram_user_id=int(analytics_user.id),
+                action="CART",
             )
 
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup([
@@ -10967,22 +11006,7 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return
 
-        if user is not None:
-            for analytics_item in cart.values():
-                analytics_oem = str(
-                    analytics_item.get("requested_oem")
-                    or analytics_item.get("oem")
-                    or ""
-                ).strip()
-                if not analytics_oem:
-                    continue
-                pricing_analytics.mark_latest_matching_order(
-                    ORDERS_DB_FILE,
-                    source_bot="pricing",
-                    telegram_user_id=int(user.id),
-                    oem=analytics_oem,
-                    order_id=order_id,
-                )
+        _analytics_mark_client_order(cart, order_id, user)
 
         # Create Supplier Orders only after the client order exists.
         # One recipient is copied to each warehouse shipment; USA items are ignored by service.
@@ -11905,15 +11929,16 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     analytics_source_kind = "workchat" if _is_group_chat(update) else "private"
     analytics_request_ids = [
-        pricing_analytics.begin_request_from_update(
+        (unified_analytics_producer if unified_analytics_producer.enabled() else pricing_analytics).begin_request_from_update(
             ORDERS_DB_FILE,
             source_bot="pricing",
             source_kind=analytics_source_kind,
             update=update,
             oem=analytics_oem,
             manufacturer=analytics_manufacturer,
+            **({'ordinal': analytics_index} if unified_analytics_producer.enabled() else {}),
         )
-        for analytics_manufacturer, analytics_oem in jobs
+        for analytics_index, (analytics_manufacturer, analytics_oem) in enumerate(jobs)
     ]
 
     # Preserve the exact V2.3 single-item UX when this is the normal selected-
@@ -11939,6 +11964,9 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result["name"] = identity.get("name") or result.get("name")
                 result["_resolved_item_type"] = identity.get("item_type")
             result = await enrich_found_result_with_dealer_price(result)
+            if unified_analytics_producer.enabled() and analytics_request_ids:
+                result = dict(result)
+                result['_analytics_delivery_key'] = analytics_request_ids[0]
             status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(
                 result.get("_dealer_price_usd"),
@@ -11958,7 +11986,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 and row.get("available_quantity") is not None
                 and float(row["available_quantity"]) > 0
             ]
-            pricing_analytics.complete_request(
+            (unified_analytics_producer if unified_analytics_producer.enabled() else pricing_analytics).complete_request(
                 ORDERS_DB_FILE,
                 analytics_request_ids[0] if analytics_request_ids else None,
                 manufacturer=manufacturer,
@@ -11988,7 +12016,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     result,
                 )
         except Exception as exc:
-            pricing_analytics.complete_request(
+            (unified_analytics_producer if unified_analytics_producer.enabled() else pricing_analytics).complete_request(
                 ORDERS_DB_FILE,
                 analytics_request_ids[0] if analytics_request_ids else None,
                 manufacturer=manufacturer,
@@ -12045,6 +12073,10 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             result = await finder_service.search(manufacturer, oem)
             result = await enrich_found_result_with_dealer_price(result)
+            if unified_analytics_producer.enabled() and index-1 < len(analytics_request_ids):
+                result = dict(result)
+                result['_analytics_delivery_key'] = analytics_request_ids[index-1]
+
             analytics_status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(
                 result.get("_dealer_price_usd"),
@@ -12064,7 +12096,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 and row.get("available_quantity") is not None
                 and float(row["available_quantity"]) > 0
             ]
-            pricing_analytics.complete_request(
+            (unified_analytics_producer if unified_analytics_producer.enabled() else pricing_analytics).complete_request(
                 ORDERS_DB_FILE,
                 (
                     analytics_request_ids[index - 1]
@@ -12090,7 +12122,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "exception": None,
             })
         except Exception as exc:
-            pricing_analytics.complete_request(
+            (unified_analytics_producer if unified_analytics_producer.enabled() else pricing_analytics).complete_request(
                 ORDERS_DB_FILE,
                 (
                     analytics_request_ids[index - 1]
@@ -12351,6 +12383,7 @@ async def post_init(application: Application):
     )
     print("WAREHOUSE STOCK REFRESH SCHEDULER: ENABLED")
     print("Open Telegram and send /start to the bot.")
+    unified_analytics_producer.begin_replay(application, ORDERS_DB_FILE)
     print("Press Ctrl+C here to stop the bot.")
 
 
@@ -12362,6 +12395,7 @@ async def post_shutdown(application: Application):
             await refresh_task
         except asyncio.CancelledError:
             pass
+    await unified_analytics_producer.stop_replay(application)
     await finder_service.stop()
 
 
@@ -12371,7 +12405,10 @@ def main():
     PRICE_COEFFICIENT = load_price_coefficient()
     init_orders_db()
     ensure_client_finance_schema(ORDERS_DB_FILE)
-    pricing_analytics.init_analytics(ORDERS_DB_FILE)
+    if unified_analytics_producer.enabled():
+        unified_analytics_producer.initialize(ORDERS_DB_FILE)
+    else:
+        pricing_analytics.init_analytics(ORDERS_DB_FILE)
     warehouse_admin.configure(
         ORDERS_DB_FILE,
         RATE_ADMIN_USER_ID,

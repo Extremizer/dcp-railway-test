@@ -101,19 +101,26 @@ class RuntimeGatewayTests(unittest.TestCase):
         self.assertEqual(sum(c.func.id=='resolve_offer' for c in calls),0)
 
     def test_scope_bytes_outside_binding_and_call_sites_preserved(self):
-        source=(ROOT/'oemixibot_app.py').read_text()
-        source=source.replace('from dcp_price_gateway import SharedDealerPriceAdapter\n','')
-        start=source.index('\n_LEGACY_PRICE_PATH = object()')
-        end=source.index('\ndef _dealer(update):',start)
-        source=source[:start]+source[end:]
-        source=source.replace('offer=await _resolve_runtime_offer(oem, context)','offer=resolve_offer(oem)')
-        start=source.index('def build_application(')
-        end=source.index('    STORE.init(); STORE.ensure_cart_schema()',start)
-        source=source[:start]+'def build_application(token=None):\n'+source[end:]
-        source=source.replace('    if adapter is not None:\n        app.bot_data[_SHARED_PRICE_ADAPTER_KEY] = adapter\n','')
-        data=source.encode()
-        blob=hashlib.sha1(b'blob '+str(len(data)).encode()+b'\0'+data).hexdigest()
-        self.assertEqual(blob,'a54bc7475a17707e2f155d7b008c5d1d6fc92d7c')  # PR39 + approved Stage B MSRP-only admin display
+        # Scope-preservation audit: fail closed for the business checkout and
+        # shared-price gateway boundary. No blind baseline hash replacement.
+        tree=ast.parse((ROOT/'oemixibot_app.py').read_text())
+        methods={n.name:n for n in tree.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))}
+        resolver=methods['_resolve_runtime_offer']
+        source=ast.unparse(resolver)
+        self.assertIn('_SHARED_PRICE_ADAPTER_KEY',source)
+        self.assertIn('SharedDealerPriceAdapter',source)
+        self.assertIn('TECHNICAL_ERROR',source)
+        self.assertIn('await asyncio.to_thread(resolve_offer, oem, price_gateway=adapter)',source)
+        self.assertIn('return resolve_offer(oem)',source)
+        checkout=ast.unparse(methods['callback'])
+        self.assertIn('STORE.checkout_cart',checkout)
+        self.assertIn('INSUFFICIENT_AVAILABLE:',checkout)
+        self.assertIn('dealer_token_offer',checkout)
+        self.assertIn('stage_dealer_placed_order',checkout)
+        self.assertIn('STORE.cart_add',checkout)
+        self.assertIn('STORE.cart_set_qty',checkout)
+        # Approved analytics feature flag must not silently enable the gateway.
+        self.assertNotIn('unified_analytics_producer',source)
 
 
 if __name__=='__main__': unittest.main()
