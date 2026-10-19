@@ -115,7 +115,7 @@ class ThreeInterfaceIdentity(unittest.TestCase):
             bot,"lookup_shared_identity",return_value=payload
         ),patch.object(bot.oem_identity_service,"remember",side_effect=lambda *a,**kw:seen.append(a) or True):
             offer=asyncio.run(bot._resolve_admin_oem_offer(
-                "417127467",SimpleNamespace(application=SimpleNamespace(bot_data={}))))
+                "417127467",SimpleNamespace(application=SimpleNamespace(bot_data={})),manufacturer="Ski-Doo"))
         self.assertEqual(offer["manufacturer"],"Ski-Doo")
         self.assertEqual(len(seen),0)  # Explicit selection must not persist inferred identity.
 
