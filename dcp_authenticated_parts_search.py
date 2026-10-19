@@ -105,9 +105,9 @@ def parts_dom_expression(slug, query_oem, *, live):
       return {http_status:status,authorized:true,challenged:false,rows};"""
     if live:
         body="const doc=document; const status=200;\n"+parse
-        return "(()=>{"+before+"if(location.pathname!=="+json.dumps(path)+
-               "||new URL(location.href).searchParams.get('partsearch')!=="+target+
-               ")return {context_changed:true};"+body+"})()"
+        return ("(()=>{"+before+"if(location.pathname!=="+json.dumps(path)+
+                "||new URL(location.href).searchParams.get('partsearch')!=="+target+
+                ")return {context_changed:true};"+body+"})()")
     body=("const response=await fetch("+endpoint+
           ",{method:'GET',credentials:'include',cache:'no-store',redirect:'manual'});"
           "const status=response.status;if(status===403)return {challenged:true,http_status:403};"
