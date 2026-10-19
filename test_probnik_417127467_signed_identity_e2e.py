@@ -130,6 +130,45 @@ class ThreeInterfaceIdentity(unittest.TestCase):
         self.assertEqual(response.json()["status"],"UNRESOLVED")
         self.assertIsNone(response.json()["manufacturer"])
 
+    def test_admin_non_polaris_does_not_use_cart_provider(self):
+        self.seed("Ski-Doo")
+        signed=self.signed_request().json()
+        from unittest.mock import Mock
+        polaris=Mock(side_effect=AssertionError("wrong Polaris cart"))
+        calls=[]
+        async def runtime(oem, context):
+            calls.append(oem)
+            return {"status":"IDENTITY_REQUIRED"} if len(calls)==1 else {"status":"PRICE_UNAVAILABLE","manufacturer":"Ski-Doo","dl_usd":None}
+        ctx=SimpleNamespace(application=SimpleNamespace(bot_data={bot._ADMIN_POLARIS_PRICE_RESOLVER_KEY:polaris}))
+        with patch.object(bot,"lookup_shared_identity",return_value=signed),patch.object(
+            bot,"_resolve_runtime_offer",side_effect=runtime),patch.object(
+            bot.oem_identity_service,"remember",return_value=True):
+            result=asyncio.run(bot._resolve_admin_oem_offer("417127467",ctx))
+        self.assertEqual(result["manufacturer"],"Ski-Doo")
+        polaris.assert_not_called()
+
+    def test_dealer_message_uses_shared_identity_without_telegram(self):
+        self.seed("Ski-Doo")
+        signed=self.signed_request().json()
+        messages=[]
+        class Msg:
+            text="417127467"
+            async def reply_text(self, message,**kwargs):
+                messages.append(message)
+        calls=[]
+        async def runtime(oem,context):
+            calls.append(oem)
+            return {"status":"IDENTITY_REQUIRED"} if len(calls)==1 else {"status":"PRICE_UNAVAILABLE","manufacturer":"Ski-Doo","dl_usd":None}
+        update=SimpleNamespace(effective_user=None,effective_message=Msg())
+        ctx=SimpleNamespace(user_data={},application=SimpleNamespace(bot_data={},create_task=lambda coro:coro.close()))
+        with patch.object(bot,"_dealer",return_value={"id":1}),patch.object(
+            bot,"_resolve_runtime_offer",side_effect=runtime),patch.object(
+            bot,"lookup_shared_identity",return_value=signed),patch.object(
+            bot.oem_identity_service,"remember",return_value=True):
+            asyncio.run(bot.oem_message(update,ctx))
+        self.assertGreaterEqual(len(calls),2)
+        self.assertTrue(any("Цена из США сейчас недоступна" in m for m in messages))
+
 
 if __name__=="__main__":
     unittest.main()
