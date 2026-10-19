@@ -1,0 +1,28 @@
+name: P0 Probnik OEM 417127467 Isolated Gate
+on:
+  push:
+    branches:
+      - hotfix-probnik-417127467-warehouse-guard-20261019
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probnik-p0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime dependencies
+        run: python -m pip install -r requirements.txt beautifulsoup4 pytest
+      - name: Syntax and startup import checks
+        run: |
+          python -B -m py_compile probnik_app.py dp_live_bridge.py dcp_category_authority.py oemixibot_app.py
+          python -B -c "import probnik_app, oemixibot_app, dp_live_bridge"
+      - name: P0 identity / warehouse safety
+        run: python -B -m pytest -q test_probnik_417127467_identity_failclosed.py test_probnik_417127467_warehouse_guard.py test_probnik_417127467_signed_identity_e2e.py
+      - name: Relevant DCP and dealer regressions
+        run: |
+          python -B -m pytest -q test_dcp_admission.py test_dp_result_completion.py test_polaris_dealer_cart_contract.py test_oemixibot_admin_oem_search.py

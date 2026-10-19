@@ -14,6 +14,7 @@ import dp_live_bridge as bridge
 import dp_live_health as health
 import dp_claim_recovery as recovery
 from dcp_admission_test_support import MOCK_APPROVAL_KEY, approve_mode, approval_for
+from dcp_isolated_category_fixture import seed_test_category_authority
 from test_dp_result_completion import CompletionFixture
 
 
@@ -22,7 +23,7 @@ class AdmissionTests(CompletionFixture):
         with sqlite3.connect(self.db) as c:return admission.read_state(c)
 
     def test_default_closed_and_init_restart_never_open(self):
-        db=Path(self.tmp.name)/'new.db';bridge.init(db)
+        db=Path(self.tmp.name)/'new.db';bridge.init(db);seed_test_category_authority(db)
         for _ in range(3):bridge.init(db);health.set_health(db,'READY')
         with sqlite3.connect(db) as c:
             self.assertEqual(admission.read_state(c)['mode'],'CLOSED')

@@ -1,0 +1,29 @@
+name: RC Manufacturer First P0 Combined Gate
+on:
+  push:
+    branches:
+      - theme4-rc-manufacturer-first-p0-20261019
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rc-p0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Dependencies
+        run: python -m pip install -r requirements.txt pytest beautifulsoup4
+      - name: Syntax and startup imports
+        run: |
+          python -B -m compileall -q manufacturer_first_ux.py probnik_app.py extremizer_bot.py oemixibot_app.py oemixibot_catalog.py dp_result_completion.py dp_live_bridge.py
+          python -B -c "import manufacturer_first_ux, probnik_app, extremizer_bot, oemixibot_app, dp_result_completion, dp_live_bridge"
+      - name: Manufacturer-first and three-bot regressions
+        run: |
+          python -B -m pytest -q test_manufacturer_first_three_bots.py test_oemixibot_admin_oem_search.py test_oemixibot_railway_runtime.py
+      - name: P0 identity and DCP dealer contracts
+        run: |
+          python -B -m pytest -q test_probnik_417127467_identity_failclosed.py test_probnik_417127467_signed_identity_e2e.py test_probnik_417127467_warehouse_guard.py test_dcp_admission.py test_dp_result_completion.py test_polaris_dealer_cart_contract.py
