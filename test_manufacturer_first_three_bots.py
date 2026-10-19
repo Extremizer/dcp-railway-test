@@ -123,3 +123,17 @@ def test_polaris_admin_cart_only():
         other=asyncio.run(oemixi._resolve_admin_oem_offer("709200703",c,manufacturer="Can-Am"))
         gateway.assert_awaited_once()
     assert calls==["2206328"]
+
+def test_production_168_hour_setting_cannot_extend_dealer_price_ttl():
+    """Even with the existing Railway value, both client bots cap DP at 24h."""
+    import os
+    import subprocess
+    import sys
+    env = {**os.environ, "EXTREMIZER_DP_CACHE_MAX_AGE_HOURS": "168"}
+    subprocess.run(
+        [sys.executable, "-B", "-c",
+         "import probnik_app, extremizer_bot; "
+         "assert probnik_app.DP_MAX_AGE_HOURS == 24.0; "
+         "assert extremizer_bot.DP_CACHE_MAX_AGE_HOURS == 24.0"],
+        env=env, check=True, capture_output=True, text=True, timeout=25,
+    )
