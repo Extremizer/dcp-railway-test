@@ -95,6 +95,8 @@ try:
     DP_CACHE_MAX_AGE_HOURS = max(0.0, float(DP_CACHE_MAX_AGE_HOURS_RAW))
 except ValueError:
     DP_CACHE_MAX_AGE_HOURS = 24.0
+# Owner dealer-price freshness: clamp stale Railway settings to <=24h.
+DP_CACHE_MAX_AGE_HOURS = min(DP_CACHE_MAX_AGE_HOURS, 24.0)
 
 DCP_MODE = os.getenv("EXTREMIZER_DCP_MODE", "live").strip().lower()
 DCP_CACHE_ONLY = DCP_MODE == "cache_only"
