@@ -6,6 +6,9 @@ on:
   pull_request:
     paths:
       - dcp_phone_recovery_*
+      - dp_cloud_producer_ownership.py
+      - test_dp_cloud_producer_ownership.py
+      - dcp_cloud_browser_host.py
       - test_dcp_phone_recovery.py
       - .github/workflows/dcp-phone-recovery-isolated.yml
 permissions:

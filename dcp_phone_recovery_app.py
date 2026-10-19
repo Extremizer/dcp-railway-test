@@ -95,6 +95,14 @@ def recovery_page():
     return HTMLResponse(Path(__file__).with_name("dcp_phone_recovery.html").read_text(encoding="utf-8"))
 
 
+@app.get("/recovery.css")
+def recovery_style():
+    _enabled()
+    from pathlib import Path
+    return Response(Path(__file__).with_name("dcp_phone_recovery.css").read_text(encoding="utf-8"),
+                    media_type="text/css")
+
+
 @app.get("/recovery.js")
 def recovery_script():
     _enabled()
