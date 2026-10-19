@@ -34,11 +34,11 @@ class ProbnikIdentityP0(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.path=Path(self.tmp.name)/"synthetic_orders.db"
 
-    def lookup(self):
+    def lookup(self, manufacturer="Ski-Doo"):
         with patch.object(app,"ORDERS_DB",self.path), patch.object(
             app.dp_live_bridge,"request_live_dp",return_value={"status":"ADMISSION_CLOSED"}
         ) as bridge:
-            result=app._identity_and_price("417127467")
+            result=app._identity_and_price("417127467", manufacturer)
         return result,bridge
 
     def test_no_approved_identity_never_requests_auto(self):
