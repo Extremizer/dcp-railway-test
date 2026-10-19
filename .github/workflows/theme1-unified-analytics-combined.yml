@@ -1,7 +1,7 @@
 name: Theme1 Unified Analytics Combined Linux
 on:
   push:
-    branches: [theme1-unified-analytics-20261018]
+    branches: [theme1-unified-analytics-20261018, release-isolated-admin-analytics-rc-20261019]
   workflow_dispatch:
 jobs:
   combined:
@@ -29,3 +29,8 @@ jobs:
             test_oemixi_secure_gateway_transport \
             test_oemixi_shared_price_runtime \
             test_oemixibot_railway_runtime
+
+      - name: ADMIN analytics UI synthetic test
+        run: python -m pytest -q test_unified_analytics_admin_page.py
+      - name: Syntax and import smoke
+        run: python -m compileall -q web_app.py unified_analytics_admin_page.py unified_analytics_admin_api.py supplier_web_admin.py
