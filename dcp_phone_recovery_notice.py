@@ -53,3 +53,28 @@ def send_recovery_message(*, token: str, payload: dict, transport=None) -> None:
     except Exception as exc:
         # No URL, token, chat ID, headers or response body in logs/exceptions.
         raise RecoveryNoticeError("telegram_delivery_failed") from None
+
+class RecoveryNoticeCoordinator:
+    """Throttle notifications and mint tickets only for blocked session states."""
+    def __init__(self, grants, owner_id, base_url, send, *, cooldown_seconds=1800):
+        self.grants=grants
+        self.owner_id=owner_id
+        self.base_url=base_url
+        self.send=send
+        self.cooldown_seconds=cooldown_seconds
+        self._last_at=None
+        self._last_status=None
+
+    def notify(self,status,*,now=None):
+        import time
+        stamp=time.monotonic() if now is None else now
+        if status not in ("AUTH_REQUIRED","CLOUDFLARE"):
+            return False
+        if self._last_at is not None and stamp-self._last_at < self.cooldown_seconds:
+            return False
+        ticket=self.grants.invite()
+        payload=message_payload(self.owner_id,recovery_url(self.base_url,ticket),status)
+        self.send(payload)
+        self._last_at=stamp
+        self._last_status=status
+        return True
