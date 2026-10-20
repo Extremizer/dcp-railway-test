@@ -39,8 +39,15 @@ def send_once(*, coordinator, state_dir, request_id: str, browser_status: str) -
     except Exception as exc:
         # Only a sanitized, internal error code is eligible for Railway logs.
         from dcp_phone_recovery_notice import RecoveryNoticeError
-        if isinstance(exc,RecoveryNoticeError) and str(exc).startswith("telegram_rejected_"):
-            return str(exc)
+        if isinstance(exc,RecoveryNoticeError):
+            if str(exc).startswith("telegram_rejected_"):
+                return str(exc)
+            if str(exc) in ("telegram_transport_uncertain","telegram_delivery_unconfirmed","invalid_recovery_url","no_recovery_action_required"):
+                return "DIAG_"+str(exc)
+            return "DIAG_notice_contract_error"
+        if isinstance(exc,StagingNoticeBlocked):
+            return "DIAG_"+str(exc)
+        return "DIAG_internal_"+type(exc).__name__
         # A confirmed send may have happened before crash; no automatic retries.
         # Explicit new request_id is required for a second delivery attempt.
         return "UNCERTAIN"
