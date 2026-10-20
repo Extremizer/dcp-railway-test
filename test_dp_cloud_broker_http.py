@@ -66,4 +66,28 @@ class CloudBrokerHTTP(unittest.TestCase):
   approve_mode(self.db,"CLOSED")
   self.assertEqual(a.release()["status"],"RELEASED")
 
+ def test_invalid_signature_and_expired_lease(self):
+  import sqlite3
+  a=self.make_producer("cloud-host-000001")
+  b=self.make_producer("cloud-host-000002")
+  a.acquire()
+  self.assertEqual(self.http.post("/internal/dp-cloud/owner/acquire",json={}).status_code,401)
+  with sqlite3.connect(self.db) as db:
+   db.execute("UPDATE dp_cloud_owner SET expires_at='2000-01-01T00:00:00+00:00'")
+  with self.assertRaises(RuntimeError):a.renew()
+  with self.assertRaises(RuntimeError):b.acquire()
+
+ def test_old_epoch_rejected_on_second_owner(self):
+  from dcp_admission_test_support import approve_mode
+  a=self.make_producer("cloud-host-000001")
+  b=self.make_producer("cloud-host-000002")
+  original=a.acquire()["owner_epoch"]
+  a.release()
+  b.acquire()
+  a.owner_epoch=original
+  approve_mode(self.db,"OPEN")
+  broker.request_live_dp(self.db,"Arctic Cat","2670-265",wait_seconds=0)
+  self.assertIsNone(a.next())
+  self.assertIsNotNone(b.next())
+
 if __name__=="__main__": unittest.main()
