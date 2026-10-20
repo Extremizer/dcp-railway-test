@@ -12,22 +12,22 @@ def main():
     browser=None;xvfb=None
     try:
         fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        profile=state/"browser-profile-mock-v2"
+        profile=state/"browser-profile-mock-v3"
         profile.mkdir(exist_ok=True,mode=0o700)
         xvfb=subprocess.Popen(["Xvfb",":92","-screen","0","1280x800x24","-nolisten","tcp"])
         env={**os.environ,"DISPLAY":":92"}
         browser=subprocess.Popen(["/usr/bin/chromium","--no-sandbox","--disable-dev-shm-usage",
-          "--disable-background-networking","--no-first-run","--no-default-browser-check",
+          "--disable-background-networking","--no-first-run","--disable-extensions","--disable-gpu","--disable-software-rasterizer","--no-default-browser-check",
           "--remote-debugging-address=127.0.0.1","--remote-debugging-port=9222",
           "--remote-allow-origins=http://127.0.0.1:9222",
           "--user-data-dir="+str(profile),"--window-size=1280,800",
           "file:///app/dcp_phone_staging_mock.html"],env=env,
           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        for _ in range(50):
+        for _ in range(85):
             if browser.poll() is not None:raise RuntimeError("browser_failed_exit_"+str(browser.returncode))
             try:
                 with urllib.request.urlopen("http://127.0.0.1:9222/json/version",timeout=1):break
-            except Exception:time.sleep(.2)
+            except Exception:time.sleep(.3)
         else:raise RuntimeError("mock_cdp_unavailable")
         import uvicorn
         uvicorn.run("dcp_phone_staging_app:app",host="0.0.0.0",port=int(os.getenv("PORT","8080")),
