@@ -7,7 +7,9 @@ from __future__ import annotations
 import json
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
+import ssl
+import socket
 
 class RecoveryNoticeError(RuntimeError):
     pass
@@ -74,9 +76,28 @@ def send_recovery_message(*, token: str, payload: dict, transport=None) -> None:
         raise RecoveryNoticeError(f"telegram_rejected_{code}_{safe}") from None
     except RecoveryNoticeError:
         raise
+    except (TimeoutError, socket.timeout):
+        raise RecoveryNoticeError("telegram_transport_timeout") from None
+    except ssl.SSLError:
+        raise RecoveryNoticeError("telegram_transport_tls") from None
+    except URLError as exc:
+        reason=exc.reason
+        if isinstance(reason, socket.gaierror):
+            category="dns"
+        elif isinstance(reason, (TimeoutError,socket.timeout)):
+            category="timeout"
+        elif isinstance(reason, ssl.SSLError):
+            category="tls"
+        elif isinstance(reason, ConnectionRefusedError):
+            category="refused"
+        elif isinstance(reason, OSError):
+            category="socket"
+        else:
+            category="other"
+        raise RecoveryNoticeError("telegram_transport_"+category) from None
     except Exception:
         # No URL, token, chat ID, headers or response body in logs/exceptions.
-        raise RecoveryNoticeError("telegram_transport_uncertain") from None
+        raise RecoveryNoticeError("telegram_transport_unknown") from None
 
 class RecoveryNoticeCoordinator:
     """Throttle notifications and mint tickets only for blocked session states."""
