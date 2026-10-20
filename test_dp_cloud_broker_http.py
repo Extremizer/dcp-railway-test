@@ -26,4 +26,23 @@ class CloudBrokerHTTP(unittest.TestCase):
   self.http=TestClient(app)
   self.addCleanup(self.http.close)
 
+ def make_producer(self,who):
+  from dp_cloud_producer_client import CloudV2Producer
+  def send(method,path,body,headers):
+   r=self.http.request(method,path,content=body,headers=headers)
+   if r.status_code>=400:
+    raise RuntimeError("http_"+str(r.status_code))
+   return r.json()
+  return CloudV2Producer(who,b"z"*32,send)
+
+ def test_owner_auth_lifecycle(self):
+  a=self.make_producer("cloud-host-000001")
+  b=self.make_producer("cloud-host-000002")
+  self.assertEqual(a.acquire()["generation"],1)
+  with self.assertRaises(RuntimeError):b.acquire()
+  self.assertEqual(a.renew()["status"],"RENEWED")
+  self.assertIsNone(a.next())
+  self.assertEqual(a.release()["status"],"RELEASED")
+  self.assertEqual(b.acquire()["generation"],2)
+
 if __name__=="__main__": unittest.main()
