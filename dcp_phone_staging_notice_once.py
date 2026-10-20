@@ -36,7 +36,11 @@ def send_once(*, coordinator, state_dir, request_id: str, browser_status: str) -
         if coordinator.notify("AUTH_REQUIRED") is not True:
             raise StagingNoticeBlocked("notification_not_queued")
         return "SENT"
-    except Exception:
+    except Exception as exc:
+        # Only a sanitized, internal error code is eligible for Railway logs.
+        from dcp_phone_recovery_notice import RecoveryNoticeError
+        if isinstance(exc,RecoveryNoticeError) and str(exc).startswith("telegram_rejected_"):
+            return str(exc)
         # A confirmed send may have happened before crash; no automatic retries.
         # Explicit new request_id is required for a second delivery attempt.
         return "UNCERTAIN"
