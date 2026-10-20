@@ -12,7 +12,7 @@ def main():
     browser=None;xvfb=None
     try:
         fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        profile=state/"browser-profile"
+        profile=state/"browser-profile-mock-v2"
         profile.mkdir(exist_ok=True,mode=0o700)
         xvfb=subprocess.Popen(["Xvfb",":92","-screen","0","1280x800x24","-nolisten","tcp"])
         env={**os.environ,"DISPLAY":":92"}
@@ -24,7 +24,7 @@ def main():
           "file:///app/dcp_phone_staging_mock.html"],env=env,
           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         for _ in range(50):
-            if browser.poll() is not None:raise RuntimeError("browser_failed")
+            if browser.poll() is not None:raise RuntimeError("browser_failed_exit_"+str(browser.returncode))
             try:
                 with urllib.request.urlopen("http://127.0.0.1:9222/json/version",timeout=1):break
             except Exception:time.sleep(.2)
@@ -34,7 +34,9 @@ def main():
             log_level="warning",access_log=False,workers=1)
         return 0
     except Exception as exc:
-        print("STAGING_BLOCKED",type(exc).__name__)
+        # Only fixed internal startup codes and exit numbers; no secrets/URLs.
+        reason=str(exc) if isinstance(exc,RuntimeError) and str(exc).startswith(("browser_failed_exit_","mock_cdp_unavailable")) else type(exc).__name__
+        print("STAGING_BLOCKED",reason,flush=True)
         return 24
     finally:
         if browser and browser.poll() is None:browser.terminate()
