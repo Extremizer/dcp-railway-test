@@ -27,4 +27,4 @@ jobs:
       - name: Compile all recovery modules
         run: python -m py_compile dcp_phone_recovery_core.py dcp_phone_recovery_app.py dcp_cloud_browser_host.py dp_cloud_producer_ownership.py dp_cloud_producer_client.py dp_cloud_owner_http.py dp_cloud_broker_runtime.py test_dp_cloud_producer_ownership.py test_dp_cloud_client_contract.py test_dp_cloud_broker_http.py test_dcp_phone_recovery.py
       - name: Security and recovery tests (no network)
-        run: python -B -m pytest -q test_dcp_phone_recovery.py test_dp_cloud_producer_ownership.py test_dp_cloud_client_contract.py test_dp_cloud_broker_http.py
+        run: python -B -m pytest -q test_dcp_phone_recovery.py test_dp_cloud_producer_ownership.py test_dp_cloud_client_contract.py test_dp_cloud_broker_http.py test_dcp_producer_v2.py test_dp_result_completion.py
