@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import time
 import urllib.request
+import tempfile
+import shutil
 
 def _reason(log_file):
     try:
@@ -36,10 +38,14 @@ def main():
         return 24
     lock=os.open(state/"staging.lock",os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW,0o600)
     browser=None
+    ephemeral_profile=None
     try:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        profile=state/"browser-profile-headless-v1"
-        profile.mkdir(exist_ok=True,mode=0o700)
+        # Mock staging has no DCP session; a unique throwaway Chrome profile
+        # avoids process-singleton conflicts during Railway rolling deploys.
+        # Persistent volume is retained for one-time Telegram send ledger.
+        ephemeral_profile=tempfile.mkdtemp(prefix="dcp-mock-",dir="/tmp")
+        profile=Path(ephemeral_profile)
         os.chmod(profile,0o700)
         logfile=state/"mock-chromium-startup.log"
         args=[
@@ -93,6 +99,8 @@ def main():
             browser.terminate()
             try:browser.wait(timeout=4)
             except subprocess.TimeoutExpired:browser.kill()
+        if ephemeral_profile:
+            shutil.rmtree(ephemeral_profile,ignore_errors=True)
         os.close(lock)
 
 if __name__=="__main__":
