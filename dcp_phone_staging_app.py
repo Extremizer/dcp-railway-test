@@ -60,8 +60,43 @@ def configure():
     app.state.browser=MockBrowser()
     url=os.getenv("DCP_RECOVERY_PUBLIC_URL","")
     if url.startswith("https://"):
-        app.state.coordinator=RecoveryNoticeCoordinator(app.state.grants,int(owner),url,
-            lambda payload:send_recovery_message(token=bot,payload=payload))
+        from dcp_phone_recovery_notice import recovery_url
+        # Strict HTTPS/hostname validation before enabling delivery.
+        if recovery_url(url,"MockOnlyValidation") != url.rstrip("/")+"/recovery#MockOnlyValidation":
+            return
+        def send_mock_notice(payload):
+            # A staging notice must never imply DCP is connected or logged in.
+            button=payload["reply_markup"]["inline_keyboard"][0][0]
+            staging={
+                **payload,
+                "text":"EXTREMIZER DCP — ТЕСТ PHONE-FIRST (MOCK_ONLY). "
+                       "DCP отключён. Проверьте безопасное управление "
+                       "тестовым Chromium с телефона.",
+                "reply_markup":{"inline_keyboard":[[{
+                    "text":"Открыть тестовый Chromium",
+                    "web_app":{"url":button["web_app"]["url"]}
+                }]]}
+            }
+            send_recovery_message(token=bot,payload=staging)
+        app.state.coordinator=RecoveryNoticeCoordinator(
+            app.state.grants,int(owner),url,send_mock_notice)
+        request_id=os.getenv("DCP_STAGING_TEST_NOTICE_ID","")
+        if request_id:
+            from dcp_phone_staging_notice_once import send_once
+            import threading
+            def deliver_mock_notice():
+                # Never issue a token or message if the local mock browser
+                # is not visible in this exact container.
+                status=app.state.browser.status()
+                try:
+                    verdict=send_once(coordinator=app.state.coordinator,
+                        state_dir=os.getenv("DCP_CLOUD_STATE_DIR","/data"),
+                        request_id=request_id,browser_status=status)
+                except Exception:
+                    verdict="BLOCKED"
+                print("DCP_STAGING_NOTICE_RESULT",verdict,flush=True)
+            threading.Thread(target=deliver_mock_notice,daemon=True,
+                name="dcp-staging-once").start()
 
 @app.middleware("http")
 async def secure(request,call_next):
