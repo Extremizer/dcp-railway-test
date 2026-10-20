@@ -49,6 +49,31 @@ def load_settings():
         app.state.grants=RecoveryGrants(token,owner)
         app.state.browser=RemoteBrowser()
         app.state.enabled=True
+        # Monitoring is a dedicated one-worker function and defaults OFF.
+        if os.environ.get("DCP_RECOVERY_NOTIFICATIONS_ENABLED") == "1":
+            from dcp_phone_recovery_notice import (
+                RecoveryNoticeCoordinator,send_recovery_message
+            )
+            import threading
+            import time
+            base=os.environ.get("DCP_RECOVERY_PUBLIC_URL","")
+            # Validate HTTPS URL and bot/owner before starting any background work.
+            from dcp_phone_recovery_notice import recovery_url
+            recovery_url(base,"ValidatedTicket")
+            coordinator=RecoveryNoticeCoordinator(
+                app.state.grants, owner, base,
+                lambda payload: send_recovery_message(token=token,payload=payload)
+            )
+            def monitor():
+                while app.state.enabled:
+                    try:
+                        status=app.state.browser.status()
+                        coordinator.notify(status)
+                    except Exception:
+                        # Notification failures never authorize DCP work.
+                        pass
+                    time.sleep(60)
+            threading.Thread(target=monitor,daemon=True,name="dcp-recovery-notice").start()
     except (KeyError,ValueError,RecoveryDenied):
         app.state.enabled=False
         app.state.grants=None
