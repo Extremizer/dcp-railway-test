@@ -28,7 +28,7 @@ class NoticeTests(unittest.TestCase):
   def fail(*args,**kwargs):raise OSError("sensitive")
   with self.assertRaises(RecoveryNoticeError) as ctx:
    send_recovery_message(token="test:fake",payload={},transport=fail)
-  self.assertEqual(str(ctx.exception),"telegram_delivery_failed")
+  self.assertEqual(str(ctx.exception),"telegram_transport_uncertain")
 
 class CoordinatorTests(unittest.TestCase):
  def test_blocked_status_once_per_cooldown(self):
