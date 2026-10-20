@@ -20,6 +20,7 @@ from pathlib import Path
 import dp_live_health
 import dp_live_admission
 import dcp_category_authority
+import dp_cloud_producer_ownership as cloud_owner
 
 
 def _request_key(manufacturer: str, oem: str) -> tuple[str, str]:
@@ -286,7 +287,7 @@ def request_live_dp(
     return {"request_id": request_id, "status": "TIMEOUT"}
 
 
-def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> dict | None:
+def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test", owner_epoch: str | None = None) -> dict | None:
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", producer_id):
         raise ValueError("invalid_producer_id")
     init(db_file)
@@ -296,6 +297,11 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             return None
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if cloud_owner.enabled():
+            cloud_owner.init(conn)
+            if not cloud_owner.allowed(conn, producer_id, owner_epoch):
+                conn.commit()
+                return None
         if _quarantine_claims(conn, _now()):
             conn.commit()
             return None
@@ -345,6 +351,10 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
                 WHERE request_id=? AND status='pending'""",
             (now.isoformat(timespec="seconds"), claim_token, producer_id, lease_expires_at, str(row[0])),
         ).rowcount
+        if changed == 1 and cloud_owner.enabled():
+            cloud_owner.bind_claim(
+                conn, str(row[0]), int(row[3]) + 1, producer_id, owner_epoch
+            )
         conn.commit()
         if changed != 1:
             return None
