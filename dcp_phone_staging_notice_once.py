@@ -42,7 +42,7 @@ def send_once(*, coordinator, state_dir, request_id: str, browser_status: str) -
         if isinstance(exc,RecoveryNoticeError):
             if str(exc).startswith("telegram_rejected_"):
                 return str(exc)
-            if str(exc) in ("telegram_transport_uncertain","telegram_delivery_unconfirmed","invalid_recovery_url","no_recovery_action_required"):
+            if str(exc).startswith("telegram_transport_") or str(exc) in ("telegram_delivery_unconfirmed","invalid_recovery_url","no_recovery_action_required"):
                 return "DIAG_"+str(exc)
             return "DIAG_notice_contract_error"
         if isinstance(exc,StagingNoticeBlocked):
