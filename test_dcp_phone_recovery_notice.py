@@ -1,7 +1,7 @@
 """Offline tests for phone recovery invitation composition and delivery."""
 import io,unittest
 from unittest.mock import Mock
-from dcp_phone_recovery_notice import recovery_url,message_payload,send_recovery_message,RecoveryNoticeError
+from dcp_phone_recovery_notice import recovery_url,message_payload,send_recovery_message,RecoveryNoticeError,RecoveryNoticeCoordinator
 
 class NoticeTests(unittest.TestCase):
  def test_owner_webapp_link_and_no_token_in_message(self):
@@ -29,5 +29,17 @@ class NoticeTests(unittest.TestCase):
   with self.assertRaises(RecoveryNoticeError) as ctx:
    send_recovery_message(token="test:fake",payload={},transport=fail)
   self.assertEqual(str(ctx.exception),"telegram_delivery_failed")
+
+class CoordinatorTests(unittest.TestCase):
+ def test_blocked_status_once_per_cooldown(self):
+  class Grants:
+   def invite(self):return "SyntheticTicket"
+  sent=[]
+  c=RecoveryNoticeCoordinator(Grants(),12345,"https://example.com",sent.append,cooldown_seconds=60)
+  self.assertFalse(c.notify("READY",now=1))
+  self.assertTrue(c.notify("AUTH_REQUIRED",now=2))
+  self.assertFalse(c.notify("CLOUDFLARE",now=3))
+  self.assertTrue(c.notify("CLOUDFLARE",now=63))
+  self.assertEqual(len(sent),2)
 
 if __name__=="__main__":unittest.main()
