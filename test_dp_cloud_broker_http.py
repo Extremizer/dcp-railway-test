@@ -45,4 +45,25 @@ class CloudBrokerHTTP(unittest.TestCase):
   self.assertEqual(a.release()["status"],"RELEASED")
   self.assertEqual(b.acquire()["generation"],2)
 
+ def test_verified_price_atomic_result(self):
+  import sqlite3
+  from dcp_admission_test_support import approve_mode
+  a=self.make_producer("cloud-host-000001")
+  a.acquire()
+  approve_mode(self.db,"OPEN")
+  broker.request_live_dp(self.db,"Arctic Cat","2670-265",wait_seconds=0)
+  claim=a.next()
+  self.assertIsNotNone(claim)
+  source="server_html:#add_2670-265 .c2 .dbl"
+  raw={"status":"FOUND","manufacturer":"Arctic Cat","query_oem":"2670-265",
+   "matched_sku":"2670-265","current_oem":"2670-265","currency":"USD",
+   "dealer_price_usd":31.25,"source":source,"name":"Mock dealer"}
+  result=a.complete(claim,raw)
+  self.assertTrue(result["server_cache_committed"])
+  with sqlite3.connect(self.db) as db:
+   price=db.execute("SELECT dealer_price_usd FROM dealer_price_cache WHERE manufacturer=? AND oem=?",("Arctic Cat","2670-265")).fetchone()
+   self.assertEqual(price,(31.25,))
+  approve_mode(self.db,"CLOSED")
+  self.assertEqual(a.release()["status"],"RELEASED")
+
 if __name__=="__main__": unittest.main()
