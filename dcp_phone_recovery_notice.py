@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 class RecoveryNoticeError(RuntimeError):
     pass
@@ -48,11 +49,34 @@ def send_recovery_message(*, token: str, payload: dict, transport=None) -> None:
             result=json.loads(response.read())
         if not isinstance(result,dict) or result.get("ok") is not True:
             raise RecoveryNoticeError("telegram_delivery_unconfirmed")
+    except HTTPError as exc:
+        # Deliberately inspect only known error classes; never log error
+        # bodies, bot tokens, URLs, tickets, chat IDs, or Telegram content.
+        code=int(exc.code)
+        try:
+            reason=json.loads(exc.read(2048)).get("description","").lower()
+        except (ValueError,TypeError,AttributeError):
+            reason=""
+        if "chat not found" in reason:
+            safe="chat_not_found"
+        elif "button_type_invalid" in reason or "button type invalid" in reason:
+            safe="webapp_button_invalid"
+        elif "web app" in reason or "web_app" in reason or "url" in reason:
+            safe="webapp_url_invalid"
+        elif "bot was blocked" in reason:
+            safe="bot_blocked"
+        elif "forbidden" in reason:
+            safe="forbidden"
+        elif code==401:
+            safe="bot_token_rejected"
+        else:
+            safe="other"
+        raise RecoveryNoticeError(f"telegram_rejected_{code}_{safe}") from None
     except RecoveryNoticeError:
         raise
-    except Exception as exc:
+    except Exception:
         # No URL, token, chat ID, headers or response body in logs/exceptions.
-        raise RecoveryNoticeError("telegram_delivery_failed") from None
+        raise RecoveryNoticeError("telegram_transport_uncertain") from None
 
 class RecoveryNoticeCoordinator:
     """Throttle notifications and mint tickets only for blocked session states."""
