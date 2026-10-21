@@ -12,6 +12,7 @@ import sqlite3
 import dp_live_bridge as bridge
 import dp_live_health
 import dcp_category_authority
+import dp_cloud_producer_ownership as cloud_owner
 
 
 class CompletionError(Exception):
@@ -98,6 +99,13 @@ def complete_result(db_file, payload: dict) -> dict:
                 or type(generation) is not int or generation != row["claim_generation"]
                 or payload.get("producer_id") != row["claim_owner"]):
                 raise CompletionError(409, "claim_fence_mismatch")
+            if cloud_owner.enabled():
+                cloud_owner.init(conn)
+                if not cloud_owner.completion_allowed(
+                    conn, row["request_id"], generation,
+                    payload["producer_id"], payload.get("owner_epoch")
+                ):
+                    raise CompletionError(409, "owner_epoch_mismatch")
             now_dt = datetime.now(timezone.utc)
             deadline = dp_live_health._parse_datetime(row["lease_expires_at"])
             if deadline is None or now_dt >= deadline:
