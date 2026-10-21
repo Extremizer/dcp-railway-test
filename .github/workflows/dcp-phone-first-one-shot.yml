@@ -82,7 +82,7 @@ jobs:
                   bot = data.get("result", {}) if isinstance(data, dict) else {}
                   if not (status == 200 and data.get("ok") is True and isinstance(bot, dict)
                           and bot.get("is_bot") is True
-                          and str(bot.get("username", "")).casefold() == "extremizerdcp"):
+                          and str(bot.get("username", "")).casefold() == "extremizerdcpbot"):
                       return "BOT_IDENTITY_MISMATCH"
                   status, data = api_call(api + "getChat?" + urlencode({"chat_id": chat_id}))
                   chat = data.get("result", {}) if isinstance(data, dict) else {}
