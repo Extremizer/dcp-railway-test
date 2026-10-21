@@ -1,0 +1,156 @@
+name: PHONE-FIRST Single Mock Delivery (One Shot)
+on:
+  push:
+    branches:
+      - theme4-phone-first-gha-single-send-20261021
+    paths:
+      - .github/workflows/dcp-phone-first-one-shot.yml
+permissions:
+  contents: write
+concurrency:
+  group: extremizer-phone-first-gha-mock-20261022-v1
+  cancel-in-progress: false
+jobs:
+  one-shot:
+    if: github.repository == 'Extremizer/dcp-railway-test' && github.ref == 'refs/heads/theme4-phone-first-gha-single-send-20261021'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      DCP_PHONE_DIAG_BOT_TOKEN: ${{ secrets.DCP_PHONE_DIAG_BOT_TOKEN }}
+      DCP_PHONE_DIAG_OWNER_ID: ${{ secrets.DCP_PHONE_DIAG_OWNER_ID }}
+      GH_REPO_TOKEN: ${{ github.token }}
+    steps:
+      - name: Preflight, reserve persistent GitHub tag, send ONE mock text
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import json
+          import os
+          import re
+          import socket
+          import ssl
+          import sys
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          REPO = "Extremizer/dcp-railway-test"
+          BRANCH = "refs/heads/theme4-phone-first-gha-single-send-20261021"
+          ATTEMPT_REF = "refs/tags/extremizer-phone-first-gha-mock-20261022-v1"
+          MESSAGE = (
+              "EXTREMIZER DCP — PHONE-FIRST. Это ОДНО тестовое сообщение "
+              "от GitHub Actions (MOCK_ONLY). Реальный DCP отключён. "
+              "Кнопка управления Chromium пока не подключена."
+          )
+
+
+          def safe_error(err):
+              # No exception text, response body or full URL: Telegram requests embed a token.
+              if isinstance(err, HTTPError):
+                  return "HTTP_" + str(err.code) if err.code in (400, 401, 403, 404, 409, 422, 429, 500, 502, 503, 504) else "HTTP_OTHER"
+              if isinstance(err, URLError):
+                  reason = err.reason
+                  if isinstance(reason, socket.gaierror):
+                      return "DNS"
+                  if isinstance(reason, ssl.SSLError):
+                      return "TLS"
+                  if isinstance(reason, (TimeoutError, socket.timeout)):
+                      return "TIMEOUT"
+                  return "NETWORK_OTHER"
+              if isinstance(err, (socket.timeout, TimeoutError)):
+                  return "TIMEOUT"
+              if isinstance(err, ssl.SSLError):
+                  return "TLS"
+              return "ERROR_OTHER"
+
+
+          def api_call(url, *, payload=None, headers=None):
+              data = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
+              req = Request(url, data=data, headers=headers or {}, method="POST" if data else "GET")
+              with urlopen(req, timeout=10) as response:
+                  return int(response.status), json.loads(response.read(8192))
+
+
+          def preflight(bot_token, chat_id):
+              if not re.fullmatch(r"[0-9]{4,20}:[^\s]{8,200}", bot_token):
+                  return "BOT_TOKEN_INVALID"
+              if not re.fullmatch(r"[1-9][0-9]{0,18}", chat_id):
+                  return "RECIPIENT_INVALID"
+              api = "https://api.telegram.org/bot" + bot_token + "/"
+              try:
+                  status, data = api_call(api + "getMe")
+                  bot = data.get("result", {}) if isinstance(data, dict) else {}
+                  if not (status == 200 and data.get("ok") is True and isinstance(bot, dict)
+                          and bot.get("is_bot") is True
+                          and str(bot.get("username", "")).casefold() == "extremizerdcp"):
+                      return "BOT_IDENTITY_MISMATCH"
+                  status, data = api_call(api + "getChat?" + urlencode({"chat_id": chat_id}))
+                  chat = data.get("result", {}) if isinstance(data, dict) else {}
+                  if not (status == 200 and data.get("ok") is True and isinstance(chat, dict)
+                          and str(chat.get("id")) == chat_id and chat.get("type") == "private"):
+                      return "RECIPIENT_NOT_VERIFIED"
+              except Exception as err:
+                  return "PREFLIGHT_" + safe_error(err)
+              return "READY"
+
+
+          def reserve_once(repo_token, sha):
+              # GitHub's create-ref is atomic. This fixed ref persists across workflow reruns.
+              # A timeout or HTTP 422 leaves delivery blocked: never retry an uncertain send.
+              if not repo_token or not re.fullmatch(r"[a-f0-9]{40}", sha):
+                  return "GUARD_CREDENTIALS_MISSING"
+              try:
+                  status, data = api_call(
+                      "https://api.github.com/repos/" + REPO + "/git/refs",
+                      payload={"ref": ATTEMPT_REF, "sha": sha},
+                      headers={"Authorization": "Bearer " + repo_token,
+                               "Accept": "application/vnd.github+json",
+                               "X-GitHub-Api-Version": "2022-11-28",
+                               "Content-Type": "application/json"},
+                  )
+                  return "RESERVED" if status == 201 and data.get("ref") == ATTEMPT_REF else "UNCONFIRMED"
+              except Exception as err:
+                  return "DENIED_" + safe_error(err)
+
+
+          def send_one(bot_token, chat_id):
+              try:
+                  status, data = api_call(
+                      "https://api.telegram.org/bot" + bot_token + "/sendMessage",
+                      payload={"chat_id": int(chat_id), "text": MESSAGE, "disable_notification": False},
+                      headers={"Content-Type": "application/json"},
+                  )
+                  result = data.get("result", {}) if isinstance(data, dict) else {}
+                  return "SENT_CONFIRMED" if (status == 200 and data.get("ok") is True
+                                            and isinstance(result, dict)
+                                            and isinstance(result.get("message_id"), int)) else "UNCONFIRMED"
+              except Exception as err:
+                  return "UNCERTAIN_" + safe_error(err)
+
+
+          def main():
+              # Never print token, chat id, API URL or data payload.
+              if os.getenv("GITHUB_REPOSITORY") != REPO or os.getenv("GITHUB_REF") != BRANCH:
+                  print("PHONE_FIRST_SCOPE: BLOCKED")
+                  return 2
+              bot_token = os.getenv("DCP_PHONE_DIAG_BOT_TOKEN", "")
+              chat_id = os.getenv("DCP_PHONE_DIAG_OWNER_ID", "")
+              ready = preflight(bot_token, chat_id)
+              print("PHONE_FIRST_PREFLIGHT: " + ready)
+              if ready != "READY":
+                  print("PHONE_FIRST_DELIVERY: NOT_ATTEMPTED")
+                  return 3
+              marker = reserve_once(os.getenv("GH_REPO_TOKEN", ""), os.getenv("GITHUB_SHA", ""))
+              print("PHONE_FIRST_ONE_SHOT_GUARD: " + marker)
+              if marker != "RESERVED":
+                  print("PHONE_FIRST_DELIVERY: BLOCKED")
+                  return 4
+              outcome = send_one(bot_token, chat_id)
+              print("PHONE_FIRST_DELIVERY: " + outcome)
+              # Guard stays claimed even for failure or uncertainty. No automatic retries.
+              return 0 if outcome == "SENT_CONFIRMED" else 5
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PYCODE
