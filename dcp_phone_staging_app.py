@@ -50,6 +50,52 @@ app.state.grants=None
 app.state.browser=None
 app.state.coordinator=None
 
+def _telegram_getme_readonly(token: str, *, opener=None) -> str:
+    """GET /getMe without sending messages; returns only whitelisted diagnostic codes.
+
+    Never expose exception text, API response data, token or Telegram identity.
+    """
+    import urllib.request
+    from urllib.error import HTTPError, URLError
+    from http.client import HTTPException
+    import ssl
+    import socket
+    if not isinstance(token, str) or ":" not in token:
+        return "NOT_CONFIGURED"
+    request = urllib.request.Request(
+        "https://api.telegram.org/bot" + token + "/getMe", method="GET"
+    )
+    try:
+        with (opener or urllib.request.urlopen)(request, timeout=8) as response:
+            data = json.loads(response.read(4096))
+        if (isinstance(data, dict) and data.get("ok") is True
+                and isinstance(data.get("result"), dict)
+                and data["result"].get("is_bot") is True):
+            return "OK"
+        return "UNCONFIRMED_RESPONSE"
+    except HTTPError as exc:
+        return "HTTP_" + str(exc.code) if exc.code in (400, 401, 403, 404, 429, 500, 502, 503, 504) else "HTTP_OTHER"
+    except URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, socket.gaierror):
+            return "DNS_" + type(reason).__name__
+        if isinstance(reason, ssl.SSLError):
+            return "TLS_" + type(reason).__name__
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return "TIMEOUT"
+        safe = type(reason).__name__
+        return "URL_" + safe if safe in ("ConnectionResetError", "ConnectionRefusedError", "RemoteDisconnected", "ConnectionAbortedError", "BrokenPipeError", "OSError") else "URL_OTHER"
+    except (socket.timeout, TimeoutError):
+        return "TIMEOUT"
+    except ssl.SSLError:
+        return "TLS"
+    except HTTPException as exc:
+        name = type(exc).__name__
+        return "HTTP_CLIENT_" + name if name in ("RemoteDisconnected", "BadStatusLine", "IncompleteRead", "ResponseNotReady") else "HTTP_CLIENT_OTHER"
+    except Exception as exc:
+        name = type(exc).__name__
+        return "EXCEPTION_" + name if name in ("TypeError", "ValueError", "JSONDecodeError", "UnicodeDecodeError", "ConnectionResetError", "ConnectionRefusedError", "ConnectionAbortedError", "BrokenPipeError", "OSError", "RuntimeError") else "EXCEPTION_OTHER"
+
 @app.on_event("startup")
 def configure():
     if os.getenv("DCP_PHONE_STAGING_MOCK_ONLY")!="1":return
@@ -80,6 +126,13 @@ def configure():
             send_recovery_message(token=bot,payload=staging)
         app.state.coordinator=RecoveryNoticeCoordinator(
             app.state.grants,int(owner),url,send_mock_notice)
+        # Read-only bot identity check; does not send, create invitations or touch volume ledger.
+        import threading
+        threading.Thread(
+            target=lambda: print("DCP_TELEGRAM_GETME_PREFLIGHT",
+                                 _telegram_getme_readonly(bot), flush=True),
+            daemon=True, name="dcp-staging-telegram-getme"
+        ).start()
         request_id=os.getenv("DCP_STAGING_TEST_NOTICE_ID","")
         if request_id:
             from dcp_phone_staging_notice_once import send_once
