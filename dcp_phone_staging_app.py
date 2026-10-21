@@ -70,7 +70,8 @@ def _telegram_getme_readonly(token: str, *, opener=None) -> str:
             data = json.loads(response.read(4096))
         if (isinstance(data, dict) and data.get("ok") is True
                 and isinstance(data.get("result"), dict)
-                and data["result"].get("is_bot") is True):
+                and data["result"].get("is_bot") is True
+                and str(data["result"].get("username", "")).casefold() == "extremizerdcpbot"):
             return "OK"
         return "UNCONFIRMED_RESPONSE"
     except HTTPError as exc:
@@ -123,6 +124,11 @@ def configure():
                     "web_app":{"url":button["web_app"]["url"]}
                 }]]}
             }
+            # Fail closed if Railway's token is not for the exact staging bot.
+            # Never log the Telegram token, username, invite or owner identity.
+            from dcp_phone_recovery_notice import RecoveryNoticeError
+            if _telegram_getme_readonly(bot) != "OK":
+                raise RecoveryNoticeError("telegram_identity_unverified")
             send_recovery_message(token=bot,payload=staging)
         app.state.coordinator=RecoveryNoticeCoordinator(
             app.state.grants,int(owner),url,send_mock_notice)
