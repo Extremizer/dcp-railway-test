@@ -1,0 +1,34 @@
+name: PHONE-FIRST Recipient Read-Only
+
+on:
+  push:
+    branches:
+      - theme4-phone-first-gha-single-send-20261021
+    paths:
+      - dcp_phone_telegram_recipient_readonly.py
+      - .github/workflows/dcp-phone-recipient-readonly.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phone-first-recipient-readonly
+  cancel-in-progress: false
+
+jobs:
+  recipient-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile source
+        run: python -m py_compile dcp_phone_telegram_recipient_readonly.py
+      - name: Read-only Telegram bot, webhook and recipient checks
+        env:
+          DCP_PHONE_DIAG_BOT_TOKEN: ${{ secrets.DCP_PHONE_DIAG_BOT_TOKEN }}
+          DCP_PHONE_DIAG_OWNER_ID: ${{ secrets.DCP_PHONE_DIAG_OWNER_ID }}
+        run: python -B dcp_phone_telegram_recipient_readonly.py
