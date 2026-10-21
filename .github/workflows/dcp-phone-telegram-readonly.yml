@@ -1,0 +1,27 @@
+name: PHONE-FIRST Telegram Read-Only Diagnostic
+on:
+  push:
+    branches:
+      - theme4-phone-telegram-gha-readonly-20261021
+    paths:
+      - dcp_phone_telegram_gha_diag.py
+      - .github/workflows/dcp-phone-telegram-readonly.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  telegram-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Compile offline
+        run: python -m py_compile dcp_phone_telegram_gha_diag.py
+      - name: Telegram DNS HTTPS getMe (GET only)
+        env:
+          DCP_PHONE_DIAG_BOT_TOKEN: ${{ secrets.DCP_PHONE_DIAG_BOT_TOKEN }}
+        run: python -B dcp_phone_telegram_gha_diag.py
