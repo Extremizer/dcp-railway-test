@@ -57,6 +57,16 @@ def main():
         print("BOT_AUTH: " + (status if status != "OK" else "INVALID_RESULT"), flush=True)
         return 2
     print("BOT_AUTH: OK", flush=True)
+    # Username is a public Telegram handle, unlike the bot token or chat ID.
+    # Whitelist characters to keep logs free from untrusted control text.
+    username = bot.get("username", "")
+    if isinstance(username, str) and re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
+        print("BOT_PUBLIC_USERNAME: @" + username, flush=True)
+        print("BOT_EXPECTED_USERNAME_MATCH: " +
+              ("YES" if username.casefold() == "extremizerdcp" else "NO"), flush=True)
+    else:
+        print("BOT_PUBLIC_USERNAME: INVALID_OR_MISSING", flush=True)
+        print("BOT_EXPECTED_USERNAME_MATCH: NO", flush=True)
 
     webhook_status, webhook = api_get(token, "getWebhookInfo")
     if webhook_status == "OK" and isinstance(webhook, dict):
