@@ -73,7 +73,7 @@ def run(config):
             "--user-data-dir="+str(profile),
             "file:///app/dcp_phone_staging_mock.html"
             if os.environ.get("DCP_PHONE_STAGING_MOCK_ONLY") == "1"
-            else "https://www.dealercostparts.com/",
+            else "about:blank",
         ],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
         close_fds=True,start_new_session=True)
         for _ in range(35):
