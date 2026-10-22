@@ -43,6 +43,27 @@ class OwnerConfirmedDcpParts(unittest.TestCase):
     def test_polaris_search_prohibited(self):
         x=extract_parts_rows("Polaris","2206328",doc(row("2206328","2206328")),origin="live_dom")
         self.assertNotEqual(x.status,"FOUND")
+    def test_logout_identity_uses_same_origin_nav_link_not_page_text(self):
+        for live in (True,False):
+            with self.subTest(live=live):
+                js=parts_dom_expression("arctic_cat","0746-965",live=live)
+                self.assertIn("'#persistant-nav a[href]'",js)
+                self.assertIn("u.pathname==='/account/logoff'",js)
+                self.assertIn("u.origin===location.origin",js)
+                self.assertIn("!u.search && !u.hash",js)
+                self.assertIn("if(!hasLogout(document))return {authorized:false}",js)
+                self.assertIn("if(!hasLogout(doc))return {authorized:false,http_status:status}",js)
+                self.assertNotIn("/sign out/i.test(part)",js)
+                self.assertNotIn("/sign out/i.test(text)",js)
+                self.assertNotIn("cart/add",js)
+
+    def test_not_authorized_never_uses_search_price(self):
+        for origin in ("server_html","live_dom"):
+            result=extract_parts_rows("Arctic Cat","0746-965",
+                doc(row(price="$799.00"),auth=False),origin=origin)
+            self.assertEqual(result.status,"AUTH_REQUIRED")
+            self.assertIsNone(result.dealer_price_usd)
+
     def test_one_get_or_passive_no_cart_mutations(self):
         js=parts_dom_expression("arctic_cat","0746-965",live=False)
         self.assertEqual(js.count("fetch("),1)
