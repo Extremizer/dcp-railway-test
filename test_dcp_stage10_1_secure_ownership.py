@@ -100,6 +100,19 @@ class SecureOwnershipTests(unittest.TestCase):
                 signature="0"*64,producer_key=PRODUCER,operator_key=OPERATOR)
         self.assertIsNone(self.acquire("intruder"))
 
+    def test_foreign_host_signature_cannot_acquire_another_identity(self):
+        ts=int(time.time())
+        body=rc.canonical({"owner":"new-host","request_nonce":secrets.token_hex(32)})
+        old_host_key=hmac.new(PRODUCER,b"stage10.1-host-key"+b"old-host",hashlib.sha256).digest()
+        forged=rc.signature(old_host_key,"POST","/mock/ownership/acquire",ts,body)
+        with self.assertRaises(rc.Rejected):
+            api.dispatch(self.db,method="POST",path="/mock/ownership/acquire",
+                body=body,timestamp=ts,signature=forged,
+                producer_key=PRODUCER,operator_key=OPERATOR)
+        with sqlite3.connect(self.db) as conn:
+            self.assertFalse(conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dp_producer_ownership'").fetchone())
+
     def test_forged_cessation_and_expired_proof_fail_closed(self):
         old=self.acquire()
         req=self.attestation(old,"b"*64)
