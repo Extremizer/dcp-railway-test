@@ -112,6 +112,64 @@ for attempt in $(seq 1 30); do
     for code in browser_terminated_during_startup browser_loopback_unavailable existing_persistent_state_dir_required interactive_display_required explicit_installed_chromium_required missing_owner_telegram_auth ephemeral_or_root_state_forbidden invalid_http_port; do
       if docker logs "$cid" 2>&1 | grep -Fq "HostConfigurationError $code"; then echo "SAFE_BROWSER_ERROR=$code"; fi
     done
+    # One bounded sandbox-compatibility probe on an identically confined,
+    # non-root, network-disabled container. No UID maps, elevation, or bypass.
+    docker inspect -f 'DIAG_RUNTIME_UID={{.Config.User}} DIAG_NETWORK={{.HostConfig.NetworkMode}} DIAG_CAP_DROP={{json .HostConfig.CapDrop}} DIAG_SECURITY_OPTS={{json .HostConfig.SecurityOpt}}' "$cid"
+    docker run --rm --network none --cap-drop=ALL --security-opt=no-new-privileges \
+      --entrypoint python dcp-live-candidate:ci -c '
+import ctypes, errno, os, pathlib, stat, subprocess, sys
+root=pathlib.Path("/proc")
+status={}
+try:
+    for line in (root/"self/status").read_text().splitlines():
+        if line.partition(":")[0] in {"NoNewPrivs","Seccomp","CapEff","CapBnd"}:
+            key,value=line.split(":",1);status[key]=value.strip()
+except OSError: pass
+print("DIAG_PROC_UID="+str(os.getuid()))
+print("DIAG_NO_NEW_PRIVS="+status.get("NoNewPrivs","UNKNOWN"))
+print("DIAG_SECCOMP_MODE="+status.get("Seccomp","UNKNOWN"))
+print("DIAG_CAP_EFF_ZERO="+str(int(status.get("CapEff","1"),16)==0))
+for name,file in (
+ ("UNPRIV_USERNS_CLONE","/proc/sys/kernel/unprivileged_userns_clone"),
+ ("MAX_USER_NAMESPACES","/proc/sys/user/max_user_namespaces"),
+ ("APPARMOR_RESTRICT_USERNS","/proc/sys/kernel/apparmor_restrict_unprivileged_userns"),
+):
+    try:
+        value=pathlib.Path(file).read_text().strip()
+        if not value.isdigit(): value="UNKNOWN"
+    except OSError: value="UNAVAILABLE"
+    print("DIAG_"+name+"="+value)
+try:
+    profile=(root/"self/attr/current").read_text().strip().lower()
+    kind=("DOCKER_DEFAULT" if "docker-default" in profile else
+          "UNCONFINED" if "unconfined" in profile else
+          "OTHER_ENFORCED" if "enforce" in profile else "UNKNOWN")
+except OSError: kind="UNAVAILABLE"
+print("DIAG_APPARMOR_PROFILE="+kind)
+found=False
+for item in ("/usr/lib/chromium/chrome-sandbox",
+             "/usr/lib/chromium/chromium-sandbox",
+             "/usr/bin/chrome-sandbox"):
+    try:
+        st=os.stat(item)
+        if stat.S_ISREG(st.st_mode):
+            found=True
+            print("DIAG_SETUID_SANDBOX_HELPER="+("ROOT_SETUID" if
+                st.st_uid==0 and st.st_mode & stat.S_ISUID else "NOT_ROOT_SETUID"))
+            break
+    except OSError: pass
+if not found:print("DIAG_SETUID_SANDBOX_HELPER=NOT_INSTALLED")
+# No uid mapping or privileged operation; the disposable child only attempts
+# a new, unmapped user namespace and reports the denial errno.
+code="import ctypes,errno; c=ctypes.CDLL(None,use_errno=True); r=c.unshare(0x10000000); e=ctypes.get_errno(); print(chr(65)+chr(76)+chr(76)+chr(79)+chr(87)+chr(69)+chr(68) if r==0 else errno.errorcode.get(e,chr(85)+chr(78)+chr(75)+chr(78)+chr(79)+chr(87)+chr(78)))"
+try:
+    r=subprocess.run([sys.executable,"-c",code],capture_output=True,text=True,timeout=3,check=False)
+    value=r.stdout.strip() if r.returncode==0 else "EXEC_FAILED"
+except (OSError,subprocess.TimeoutExpired): value="UNAVAILABLE"
+print("DIAG_UNMAPPED_USERNS_UNSHARE="+value if value in
+    {"ALLOWED","EPERM","EACCES","EINVAL","ENOSYS","EXEC_FAILED","UNAVAILABLE"} else
+    "DIAG_UNMAPPED_USERNS_UNSHARE=OTHER_ERRNO")
+'
     # Only on a failed offline startup, run Chromium with the same hardening
     # and no network, no DCP path, and classify stderr without exposing it.
     set +e
@@ -122,6 +180,11 @@ for attempt in $(seq 1 30); do
     set -e
     echo "SAFE_CHROMIUM_DIAG_EXIT_CODE=$chromium_code"
     if grep -Eqi 'no usable sandbox|sandbox.*failed|zygote.*sandbox|namespace|operation not permitted' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=SANDBOX_OR_NAMESPACE"; fi
+    if grep -Eqi 'Failed to move to new namespace|Operation not permitted|No usable sandbox|Failed to unshare' chromium-diag.log; then echo "DIAG_CHROMIUM_NAMESPACE_CREATION_DENIED=TRUE"; fi
+    if grep -Eqi 'No usable sandbox' chromium-diag.log; then echo "DIAG_CHROMIUM_NO_USABLE_SANDBOX=TRUE"; fi
+    if grep -Eqi 'setuid.*sandbox|suid.*sandbox|chrome-sandbox' chromium-diag.log; then echo "DIAG_CHROMIUM_SETUID_SANDBOX_CONFLICT=TRUE"; fi
+    if grep -Eqi 'apparmor' chromium-diag.log; then echo "DIAG_CHROMIUM_APPARMOR_MENTION=TRUE"; fi
+    if grep -Eqi 'seccomp' chromium-diag.log; then echo "DIAG_CHROMIUM_SECCOMP_MENTION=TRUE"; fi
     if grep -Eqi 'permission denied|access denied|read-only file system' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=FILE_PERMISSION"; fi
     if grep -Eqi 'missing.*shared libraries|error while loading shared libraries|cannot open shared object file' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=LIBRARY_MISSING"; fi
     if grep -Eqi 'failed to connect.*display|cannot open display|no display' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=DISPLAY_UNAVAILABLE"; fi
