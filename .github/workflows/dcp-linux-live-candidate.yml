@@ -7,6 +7,7 @@ permissions:
 jobs:
   targeted:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -18,14 +19,24 @@ jobs:
           python -m py_compile dcp_linux_live_isolated.py dcp_cloud_browser_host.py dcp_phone_recovery_app.py
           python -m unittest -v test_dcp_linux_live_isolated.py test_dcp_linux_admission.py test_dcp_linux_live_p0.py
       - name: Docker build only - no deploy or DCP access
+        timeout-minutes: 15
         run: |
-          docker build --file Dockerfile.dcp-live-isolated --build-arg DCP_SOURCE_HEAD=${{ github.sha }} --tag dcp-live-candidate:ci .
+          timeout --signal=TERM --kill-after=10s 15m docker build --progress=plain --file Dockerfile.dcp-live-isolated --build-arg DCP_SOURCE_HEAD=${{ github.sha }} --tag dcp-live-candidate:ci .
+          echo DOCKER_BUILD_PASS
+      - name: Runtime smoke - network disabled and fail closed
+        timeout-minutes: 2
+        run: |
           set +e
-          output=$(docker run --rm --network none dcp-live-candidate:ci 2>&1)
+          timeout --signal=TERM --kill-after=5s 60s docker run --rm --network none dcp-live-candidate:ci > smoke.log 2>&1
           code=$?
           set -e
           echo "CONTAINER_EXIT_CODE=$code"
-          echo "$output" | head -c 600
-          test "$code" -eq 24
-          echo "$output" | grep -q LINUX_PRODUCER_BLOCKED
-          echo STAGING_ENTRY_FAIL_CLOSED_PASS
+          if [ "$code" -ne 24 ]; then
+            echo "RUNTIME_SMOKE_FAIL_UNEXPECTED_EXIT"
+            exit 1
+          fi
+          if ! grep -q 'LINUX_PRODUCER_BLOCKED' smoke.log; then
+            echo "RUNTIME_SMOKE_FAIL_MARKER_MISSING"
+            exit 1
+          fi
+          echo RUNTIME_SMOKE_FAIL_CLOSED_PASS
