@@ -112,6 +112,19 @@ for attempt in $(seq 1 30); do
     for code in browser_terminated_during_startup browser_loopback_unavailable existing_persistent_state_dir_required interactive_display_required explicit_installed_chromium_required missing_owner_telegram_auth ephemeral_or_root_state_forbidden invalid_http_port; do
       if docker logs "$cid" 2>&1 | grep -Fq "HostConfigurationError $code"; then echo "SAFE_BROWSER_ERROR=$code"; fi
     done
+    # Only on a failed offline startup, run Chromium with the same hardening
+    # and no network, no DCP path, and classify stderr without exposing it.
+    set +e
+    timeout --signal=TERM --kill-after=2s 8s docker run --rm --network none --cap-drop=ALL --security-opt=no-new-privileges \
+      --entrypoint /usr/bin/chromium dcp-live-candidate:ci \
+      --headless --disable-gpu --no-first-run --user-data-dir=/tmp/ci-browser-diagnostic about:blank > chromium-diag.log 2>&1
+    chromium_code=$?
+    set -e
+    echo "SAFE_CHROMIUM_DIAG_EXIT_CODE=$chromium_code"
+    if grep -Eqi 'no usable sandbox|sandbox.*failed|zygote.*sandbox|namespace|operation not permitted' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=SANDBOX_OR_NAMESPACE"; fi
+    if grep -Eqi 'permission denied|access denied|read-only file system' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=FILE_PERMISSION"; fi
+    if grep -Eqi 'missing.*shared libraries|error while loading shared libraries|cannot open shared object file' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=LIBRARY_MISSING"; fi
+    if grep -Eqi 'failed to connect.*display|cannot open display|no display' chromium-diag.log; then echo "SAFE_CHROMIUM_DIAG=DISPLAY_UNAVAILABLE"; fi
     for name in LINUX_PRODUCER_BLOCKED LOCAL_XVFB_START_EXITED LOCAL_XVFB_START_TIMEOUT LOCAL_XVFB_SOCKET_READY DIAG_MAIN_ENTERED DIAG_ADMISSION_VERIFIED DIAG_BROWSER_CONFIG_VERIFIED DIAG_JOURNAL_READY LINUX_CHROMIUM_RUNTIME_STARTING_ADMISSION_CLOSED; do
       if docker logs "$cid" 2>&1 | grep -q "$name"; then echo "EARLY_EXIT_MARKER=$name"; fi
     done
