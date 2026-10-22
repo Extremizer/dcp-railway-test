@@ -18,7 +18,8 @@ jobs:
           python -m py_compile dcp_linux_live_isolated.py dcp_cloud_browser_host.py dcp_phone_recovery_app.py
           python -m unittest -v test_dcp_linux_live_isolated.py test_dcp_linux_admission.py test_dcp_linux_live_p0.py
       - name: Docker build only - no deploy or DCP access
-        run: docker build --file Dockerfile.dcp-live-isolated --build-arg DCP_SOURCE_HEAD=${{ github.sha }} --tag dcp-live-candidate:ci .
+        run: |
+          docker build --file Dockerfile.dcp-live-isolated --build-arg DCP_SOURCE_HEAD=${{ github.sha }} --tag dcp-live-candidate:ci .
           set +e
           output=$(docker run --rm --network none dcp-live-candidate:ci 2>&1)
           code=$?
