@@ -1,0 +1,60 @@
+name: Isolated Linux DCP Browser Candidate
+on:
+  push:
+    branches: [dcp-linux-live-producer-isolated-20261022]
+permissions:
+  contents: read
+jobs:
+  targeted:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Targeted candidate gate
+        run: |
+          python -m pip install 'fastapi>=0.115,<1' 'uvicorn>=0.34,<1' 'websocket-client>=1.9,<2' playwright
+          python -m py_compile dcp_linux_live_isolated.py dcp_cloud_browser_host.py dcp_phone_recovery_app.py
+          python -m unittest -v test_dcp_linux_live_isolated.py test_dcp_linux_admission.py test_dcp_linux_live_p0.py
+      - name: Docker build only - no deploy or DCP access
+        timeout-minutes: 15
+        run: |
+          timeout --signal=TERM --kill-after=10s 15m docker build --progress=plain --file Dockerfile.dcp-live-isolated --build-arg DCP_SOURCE_HEAD=${{ github.sha }} --tag dcp-live-candidate:ci .
+          echo DOCKER_BUILD_PASS
+      - name: Verify baked exact source SHA offline
+        run: |
+          docker run --rm --network none -e GITHUB_SHA --entrypoint python dcp-live-candidate:ci -c 'import os; from pathlib import Path; baked=Path("/app/dcp_build_source_head").read_bytes(); expected=os.environ["GITHUB_SHA"].encode("ascii"); assert len(baked)==40 and baked==expected, "BAKED_SOURCE_SHA_MISMATCH"; print("BAKED_SOURCE_SHA_40_EXACT_PASS")'
+      - name: Runtime smoke - network disabled and fail closed
+        timeout-minutes: 2
+        run: |
+          set +e
+          # Diagnose only if the mandatory real CMD does not terminate.
+          docker image inspect dcp-live-candidate:ci --format 'IMAGE_CMD={{json .Config.Cmd}} IMAGE_ENTRYPOINT={{json .Config.Entrypoint}}'
+          timeout --signal=TERM --kill-after=5s 60s docker run --rm --network none dcp-live-candidate:ci > smoke.log 2>&1
+          code=$?
+          set -e
+          echo "CMD_EXIT_CODE=$code"
+          if [ "$code" -ne 24 ] || ! grep -q 'LINUX_PRODUCER_BLOCKED' smoke.log; then
+            echo "MANDATORY_CMD_FAILED"
+            # Only emit bounded sanitized classification, never raw browser output.
+            if grep -q 'ModuleNotFoundError' smoke.log; then echo 'DIAG_MODULE_IMPORT_FAILURE'; fi
+            if grep -q 'xvfb-run: error' smoke.log; then echo 'DIAG_XVFB_FAILURE'; fi
+            if grep -q 'LINUX_PRODUCER_BLOCKED' smoke.log; then echo 'DIAG_BLOCKED_MARKER_PRESENT'; fi
+            set +e
+            timeout --signal=TERM --kill-after=5s 12s docker run --rm --network none --entrypoint python dcp-live-candidate:ci -u /app/dcp_linux_live_isolated.py > direct.log 2>&1
+            direct_code=$?
+            timeout --signal=TERM --kill-after=5s 12s docker run --rm --network none --entrypoint xvfb-run dcp-live-candidate:ci -a /bin/true > xvfb.log 2>&1
+            xvfb_code=$?
+            set -e
+            echo "DIRECT_PYTHON_EXIT_CODE=$direct_code"
+            echo "XVFB_START_EXIT_CODE=$xvfb_code"
+            if grep -q LINUX_PRODUCER_BLOCKED direct.log; then echo DIRECT_PYTHON_BLOCKED_MARKER_PRESENT; fi
+            exit 1
+          fi
+          echo RUNTIME_SMOKE_FAIL_CLOSED_PASS
+
+      - name: Admitted local Xvfb Chromium smoke - offline only
+        timeout-minutes: 3
+        run: bash test_dcp_linux_local_browser_smoke.sh

@@ -9,7 +9,6 @@ import hmac
 import os
 from urllib.parse import urlsplit
 
-import oemixibot_dcp_price as dcp
 
 IDENTITY_READ_ONLY_JS = r"""(() => {
  const before=location.href;
@@ -42,13 +41,18 @@ def verify_dealer_session(*, expected=None, preflight=None, tabs=None, evaluate=
             preflight=_preflight_dcp
         if preflight()!="READY":
             return fail("DEALER_IDENTITY_PREFLIGHT_REJECTED")
-        get_tabs=tabs if tabs is not None else dcp._tabs
-        run=evaluate if evaluate is not None else dcp._runtime_evaluate
+        if tabs is None or evaluate is None:
+            import oemixibot_dcp_price as dcp
+            get_tabs=tabs if tabs is not None else dcp._tabs
+            run=evaluate if evaluate is not None else dcp._runtime_evaluate
+        else:
+            get_tabs=tabs
+            run=evaluate
         matches=[]
         for tab in get_tabs():
             url=str(tab.get("url") or "")
             p=urlsplit(url)
-            if (dcp._is_dcp_page(tab) and p.scheme=="https"
+            if (tab.get('type')=='page' and p.scheme=="https"
                 and p.netloc=="www.dealercostparts.com"
                 and p.path.rstrip("/")=="/cart"
                 and not p.query and not p.fragment):
