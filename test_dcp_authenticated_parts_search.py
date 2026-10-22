@@ -1,6 +1,7 @@
 """Approved DCP business contract: SIGN OUT -> dealer SEARCH, Polaris CART-only."""
 import unittest
 import sqlite3
+import os
 from unittest.mock import patch
 from dcp_authenticated_parts_search import extract_parts_rows,parts_dom_expression
 from dcp_category_authority import resolve_search_route
@@ -9,8 +10,43 @@ def row(old="0746-885",current="0746-965",price="$533.32"):
     return {"form_sku":old,"current_oem":current,"price_selector_exact":True,
             "price_text":price,"name":"Clutch, Drive - Uncalibrated"}
 def doc(*rows,auth=True):
-    return {"http_status":200,"authorized":auth,"challenged":False,"rows":list(rows)}
+    return {"http_status":200,"authorized":auth,"challenged":False,
+            "rows":list(rows),"dcp_dealer_account":"dealer@example.invalid"}
 class OwnerConfirmedDcpParts(unittest.TestCase):
+    def setUp(self):
+        context = patch.dict(os.environ, {"EXTREMIZER_DCP_EXPECTED_DEALER_ACCOUNT":
+                                       "dealer@example.invalid"})
+        context.start()
+        self.addCleanup(context.stop)
+
+    def test_mismatched_or_missing_dealer_email_denied(self):
+        for value in ("wrong@example.invalid", "", None, 42):
+            with self.subTest(value=value):
+                evidence={**doc(row()), "dcp_dealer_account":value}
+                result=extract_parts_rows("Arctic Cat", "0746-965", evidence,
+                                          origin="server_html")
+                self.assertEqual(result.status,"AUTH_REQUIRED")
+                self.assertIsNone(result.dealer_price_usd)
+
+    def test_missing_expected_dealer_email_denied(self):
+        with patch.dict(os.environ,{"EXTREMIZER_DCP_EXPECTED_DEALER_ACCOUNT":""}):
+            result=extract_parts_rows("Arctic Cat", "0746-965",doc(row()),
+                                      origin="server_html")
+        self.assertEqual(result.status,"AUTH_REQUIRED")
+
+    def test_matching_email_with_case_and_whitespace(self):
+        evidence={**doc(row()),"dcp_dealer_account":" DEALER@EXAMPLE.INVALID "}
+        result=extract_parts_rows("Arctic Cat","0746-965",evidence,
+                                  origin="live_dom")
+        self.assertEqual(result.status,"FOUND")
+
+    def test_browser_requires_exactly_one_account_name(self):
+        for live in (True,False):
+            js=parts_dom_expression("arctic_cat","0746-965",live=live)
+            self.assertIn("accounts.length!==1",js)
+            self.assertIn("dcp_dealer_account:accounts[0]",js)
+            self.assertIn("resultAccounts[0].toLowerCase()!==accounts[0].toLowerCase()",js)
+            self.assertNotIn("cart/add",js)
     def test_arctic_two_former_numbers_become_one_current_price(self):
         result=extract_parts_rows("Arctic Cat","0746-965",
                 doc(row(),row("0746-933")),origin="server_html")
@@ -51,8 +87,8 @@ class OwnerConfirmedDcpParts(unittest.TestCase):
                 self.assertIn("u.pathname==='/account/logoff'",js)
                 self.assertIn("u.origin===location.origin",js)
                 self.assertIn("!u.search && !u.hash",js)
-                self.assertIn("if(!hasLogout(document))return {authorized:false}",js)
-                self.assertIn("if(!hasLogout(doc))return {authorized:false,http_status:status}",js)
+                self.assertIn("if(!hasLogout(document)||accounts.length!==1)return {authorized:false}",js)
+                self.assertIn("if(!hasLogout(doc)||resultAccounts.length!==1",js)
                 self.assertNotIn("/sign out/i.test(part)",js)
                 self.assertNotIn("/sign out/i.test(text)",js)
                 self.assertNotIn("cart/add",js)
