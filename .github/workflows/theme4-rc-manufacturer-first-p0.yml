@@ -2,7 +2,7 @@ name: RC Manufacturer First P0 Combined Gate
 on:
   push:
     branches:
-      - theme4-rc-manufacturer-first-p0-20261019
+      - theme4-dcp-logout-marker-isolated-20261022
   workflow_dispatch:
 permissions:
   contents: read
