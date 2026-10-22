@@ -993,7 +993,7 @@ def dp_sync_next(
                                 x_dp_producer_id, b"", x_dp_sync_sig)
     except dp_sync_protocol.ProtocolError as exc:
         raise HTTPException(status_code=401, detail={"code": str(exc)})
-    if os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1":
+    if dp_live_bridge.os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1":
         if not x_dp_ownership_epoch or not x_dp_ownership_epoch.isdecimal() or not x_dp_ownership_nonce:
             raise HTTPException(status_code=409, detail={"code": "producer_ownership_proof_missing"})
         proof={"owner":x_dp_producer_id,"epoch":int(x_dp_ownership_epoch),"nonce":x_dp_ownership_nonce}
