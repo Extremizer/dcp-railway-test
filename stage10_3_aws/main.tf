@@ -1,17 +1,28 @@
 terraform {
   required_version = ">= 1.8.0, < 2.0.0"
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.80" }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "= 5.80.0"
+    }
   }
 }
-provider "aws" { region = var.region }
-locals { prefix = "dcp-s10-3-mock" }
+provider "aws" {
+  region = var.region
+}
+locals {
+  prefix = "dcp-s10-3-mock"
+}
 resource "aws_vpc" "mock" {
   cidr_block = "10.73.0.0/16"
   assign_generated_ipv6_cidr_block = false
   enable_dns_support = false
   enable_dns_hostnames = false
-  tags = { Name = "${local.prefix}-vpc", Environment = "isolated-mock", Production = "false" }
+  tags = {
+    Name = "${local.prefix}-vpc"
+    Environment = "isolated-mock"
+    Production = "false"
+  }
 }
 resource "aws_subnet" "broker" {
   vpc_id = aws_vpc.mock.id
@@ -51,44 +62,49 @@ resource "aws_route_table_association" "new" {
   route_table_id = aws_route_table.isolated.id
 }
 resource "aws_security_group" "broker" {
-  name = "${local.prefix}-broker"
+  name   = "${local.prefix}-broker"
   vpc_id = aws_vpc.mock.id
-  ingress = []
+  ingress {
+    from_port   = 8800
+    to_port     = 8800
+    protocol    = "tcp"
+    cidr_blocks = ["10.73.20.0/28", "10.73.30.0/28"]
+  }
   egress = []
 }
+
 resource "aws_security_group" "producers" {
-  name = "${local.prefix}-producer"
-  vpc_id = aws_vpc.mock.id
+  name    = "${local.prefix}-producer"
+  vpc_id  = aws_vpc.mock.id
   ingress = []
-  egress = []
-}
-resource "aws_security_group_rule" "broker_ingress" {
-  type = "ingress"
-  security_group_id = aws_security_group.broker.id
-  source_security_group_id = aws_security_group.producers.id
-  from_port = 8800
-  to_port = 8800
-  protocol = "tcp"
-}
-resource "aws_security_group_rule" "producer_egress" {
-  type = "egress"
-  security_group_id = aws_security_group.producers.id
-  source_security_group_id = aws_security_group.broker.id
-  from_port = 8800
-  to_port = 8800
-  protocol = "tcp"
+  egress {
+    from_port   = 8800
+    to_port     = 8800
+    protocol    = "tcp"
+    cidr_blocks = ["10.73.10.10/32"]
+  }
 }
 resource "aws_instance" "broker" {
   count = var.mock_only_approval ? 1 : 0
   ami = var.producer_ami
   instance_type = "t3.micro"
   subnet_id = aws_subnet.broker.id
+  private_ip = "10.73.10.10"
   associate_public_ip_address = false
   vpc_security_group_ids = [aws_security_group.broker.id]
   monitoring = true
-  metadata_options { http_endpoint = "disabled" }
-  root_block_device { volume_type = "gp3" volume_size = 16 encrypted = true }
-  tags = { Name = "${local.prefix}-broker", Stage = "MOCK_ONLY" }
+  metadata_options {
+    http_endpoint = "disabled"
+  }
+  root_block_device {
+    volume_type = "gp3"
+    volume_size = 16
+    encrypted   = true
+  }
+  tags = {
+    Name = "${local.prefix}-broker"
+    Stage = "MOCK_ONLY"
+  }
 }
 resource "aws_instance" "producer" {
   for_each = var.mock_only_approval ? toset(["old", "new"]) : toset([])
@@ -100,5 +116,9 @@ resource "aws_instance" "producer" {
   monitoring = true
   metadata_options { http_endpoint = "disabled" }
   root_block_device { volume_type = "gp3" volume_size = 16 encrypted = true }
-  tags = { Name = "${local.prefix}-${each.key}", Stage = "MOCK_ONLY", Host = each.key }
+  tags = {
+    Name = "${local.prefix}-${each.key}"
+    Stage = "MOCK_ONLY"
+    Host = each.key
+  }
 }
