@@ -8,6 +8,8 @@ from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
 from unittest.mock import patch
 import secrets
+import hmac
+import hashlib
 import dcp_stage10_1_mock_ownership_api as api
 import dcp_stage10_1_secure_control as rc
 import dcp_stage10_ownership_epoch as epoch
@@ -21,7 +23,7 @@ def race(args):
     now=int(time.time())
     try:
         return api.dispatch(db,method="POST",path="/mock/ownership/acquire",body=body,
-            timestamp=now,signature=rc.signature(PRODUCER,"POST","/mock/ownership/acquire",now,body),
+            timestamp=now,signature=rc.signature(hmac.new(PRODUCER,b"stage10.1-host-key"+owner.encode(),hashlib.sha256).digest(),"POST","/mock/ownership/acquire",now,body),
             producer_key=PRODUCER,operator_key=OPERATOR)
     except rc.Rejected:
         return None
