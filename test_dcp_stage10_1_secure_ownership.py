@@ -13,6 +13,8 @@ import hashlib
 import dcp_stage10_1_mock_ownership_api as api
 import dcp_stage10_1_secure_control as rc
 import dcp_stage10_ownership_epoch as epoch
+from fastapi.testclient import TestClient
+from dcp_stage10_1_mock_http import create_mock_app
 
 PRODUCER=b"fixture-producer-key-stage10.1"
 OPERATOR=b"fixture-operator-key-stage10.1"
@@ -51,6 +53,35 @@ class SecureOwnershipTests(unittest.TestCase):
         return dict(path="/mock/ownership/revoke",body=body,ts=now,
                     sig=rc.signature(OPERATOR,"POST","/mock/ownership/revoke",now,body),
                     operator_key=OPERATOR,now=now)
+
+    def test_authenticated_mock_http_acquire_status_and_revoke(self):
+        client=TestClient(create_mock_app(self.db,producer_key=PRODUCER,operator_key=OPERATOR))
+        owner="old-host"
+        data=rc.canonical({"owner":owner,"request_nonce":secrets.token_hex(32)})
+        ts=int(time.time())
+        key=hmac.new(PRODUCER,b"stage10.1-host-key"+owner.encode(),hashlib.sha256).digest()
+        signed={"x-owner-ts":str(ts),"x-owner-sig":rc.signature(
+            key,"POST","/mock/ownership/acquire",ts,data)}
+        self.assertEqual(client.post("/mock/ownership/acquire",content=data).status_code,403)
+        result=client.post("/mock/ownership/acquire",content=data,headers=signed)
+        self.assertEqual(result.status_code,200,result.text)
+        proof=result.json()
+        self.assertEqual(client.post("/mock/ownership/acquire",content=data,headers=signed).status_code,403)
+        h={"x-owner-ts":str(ts),"x-owner-sig":rc.signature(OPERATOR,
+            "GET","/mock/ownership/status",ts,b"")}
+        status=client.get("/mock/ownership/status",headers=h)
+        self.assertEqual(status.status_code,200,status.text)
+        self.assertEqual(status.json()["state"],"ACTIVE")
+        self.assertNotIn("nonce",status.json())
+        digest="a"*64
+        rc.register_verified_cessation(self.db,owner=owner,epoch_value=proof["epoch"],
+            evidence_digest=digest,verified_at=ts)
+        att=self.attestation(proof,digest,now=ts)
+        reply=client.post("/mock/ownership/revoke",content=att["body"],
+            headers={"x-owner-ts":str(ts),"x-owner-sig":att["sig"]})
+        self.assertEqual(reply.status_code,200,reply.text)
+        self.assertEqual(client.post("/mock/ownership/revoke",content=att["body"],
+            headers={"x-owner-ts":str(ts),"x-owner-sig":att["sig"]}).status_code,403)
 
     def test_independent_hosts_single_owner_and_no_replay(self):
         with ProcessPoolExecutor(max_workers=2) as pool:
