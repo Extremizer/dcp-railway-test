@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request,urlopen
@@ -19,6 +20,7 @@ from dp_cloud_producer_client import CloudV2Producer
 app.state.linux_lock=None
 app.state.broker_admitted=False
 app.state.identity_status="NOT_CHECKED"
+app.state.owner_acquired_at=None
 
 @app.on_event("startup")
 def init_linux_admission():
@@ -31,7 +33,19 @@ def init_linux_admission():
     except (AdmissionError, OSError):
         app.state.journal_ok=False
 
+def _source_verified():
+    built=Path("/app/dcp_build_source_head")
+    expected=os.getenv("DCP_EXPECTED_SOURCE_HEAD","")
+    return built.is_file() and len(expected)==40 and built.read_text().strip()==expected
+
+def _broker_fresh():
+    acquired=getattr(app.state,"owner_acquired_at",None)
+    return (bool(app.state.broker_admitted) and acquired is not None
+            and 0 <= time.monotonic()-acquired < 120)
+
 def _manual_go():
+    if not _source_verified():
+        raise HTTPException(403,"source_integrity_not_verified")
     if os.getenv("DCP_LIVE_NAVIGATION_GO")!="1":
         raise HTTPException(403,"live_navigation_go_missing")
 
@@ -81,7 +95,7 @@ def admission_status(authorization:str|None=Header(default=None)):
             "dealer_authenticated":result.get("dealer_authenticated") is True,
             "dealer_status":result.get("status"),
             "journal_healthy":bool(getattr(app.state,"journal_ok",False)),
-            "broker_admitted":bool(app.state.broker_admitted),
+            "broker_admitted":_broker_fresh(),
             "claims_enabled":False,"dealer_price_publish_enabled":False}
 
 def _signed_broker():
@@ -134,6 +148,7 @@ def admission_acquire(authorization:str|None=Header(default=None)):
         persist_journal(path,{"state":"OWNER_HELD","claim":None,"status":"NO_CLAIMS",
                               "owner_generation":proof.get("generation")})
         app.state.broker_admitted=True
+        app.state.owner_acquired_at=time.monotonic()
         # Token deliberately remains process-local only; no claims are issued.
         app.state.broker_client=client
         return {"status":"BROKER_ADMITTED_NO_CLAIMS","claims_enabled":False,
