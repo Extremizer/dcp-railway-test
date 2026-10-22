@@ -109,6 +109,9 @@ for attempt in $(seq 1 30); do
   if [ "$(docker inspect -f '{{.State.Running}}' "$cid")" != "true" ]; then
     echo "ADMITTED_CONTAINER_EXITED"
     docker inspect -f 'EXIT_CODE={{.State.ExitCode}}' "$cid"
+    for name in LINUX_PRODUCER_BLOCKED LOCAL_XVFB_START_EXITED LOCAL_XVFB_START_TIMEOUT LOCAL_XVFB_SOCKET_READY DIAG_MAIN_ENTERED DIAG_ADMISSION_VERIFIED DIAG_BROWSER_CONFIG_VERIFIED DIAG_JOURNAL_READY LINUX_CHROMIUM_RUNTIME_STARTING_ADMISSION_CLOSED; do
+      if docker logs "$cid" 2>&1 | grep -q "$name"; then echo "EARLY_EXIT_MARKER=$name"; fi
+    done
     exit 1
   fi
   if docker exec "$cid" python -c '
