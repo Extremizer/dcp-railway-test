@@ -8,6 +8,8 @@ import secrets
 import hashlib
 import json
 import sqlite3
+import os
+import dcp_stage10_ownership_epoch
 
 import dp_live_bridge as bridge
 import dp_live_health
@@ -91,6 +93,11 @@ def complete_result(db_file, payload: dict) -> dict:
                 raise CompletionError(404, "request_not_found")
             if row["status"] != "claimed":
                 raise CompletionError(409, "request_not_claimed")
+            if os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1":
+                dcp_stage10_ownership_epoch._init(conn)
+                proof=payload.get("ownership_proof")
+                if not dcp_stage10_ownership_epoch.validate(conn, proof) or proof.get("owner") != row["claim_owner"]:
+                    raise CompletionError(409, "producer_epoch_fence_mismatch")
             token = payload.get("claim_token")
             generation = payload.get("claim_generation")
             if (type(payload.get("protocol_version")) is not int or payload.get("protocol_version") != 2 or not isinstance(token, str)
