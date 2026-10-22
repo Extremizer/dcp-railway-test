@@ -24,6 +24,8 @@ jobs:
           output=$(docker run --rm --network none dcp-live-candidate:ci 2>&1)
           code=$?
           set -e
+          echo "CONTAINER_EXIT_CODE=$code"
+          echo "$output" | head -c 600
           test "$code" -eq 24
           echo "$output" | grep -q LINUX_PRODUCER_BLOCKED
           echo STAGING_ENTRY_FAIL_CLOSED_PASS
