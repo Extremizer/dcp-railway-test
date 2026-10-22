@@ -1,0 +1,19 @@
+name: Stage10 Isolated Epoch Mock
+on:
+  push:
+    branches: [dcp-stage10-isolated-epoch-producer-20261022]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  epoch-mock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax smoke
+        run: python -m py_compile dcp_stage10_ownership_epoch.py test_dcp_stage10_ownership_epoch.py dcp_stage9_mock_linux_runner.py
+      - name: Independent process mock contention
+        run: python -B -m unittest -v test_dcp_stage10_ownership_epoch.py
