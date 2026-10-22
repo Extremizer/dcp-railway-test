@@ -1,154 +1,186 @@
-"""Read-only browser simulations; execute the real JS with an inert Node fetch."""
+"""Passive DCP Parts guard tests for the current authorized-search contract.
+
+Synthetic evidence only. No real browser, producer, cart or external HTTP.
+"""
 import json
-from pathlib import Path
+import os
 import subprocess
-from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
 import time
-
 import test_dcp_reliability as reliability
+import oemixibot_dcp_price as dcp_browser
 
-HOST = 'https://www.dealercostparts.com'
+from dcp_authenticated_parts_search import extract_parts_rows, parts_dom_expression
 
+HOST="https://www.dealercostparts.com"
+ACCOUNT="dealer@example.invalid"
+
+def evidence(*,status=200,authorized=True,challenged=False,account=ACCOUNT):
+    return {"http_status":status,"authorized":authorized,"challenged":challenged,
+            "dcp_dealer_account":account,"rows":[{"form_sku":"2670-265",
+            "current_oem":"2670-265","price_selector_exact":True,
+            "price_text":"$31.25","name":"Test part"}]}
+
+def simulate(expression, *, href=HOST+"/account",body="Sign Out",links=None,
+             account=ACCOUNT,reply_status=200,reply_body="Sign Out",
+             reply_links=None,reply_account=ACCOUNT):
+    """Execute actual current DOM guard JS in sandboxed Node VM."""
+    payload={"expression":expression,"href":href,"body":body,
+             "links":links if links is not None else ["/account/logoff"],
+             "account":account,"reply_status":reply_status,"reply_body":reply_body,
+             "reply_links":reply_links if reply_links is not None else ["/account/logoff"],
+             "reply_account":reply_account}
+    script=r"""
+const vm=require('node:vm'),fs=require('node:fs');
+const p=JSON.parse(fs.readFileSync(0,'utf8')); const calls=[];
+const doc=(body,links,account)=>({
+ body:{innerText:body,textContent:body},
+ querySelectorAll:selector=>{
+  if(selector==='#persistant-nav a[href]')return links.map(href=>({getAttribute:()=>href}));
+  if(selector==='#persistant-nav .displayname')return account?[{textContent:account}]:[];
+  if(selector==='form[id^="add_"]')return [];
+  return [];
+ }});
+const context={location:new URL(p.href),document:doc(p.body,p.links,p.account),
+  URL,URLSearchParams,DOMParser:class{parseFromString(){return doc(p.reply_body,p.reply_links,p.reply_account)}},
+  fetch:async(url,options)=>{calls.push({url,method:options.method});return{
+   status:p.reply_status,text:async()=>p.reply_body}}};
+Promise.resolve(vm.runInNewContext(p.expression,context,{timeout:1500})).then(
+value=>process.stdout.write(JSON.stringify({value,calls}))
+).catch(err=>{process.stderr.write(String(err));process.exitCode=1});
+"""
+    run=subprocess.run(["node","-e",script],input=json.dumps(payload),text=True,
+                       capture_output=True,timeout=6,check=True)
+    return json.loads(run.stdout)
 
 class PassiveGuardTests(unittest.TestCase):
     def setUp(self):
-        self.fx = reliability.BrowserTests(methodName='runTest')
-        self.fx.setUp()
-        self.addCleanup(self.fx.tearDown)
-        self.ns = self.fx.producer
-
-    def lookup(self, manufacturer='Arctic Cat', oem='2670-265'):
-        return self.ns['get_dealer_price'](manufacturer, oem)
-
+        context=patch.dict(os.environ,{"EXTREMIZER_DCP_EXPECTED_DEALER_ACCOUNT":ACCOUNT})
+        context.start();self.addCleanup(context.stop)
     def test_http_429_and_5xx_are_not_not_found_or_price(self):
-        for code in (429, 500, 502, 503):
-            for found in (False, True):
-                self.ns['_runtime_evaluate'].return_value = {
-                    'http_status': code, 'authorized': True, 'found': found,
-                    'dealer_price_text': '$31.25', 'matched_sku': '2670-265'}
-                r = self.lookup()
-                self.assertEqual(r.status, 'TECHNICAL_ERROR')
-                self.assertIsNone(r.dealer_price_usd)
-
+        for status in (429,500,502,503):
+            value=extract_parts_rows("Arctic Cat","2670-265",evidence(status=status),origin="server_html")
+            self.assertEqual(value.status,"TECHNICAL_ERROR")
+            self.assertIsNone(value.dealer_price_usd)
     def test_parts_transport_error_never_starts_accessories_search(self):
-        self.ns['_parts_slug'] = lambda m: ('Ski-Doo', 'ski_doo')
-        self.ns['_runtime_evaluate'].side_effect = [
-            {'http_status': 503, 'authorized': True, 'found': False},
-            {'http_status': 200, 'authorized': True, 'found': True,
-             'matched_sku': '779132', 'dealer_price_text': '$31.25'}]
-        self.assertEqual(self.lookup('Ski-Doo', '779132').status, 'TECHNICAL_ERROR')
-        self.assertEqual(self.ns['_runtime_evaluate'].call_count, 1)
-
-    def javascript(self, expression, *, href=HOST+'/account', body='Sign Out', responses=None):
-        # No browser, sockets or live HTTP; all responses are supplied locally.
-        payload = {'expression': expression, 'href': href, 'body': body,
-                   'responses': responses or [{'status': 200, 'body': 'Sign Out'}]}
-        script = r'''
-const vm=require('node:vm'), fs=require('node:fs');
-const p=JSON.parse(fs.readFileSync(0,'utf8')), calls=[];
-const doc=(body,links=[])=>({body:{innerText:body},querySelector:()=>null,
-  querySelectorAll:selector=>selector.includes('#CategoryItems')?
-    links.map(href=>({getAttribute:()=>href})):[]});
-let responseIndex=0;
-const context={location:new URL(p.href),document:doc(p.body),URL,URLSearchParams,
-  DOMParser:class {parseFromString(html){const r=p.responses[responseIndex-1];return doc(html,r.links)}},
-  fetch:async(url,options)=>{calls.push({url,method:options?.method||'GET'});
-    const r=p.responses[responseIndex++];if(!r)throw Error('unexpected fetch');
-    if(r.change_body!==undefined) context.document=doc(r.change_body);
-    return {status:r.status,url:new URL(url,p.href).href,text:async()=>r.body};}};
-Promise.resolve(vm.runInNewContext(p.expression,context,{timeout:1000}))
- .then(value=>process.stdout.write(JSON.stringify({value,calls})))
- .catch(e=>{process.stderr.write(String(e));process.exitCode=1});
-'''
-        r = subprocess.run(['node', '-e', script], input=json.dumps(payload),
-                           text=True, capture_output=True, timeout=5, check=True)
-        return json.loads(r.stdout)
-
-    def accessories_expression(self):
-        self.ns['_parts_slug'] = lambda m: ('Ski-Doo', 'ski_doo')
-        self.ns['_runtime_evaluate'].side_effect = [
-            {'http_status':200,'authorized':True,'found':False},
-            {'http_status':403,'authorized':False,'challenged':True}]
-        self.lookup('Ski-Doo', '779132')
-        return self.ns['_runtime_evaluate'].call_args.args[1]
-
-    def capture_expression(self):
-        self.lookup()
-        return self.ns['_runtime_evaluate'].call_args.args[1]
-
+        js=parts_dom_expression("arctic_cat","2670-265",live=False)
+        out=simulate(js,reply_status=503)
+        self.assertEqual(len(out["calls"]),1)
+        self.assertTrue(out["value"]["transport_error"])
+        self.assertNotIn("/oemcatalogs/",out["calls"][0]["url"])
     def test_tab_changed_to_foreign_origin_before_eval_has_zero_fetches(self):
-        out = self.javascript(self.capture_expression(), href='https://www.dealerorders.com/account')
-        self.assertEqual(out['calls'], [])
-        self.assertTrue(out['value'].get('context_changed'))
-
+        out=simulate(parts_dom_expression("arctic_cat","2670-265",live=False),
+                     href="https://www.dealerorders.com/account")
+        self.assertEqual(out["calls"],[])
+        self.assertTrue(out["value"]["context_changed"])
     def test_challenge_or_auth_loss_before_eval_has_zero_fetches(self):
-        for body in ('Verify you are human', 'Выполнение проверки безопасности', 'Please sign in'):
-            out = self.javascript(self.capture_expression(), body=body)
-            self.assertEqual(out['calls'], [])
-            self.assertFalse(out['value'].get('found', False))
-
+        for body in ("Verify you are human","Just a moment","Checking your browser"):
+            out=simulate(parts_dom_expression("arctic_cat","2670-265",live=False),body=body)
+            self.assertEqual(out["calls"],[])
+            self.assertTrue(out["value"]["challenged"])
+        for account,links in (("",["/account/logoff"]),(ACCOUNT,[])):
+            out=simulate(parts_dom_expression("arctic_cat","2670-265",live=False),
+                         account=account,links=links)
+            self.assertEqual(out["calls"],[])
+            self.assertFalse(out["value"]["authorized"])
     def test_valid_passive_document_allows_exactly_one_parts_fetch(self):
-        out = self.javascript(self.capture_expression())
-        self.assertEqual(len(out['calls']), 1)
-        self.assertEqual(out['calls'][0]['method'], 'GET')
-
+        out=simulate(parts_dom_expression("arctic_cat","2670-265",live=False))
+        self.assertEqual(len(out["calls"]),1)
+        self.assertEqual(out["calls"][0]["method"],"GET")
+        self.assertEqual(out["value"]["dcp_dealer_account"],ACCOUNT)
     def test_accessories_challenge_before_eval_starts_zero_requests(self):
-        out = self.javascript(self.accessories_expression(), body='Verify you are human')
-        self.assertEqual(out['calls'], [])
-        self.assertTrue(out['value']['challenged'])
-
+        out=simulate(parts_dom_expression("ski_doo","779132",live=False),
+                     body="Verify you are human")
+        self.assertEqual(out["calls"],[])
+        self.assertTrue(out["value"]["challenged"])
     def test_challenge_appears_after_accessories_search_no_detail_fetch(self):
-        out = self.javascript(self.accessories_expression(), responses=[{
-            'status':200,'body':'Sign Out','links':['/oemcatalogs/p/fake-sku'],
-            'change_body':'Verify you are human'}])
-        self.assertEqual(len(out['calls']), 1)
-        self.assertTrue(out['value']['challenged'])
-
+        out=simulate(parts_dom_expression("ski_doo","779132",live=False),
+                     reply_body="Just a moment")
+        self.assertEqual(len(out["calls"]),1)
+        self.assertTrue(out["value"]["challenged"])
     def test_http_challenge_not_not_found(self):
-        out = self.javascript(self.capture_expression(), responses=[{
-            'status':403,'body':'Verify you are human'}])
-        self.assertEqual(len(out['calls']), 1)
-        self.assertTrue(out['value']['challenged'])
-        self.assertFalse(out['value']['found'])
-
-    def test_preflight_missing_current_href_cannot_publish_ready(self):
-        self.check_preflight({'authorized':True,'challenged':False}, 'TECHNICAL_ERROR')
-
+        out=simulate(parts_dom_expression("arctic_cat","2670-265",live=False),
+                     reply_status=403)
+        self.assertEqual(len(out["calls"]),1)
+        self.assertTrue(out["value"]["challenged"])
     def test_accessories_http_error_stops_before_detail_fetch(self):
-        self.ns['_parts_slug'] = lambda m: ('Ski-Doo', 'ski_doo')
-        self.ns['_runtime_evaluate'].side_effect = [
-            {'http_status': 200, 'authorized': True, 'found': False},
-            {'http_status': 503, 'authorized': True, 'found': False}]
-        self.assertEqual(self.lookup('Ski-Doo', '779132').status, 'TECHNICAL_ERROR')
-        expression = self.ns['_runtime_evaluate'].call_args.args[1]
-        out = self.javascript(expression, responses=[{'status':503,'body':'Sign Out'}])
-        self.assertEqual(len(out['calls']), 1)
-        self.assertTrue(out['value'].get('transport_error'))
+        out=simulate(parts_dom_expression("ski_doo","779132",live=False),
+                     reply_status=503)
+        self.assertEqual(len(out["calls"]),1)
+        self.assertTrue(out["value"]["transport_error"])
+    def test_returned_page_identity_mismatch_fails_closed(self):
+        out=simulate(parts_dom_expression("arctic_cat","2670-265",live=False),
+                     reply_account="other@example.invalid")
+        self.assertFalse(out["value"]["authorized"])
+        self.assertEqual(len(out["calls"]),1)
+    def test_matching_authenticated_search_only_after_explicit_identity(self):
+        valid=extract_parts_rows("Arctic Cat","2670-265",evidence(),origin="server_html")
+        self.assertEqual(valid.status,"FOUND")
+        bad=extract_parts_rows("Arctic Cat","2670-265",evidence(account=None),origin="server_html")
+        self.assertEqual(bad.status,"AUTH_REQUIRED")
+        self.assertIsNone(bad.dealer_price_usd)
 
-    def test_health_dom_from_changed_origin_cannot_publish_ready(self):
-        self.check_preflight({'authorized':True,'challenged':False,
-                            'href':'https://www.dealerorders.com/account'}, 'TECHNICAL_ERROR')
+class DcpProducerPreflightContractTests(unittest.TestCase):
+    """Exercise the ACTUAL dp_sync_agent._preflight_dcp with inert CDP fixtures."""
 
-    def test_manual_ready_detection_is_passive(self):
-        ns, helper = self.check_preflight({'authorized':True,'challenged':False,
-                                           'href':HOST+'/account'}, 'READY')
-        expression = helper._runtime_evaluate.call_args.args[1]
-        self.assertNotIn('fetch(', expression)
-        self.assertNotRegex(expression, r'location\.(href|assign|replace)\s*[=(]|Page\.navigate|\.reload\(')
+    def _run_actual_preflight(self, *, href):
+        # Reuse the code-extraction helper that executes the real AST function.
+        tab={"type":"page","url":HOST+"/account","title":"Account"}
+        tabs=Mock(return_value=[tab])
+        evaluate=Mock(return_value={
+            "authorized":True,"challenged":False,
+            **({"href":href} if href is not None else {}),
+        })
+        browser=SimpleNamespace(
+            _tabs=tabs,
+            _is_dcp_page=dcp_browser._is_dcp_page,
+            _runtime_evaluate=evaluate,
+        )
+        ns=reliability.functions("dp_sync_agent.py",{"_preflight_dcp"},{
+            "time":time,
+            "oemixibot_dcp_price":browser,
+            "_CF_MARKERS":("just a moment",),
+            "_DCP_STATUS":"UNKNOWN",
+            "_LAST_HEALTH_CHECK_MONO":0.0,
+        })
+        observed=[]
+        def record(status,**kwargs):
+            ns["_DCP_STATUS"]=status
+            observed.append((status,kwargs.get("detail")))
+        ns["_set_dcp_health"]=record
+        result=ns["_preflight_dcp"]()
+        tabs.assert_called_once_with()
+        evaluate.assert_called_once()
+        return result,observed,evaluate.call_args.args[1]
 
-    def check_preflight(self, probe, expected):
-        helper = SimpleNamespace(_is_dcp_page=self.ns['_is_dcp_page'],
-            _tabs=Mock(return_value=[{'type':'page','url':HOST+'/account','title':'Account'}]),
-            _runtime_evaluate=Mock(return_value=probe))
-        ns = reliability.functions('dp_sync_agent.py', {'_preflight_dcp'}, {
-            'time':time,'oemixibot_dcp_price':helper,'_CF_MARKERS':('just a moment',),
-            '_DCP_STATUS':'UNKNOWN'})
-        def observe(status, **kw): ns['_DCP_STATUS'] = status
-        ns['_set_dcp_health'] = observe
-        self.assertEqual(ns['_preflight_dcp'](), expected)
-        return ns, helper
+    def test_missing_current_href_is_technical_error_never_ready(self):
+        result,observed,_=self._run_actual_preflight(href=None)
+        self.assertEqual(result,"TECHNICAL_ERROR")
+        self.assertEqual(observed,[("TECHNICAL_ERROR","dcp_document_context_changed")])
+        self.assertNotIn("READY",[status for status,_ in observed])
+
+    def test_foreign_origin_current_href_is_technical_error_never_ready(self):
+        result,observed,_=self._run_actual_preflight(
+            href="https://www.dealerorders.com/account")
+        self.assertEqual(result,"TECHNICAL_ERROR")
+        self.assertEqual(observed,[("TECHNICAL_ERROR","dcp_document_context_changed")])
+        self.assertNotIn("READY",[status for status,_ in observed])
+
+    def test_matching_ready_preflight_is_passive_no_fetch_or_navigation(self):
+        result,observed,expression=self._run_actual_preflight(href=HOST+"/account")
+        self.assertEqual(result,"READY")
+        self.assertEqual(observed,[("READY","authorized_session_ready")])
+        self.assertNotIn("fetch(",expression)
+        self.assertNotIn("XMLHttpRequest",expression)
+        self.assertNotIn("Page.navigate",expression)
+        self.assertNotIn("window.open",expression)
+        for prohibited in ("location.href=", "location.assign(",
+                           "location.replace(", "location.reload(",
+                           ".reload(", "window.location", "Page.navigate"):
+            self.assertNotIn(prohibited,expression)
 
 
-if __name__ == '__main__': unittest.main()
+if __name__=="__main__":
+    unittest.main()

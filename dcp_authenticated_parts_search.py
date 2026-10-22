@@ -9,7 +9,9 @@ Polaris must never call this module; its verified cart route is separate.
 """
 from __future__ import annotations
 
+import hmac
 import json
+import os
 from urllib.parse import parse_qs, urlsplit
 
 def extract_parts_rows(manufacturer, query_oem, data, *, origin):
@@ -28,6 +30,14 @@ def extract_parts_rows(manufacturer, query_oem, data, *, origin):
         return error("CLOUDFLARE")
     if not data.get("authorized"):
         return error("AUTH_REQUIRED")
+    # Owner contract: SIGN OUT / account logoff and the expected account email.
+    # No configured identity or any mismatch must fail closed, before price parse.
+    expected = os.getenv("EXTREMIZER_DCP_EXPECTED_DEALER_ACCOUNT", "").strip()
+    actual = data.get("dcp_dealer_account")
+    if (not expected or not isinstance(actual, str) or not actual.strip()
+            or not hmac.compare_digest(actual.strip().casefold().encode("utf-8"),
+                                       expected.casefold().encode("utf-8"))):
+        return error("AUTH_REQUIRED", "dealer_identity_unverified")
     if data.get("http_status") != 200:
         return error("TECHNICAL_ERROR", "unexpected_http_status")
     rows=data.get("rows")
@@ -98,13 +108,19 @@ def parts_dom_expression(slug, query_oem, *, live):
             && !u.search && !u.hash;
         }catch(_){return false;}
       });
-      if(!hasLogout(document))return {authorized:false};"""
+      const accounts=[...document.querySelectorAll('#persistant-nav .displayname')]
+        .map(n=>(n.textContent||'').trim()).filter(Boolean);
+      if(!hasLogout(document)||accounts.length!==1)return {authorized:false};"""
     parse="""const text=doc.body?.textContent||'';
       const lower=text.toLowerCase();
       if(['just a moment','verify you are human','checking your browser',
           'performing security verification','enable javascript and cookies to continue'].some(x=>lower.includes(x)))
           return {challenged:true,http_status:status};
-      if(!hasLogout(doc))return {authorized:false,http_status:status};
+      const resultAccounts=[...doc.querySelectorAll('#persistant-nav .displayname')]
+        .map(n=>(n.textContent||'').trim()).filter(Boolean);
+      if(!hasLogout(doc)||resultAccounts.length!==1
+          ||resultAccounts[0].toLowerCase()!==accounts[0].toLowerCase())
+        return {authorized:false,http_status:status};
       const forms=[...doc.querySelectorAll('form[id^="add_"]')];
       const rows=forms.map(f=>{
         const sku=f.querySelector('input[name="sku"]')?.value||'';
@@ -114,7 +130,8 @@ def parts_dom_expression(slug, query_oem, *, live):
         return {form_sku:sku,current_oem:current,name:f.querySelector('.c1a')?.textContent?.trim()||null,
           price_selector_exact:!!price,price_text:price?.textContent?.trim()||null};
       });
-      return {http_status:status,authorized:true,challenged:false,rows};"""
+      return {http_status:status,authorized:true,challenged:false,rows,
+        dcp_dealer_account:accounts[0]};"""
     if live:
         body="const doc=document; const status=200;\n"+parse
         return ("(()=>{"+before+"if(location.pathname!=="+json.dumps(path)+

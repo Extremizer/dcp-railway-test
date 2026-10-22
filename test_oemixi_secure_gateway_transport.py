@@ -25,6 +25,7 @@ import dp_live_bridge as bridge
 import dp_live_health as health
 import oemixibot_app
 import oemixibot_catalog
+import manufacturer_first_ux as mfgux
 from oemixi_secure_gateway_transport import (
     PATH,
     HTTPSPriceTransport,
@@ -369,7 +370,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                     reply_text=reply,
                 ),
             )
-            context = SimpleNamespace(application=application, user_data={})
+            context = SimpleNamespace(application=application, user_data={"manufacturer":"Polaris"})
             asyncio.run(oemixibot_app.oem_message(update, context))
 
         thread.join(timeout=6)
@@ -491,7 +492,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                     return task
                 context=SimpleNamespace(
                     application=application,
-                    user_data={"admin_oem_search": True},
+                    user_data={"admin_oem_search": True, "manufacturer":"Polaris"},
                     bot=SimpleNamespace(send_message=sent),
                 )
                 with patch.object(application, "create_task", side_effect=schedule):
@@ -536,6 +537,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                 "dp_live_bridge": SimpleNamespace(
                     request_live_dp=lambda db, m, o, **kw: self.transport(m, o)
                 ),
+                "mfgux": mfgux,
             },
         )
         procenka = actual_functions(
@@ -596,6 +598,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
                     "price_coefficient": 1,
                 },
                 "normalize_oem": finder.normalize_oem,
+                "mfgux": mfgux,
                 "logging": logging,
                 "STORE": SimpleNamespace(
                     cart_view=lambda d: {"items": [], "total_usd": 0}
@@ -612,7 +615,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
             dealer_max_age_hours=24,
         )
         dealer_reply = AsyncMock()
-        dealer_context = SimpleNamespace(application=application, user_data={})
+        dealer_context = SimpleNamespace(application=application, user_data={"manufacturer":"Polaris"})
         update = SimpleNamespace(
             effective_user=None,
             effective_message=SimpleNamespace(
@@ -629,7 +632,7 @@ class SecureTransportE2ETests(SecureGatewayFixture):
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=3) as pool:
             futures = [
-                pool.submit(probnik["_identity_and_price"], "2205250"),
+                pool.submit(probnik["_identity_and_price"], "2205250", "Polaris"),
                 pool.submit(
                     lambda: asyncio.run(
                         procenka["enrich_found_result_with_dealer_price"](
