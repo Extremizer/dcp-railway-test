@@ -60,7 +60,13 @@ def main():
         browser_run(config,app_module='dcp_linux_live_app:app')
         return 0
     except (AdmissionDenied,AdmissionError,HostConfigurationError,BlockingIOError,ValueError,OSError) as exc:
-        print("LINUX_PRODUCER_BLOCKED",type(exc).__name__,flush=True)
+        # Only a fixed, non-sensitive startup failure classification is permitted.
+        safe_codes={"browser_terminated_during_startup","browser_loopback_unavailable",
+                    "existing_persistent_state_dir_required","interactive_display_required",
+                    "explicit_installed_chromium_required","missing_owner_telegram_auth",
+                    "ephemeral_or_root_state_forbidden","invalid_http_port"}
+        detail=str(exc) if isinstance(exc,HostConfigurationError) and str(exc) in safe_codes else "UNCLASSIFIED"
+        print("LINUX_PRODUCER_BLOCKED",type(exc).__name__,detail,flush=True)
         return 24
 
 if __name__=="__main__":raise SystemExit(main())
