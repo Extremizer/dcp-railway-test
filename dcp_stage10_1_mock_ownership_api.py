@@ -4,6 +4,8 @@ No production HTTP route. Separate role keys never taken from producer claims.
 Acquisition requires pre-registered approved owner identity and empty ownership.
 """
 import json
+import hmac
+import hashlib
 import re
 import sqlite3
 from dcp_stage10_1_secure_control import verify, Rejected
@@ -15,7 +17,16 @@ def dispatch(db, *, method, path, body, timestamp, signature,
         raise Rejected("not_mock_ownership_route")
     if method not in ("POST","GET"):
         raise Rejected("method_denied")
-    key=producer_key if path.endswith("/acquire") else operator_key
+    if path.endswith("/acquire"):
+        try:
+            identity=json.loads(body).get("owner")
+        except (ValueError,AttributeError,TypeError):
+            raise Rejected("invalid_producer_identity")
+        if not isinstance(identity,str):
+            raise Rejected("invalid_producer_identity")
+        key=hmac.new(producer_key,b"stage10.1-host-key"+identity.encode(),hashlib.sha256).digest()
+    else:
+        key=operator_key
     verify(key,method,path,timestamp,body,signature)
     if path.endswith("/status"):
         if method!="GET" or body:
