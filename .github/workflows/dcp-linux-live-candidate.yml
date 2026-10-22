@@ -16,6 +16,6 @@ jobs:
         run: |
           python -m pip install 'fastapi>=0.115,<1' 'uvicorn>=0.34,<1' 'websocket-client>=1.9,<2'
           python -m py_compile dcp_linux_live_isolated.py dcp_cloud_browser_host.py dcp_phone_recovery_app.py
-          python -m unittest -v test_dcp_linux_live_isolated.py
+          python -m unittest -v test_dcp_linux_live_isolated.py test_dcp_linux_admission.py
       - name: Docker build only - no deploy or DCP access
         run: docker build --file Dockerfile.dcp-live-isolated --tag dcp-live-candidate:ci .
