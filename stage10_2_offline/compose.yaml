@@ -1,0 +1,48 @@
+name: dcp-stage10-2-offline
+x-common: &common
+  build:
+    context: ..
+    dockerfile: stage10_2_offline/Dockerfile
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  networks:
+    - isolated
+  environment:
+    STAGE10_2_MOCK_ONLY: "1"
+    PYTHONDONTWRITEBYTECODE: "1"
+  tmpfs:
+    - /tmp
+services:
+  broker:
+    <<: *common
+    command: ["python","-m","uvicorn","stage10_2_offline.broker:app","--host","0.0.0.0","--port","8800"]
+    volumes:
+      - broker_state:/state
+    environment:
+      STAGE10_2_MOCK_ONLY: "1"
+      STAGE10_2_DB: /state/mock.sqlite
+  producer_old:
+    <<: *common
+    command: ["python","-m","stage10_2_offline.producer","old-host"]
+    volumes:
+      - old_state:/state
+    depends_on:
+      - broker
+  producer_new:
+    <<: *common
+    command: ["python","-m","stage10_2_offline.producer","new-host"]
+    volumes:
+      - new_state:/state
+    depends_on:
+      - broker
+networks:
+  isolated:
+    internal: true
+    enable_ipv6: false
+volumes:
+  broker_state:
+  old_state:
+  new_state:

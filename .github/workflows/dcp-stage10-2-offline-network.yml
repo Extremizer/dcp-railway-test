@@ -1,0 +1,34 @@
+name: Stage10.2 Offline Network Isolation
+on:
+  push:
+    branches:
+      - dcp-stage10-2-offline-network-ci-20261022
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  offline-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check Compose availability
+        run: docker compose version
+      - name: Static topology lint (no deploy)
+        run: |
+          python -m py_compile stage10_2_offline/*.py
+          python stage10_2_offline/static_gate.py
+      - name: Bring up disposable mock-only containers
+        run: docker compose -f stage10_2_offline/compose.yaml up --build -d
+      - name: Verify runtime isolation and signed synthetic exchange
+        run: python stage10_2_offline/verify.py
+      - name: Existing adversarial fencing suites
+        run: |
+          python -m pip install -r requirements.txt pytest beautifulsoup4
+          python -m pytest -q test_dcp_stage10_1_secure_ownership.py test_dcp_stage10_epoch_broker_integration.py test_dcp_stage10_mock_producer_e2e.py test_dcp_stage10_ownership_epoch.py
+      - name: Always teardown
+        if: always()
+        run: docker compose -f stage10_2_offline/compose.yaml down -v --remove-orphans
