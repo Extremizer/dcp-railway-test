@@ -982,6 +982,7 @@ def dp_sync_next(
     x_dp_producer_id: str | None = Header(default=None),
     x_dp_ownership_epoch: str | None = Header(default=None),
     x_dp_ownership_nonce: str | None = Header(default=None),
+    x_dp_ownership_request_nonce: str | None = Header(default=None),
 ) -> dict[str, Any]:
     path = "/internal/dp-sync/next"
     if x_dp_protocol != "2":
@@ -991,9 +992,9 @@ def dp_sync_next(
     try:
         proof_mode=dp_live_bridge.os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1"
         if proof_mode:
-            if not x_dp_ownership_epoch or not x_dp_ownership_epoch.isdecimal() or not x_dp_ownership_nonce:
+            if not x_dp_ownership_epoch or not x_dp_ownership_epoch.isdecimal() or not x_dp_ownership_nonce or not x_dp_ownership_request_nonce:
                 raise HTTPException(status_code=409, detail={"code":"producer_ownership_proof_missing"})
-            binding=json.dumps({"epoch":int(x_dp_ownership_epoch),"nonce":x_dp_ownership_nonce},
+            binding=json.dumps({"epoch":int(x_dp_ownership_epoch),"nonce":x_dp_ownership_nonce,"request_nonce":x_dp_ownership_request_nonce},
                 sort_keys=True,separators=(",",":")).encode()
         else:
             binding=b""
@@ -1004,7 +1005,7 @@ def dp_sync_next(
     if dp_live_bridge.os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1":
         if not x_dp_ownership_epoch or not x_dp_ownership_epoch.isdecimal() or not x_dp_ownership_nonce:
             raise HTTPException(status_code=409, detail={"code": "producer_ownership_proof_missing"})
-        proof={"owner":x_dp_producer_id,"epoch":int(x_dp_ownership_epoch),"nonce":x_dp_ownership_nonce}
+        proof={"owner":x_dp_producer_id,"epoch":int(x_dp_ownership_epoch),"nonce":x_dp_ownership_nonce,"request_nonce":x_dp_ownership_request_nonce}
         return {"request": dp_live_bridge.claim_next(
             core.ORDERS_DB_FILE, producer_id=x_dp_producer_id, ownership_proof=proof)}
     return {"request": dp_live_bridge.claim_next(core.ORDERS_DB_FILE, producer_id=x_dp_producer_id)}
