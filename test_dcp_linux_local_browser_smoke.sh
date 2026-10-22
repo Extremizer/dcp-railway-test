@@ -29,8 +29,51 @@ cid="$(docker run -d --network none --cap-drop=ALL --security-opt=no-new-privile
 echo "ISOLATED_TEST_NETWORK_NONE=TRUE"
 echo "DCP_NAVIGATION_GO=OFF"
 echo "BROKER_CLAIMS=DISABLED"
+# Print ONLY bounded local-process / localhost classifications (no env, no raw HTML/logs).
+diagnose() {
+  docker inspect -f 'CONTAINER_STATE={{.State.Status}} CONTAINER_EXIT_CODE={{.State.ExitCode}}' "$cid"
+  if [ "$(docker inspect -f '{{.State.Running}}' "$cid")" != "true" ]; then return; fi
+  docker exec -i "$cid" python - <<'PY'
+import json
+import socket
+import urllib.error
+import urllib.request
+from pathlib import Path
+names=[]
+for p in Path("/proc").iterdir():
+    if p.name.isdigit():
+        try: names.append((p/"comm").read_text().strip().lower())
+        except (OSError,PermissionError): pass
+print("DIAG_XVFB_PROCESS=" + ("PRESENT" if any("xvfb" in n for n in names) else "ABSENT"))
+print("DIAG_CHROMIUM_PROCESS=" + ("PRESENT" if any(("chromium" in n or n=="chrome") for n in names) else "ABSENT"))
+try:
+    with socket.create_connection(("127.0.0.1",9222),timeout=1): pass
+    print("DIAG_CDP_TCP9222=LISTENING")
+except OSError:
+    print("DIAG_CDP_TCP9222=UNAVAILABLE")
+try:
+    with urllib.request.urlopen("http://127.0.0.1:9222/json",timeout=2) as response:
+        payload=json.load(response)
+    print("DIAG_CDP_HTTP_JSON=VALID" if isinstance(payload,list) else "DIAG_CDP_HTTP_JSON=INVALID")
+    print("DIAG_CDP_ABOUT_BLANK=" + ("PRESENT" if isinstance(payload,list) and any(isinstance(x,dict) and x.get("type")=="page" and x.get("url")=="about:blank" for x in payload) else "ABSENT"))
+except (OSError,ValueError,TypeError):
+    print("DIAG_CDP_HTTP_JSON=UNAVAILABLE")
+    print("DIAG_CDP_ABOUT_BLANK=UNVERIFIED")
+try:
+    with urllib.request.urlopen("http://127.0.0.1:8080/health",timeout=2) as r:
+        print("DIAG_HEALTH_HTTP_STATUS="+str(r.status))
+except urllib.error.HTTPError as exc:
+    print("DIAG_HEALTH_HTTP_STATUS="+str(exc.code))
+except OSError:
+    print("DIAG_HEALTH_HTTP_STATUS=UNAVAILABLE")
+PY
+}
 # Check CDP localhost from *inside* container only, with no external DNS or HTTP.
 for attempt in $(seq 1 30); do
+  if [ "$attempt" -eq 5 ] || [ "$attempt" -eq 15 ]; then
+    echo "OFFLINE_STARTUP_DIAGNOSTIC_ATTEMPT=$attempt"
+    diagnose
+  fi
   if [ "$(docker inspect -f '{{.State.Running}}' "$cid")" != "true" ]; then
     echo "ADMITTED_CONTAINER_EXITED"
     docker inspect -f 'EXIT_CODE={{.State.ExitCode}}' "$cid"
@@ -67,5 +110,6 @@ print("LOCAL_HEALTH_HTTP_PASS")
   sleep 2
 done
 echo "LOCAL_XVFB_CHROMIUM_STARTUP_TIMEOUT"
+diagnose
 docker inspect -f 'STATE={{.State.Status}} EXIT_CODE={{.State.ExitCode}}' "$cid"
 exit 1
