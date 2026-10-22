@@ -51,7 +51,7 @@ def configuration(env=None, *, platform=None):
     return {"state":root,"executable":executable,"port":port}
 
 
-def run(config):
+def run(config, *, app_module='dcp_phone_recovery_app:app'):
     import fcntl
     import uvicorn
 
@@ -87,7 +87,7 @@ def run(config):
         else:
             raise HostConfigurationError("browser_loopback_unavailable")
         # Only a manually operated UI is launched. This does not imply DCP READY.
-        uvicorn.run("dcp_phone_recovery_app:app",host="0.0.0.0",port=config["port"],
+        uvicorn.run(app_module,host="0.0.0.0",port=config["port"],
                     log_level="warning",access_log=False,workers=1)
     finally:
         if browser and browser.poll() is None:
