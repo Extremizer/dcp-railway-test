@@ -51,3 +51,7 @@ jobs:
             exit 1
           fi
           echo RUNTIME_SMOKE_FAIL_CLOSED_PASS
+
+      - name: Admitted local Xvfb Chromium smoke - offline only
+        timeout-minutes: 3
+        run: bash test_dcp_linux_local_browser_smoke.sh
