@@ -25,11 +25,13 @@ def install_mock_transport(agent, config, proof):
             {**payload,"ownership_proof":proof},
             ensure_ascii=False,separators=(",",":"),allow_nan=False).encode()
         ts=int(time.time())
+        signing_body=(json.dumps({"epoch":proof["epoch"],"nonce":proof["nonce"]},
+            sort_keys=True,separators=(",",":")).encode() if method=="GET" else body)
         headers={
             "X-DP-Protocol":"2",
             "X-DP-Producer-ID":agent.PRODUCER_ID,
             "X-DP-Sync-Ts":str(ts),
-            "X-DP-Sync-Sig":dp_sync_protocol.sign(agent._key(),method,path,ts,agent.PRODUCER_ID,body),
+            "X-DP-Sync-Sig":dp_sync_protocol.sign(agent._key(),method,path,ts,agent.PRODUCER_ID,signing_body),
         }
         if method=="GET":
             headers["X-DP-Ownership-Epoch"]=str(proof["epoch"])
