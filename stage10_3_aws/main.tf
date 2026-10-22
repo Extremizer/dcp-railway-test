@@ -53,24 +53,30 @@ resource "aws_route_table_association" "new" {
 resource "aws_security_group" "broker" {
   name = "${local.prefix}-broker"
   vpc_id = aws_vpc.mock.id
-  # Explicit ingress only from producer SG to synthetic broker TCP 8800.
-  ingress {
-    from_port = 8800
-    to_port = 8800
-    protocol = "tcp"
-    security_groups = [aws_security_group.producers.id]
-  }
-  # No egress blocks: provider creates no egress rules, enforced via standalone SG semantics.
+  ingress = []
+  egress = []
 }
 resource "aws_security_group" "producers" {
   name = "${local.prefix}-producer"
   vpc_id = aws_vpc.mock.id
-  egress {
-    from_port = 8800
-    to_port = 8800
-    protocol = "tcp"
-    security_groups = [aws_security_group.broker.id]
-  }
+  ingress = []
+  egress = []
+}
+resource "aws_security_group_rule" "broker_ingress" {
+  type = "ingress"
+  security_group_id = aws_security_group.broker.id
+  source_security_group_id = aws_security_group.producers.id
+  from_port = 8800
+  to_port = 8800
+  protocol = "tcp"
+}
+resource "aws_security_group_rule" "producer_egress" {
+  type = "egress"
+  security_group_id = aws_security_group.producers.id
+  source_security_group_id = aws_security_group.broker.id
+  from_port = 8800
+  to_port = 8800
+  protocol = "tcp"
 }
 resource "aws_instance" "broker" {
   count = var.mock_only_approval ? 1 : 0
