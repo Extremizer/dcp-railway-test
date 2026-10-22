@@ -1,0 +1,20 @@
+name: Stage 10.3 IaC Security NO APPLY
+on:
+  push:
+    branches: [dcp-stage10-3-aws-iac-security-20261022]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  static-only:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Offline IaC security scanner and negative tests
+        run: |
+          python -B stage10_3_aws/static_gate.py
+          python -B -m unittest -v stage10_3_aws/test_static_gate.py
+      - name: Inherited ownership and identity regressions
+        run: |
+          python -m pip install -r requirements.txt pytest beautifulsoup4
+          python -B -m pytest -q test_dcp_stage10_1_secure_ownership.py test_dcp_stage10_epoch_broker_integration.py test_dcp_stage10_mock_producer_e2e.py test_dcp_authenticated_parts_search.py
