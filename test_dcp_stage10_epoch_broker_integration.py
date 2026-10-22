@@ -6,7 +6,7 @@ from unittest.mock import patch
 import sqlite3
 import unittest
 
-from test_dp_result_completion import CompletionFixture
+from test_dp_result_completion import CompletionFixture, headers
 import dp_live_bridge as bridge
 import dp_result_completion as completion
 import dcp_stage10_ownership_epoch as epoch
@@ -41,6 +41,24 @@ class EpochBrokerIntegrationTests(CompletionFixture):
                     (claim["request_id"],)).fetchone()[0]
             self.assertEqual(before,after)
             self.assertEqual(still_claimed,"claimed")
+
+    def test_signed_http_claim_requires_correct_epoch_headers(self):
+        self.enqueue()
+        owner=epoch.acquire(self.db,"mock-producer-1")
+        req_headers=headers("GET","/internal/dp-sync/next")
+        with patch.dict("os.environ",{"EXTREMIZER_DP_OWNERSHIP_ENFORCE":"1"}):
+            missing=self.client.get("/internal/dp-sync/next",headers=req_headers)
+            self.assertEqual(missing.status_code,409)
+            stale=self.client.get("/internal/dp-sync/next",headers={
+                **req_headers,"X-DP-Ownership-Epoch":str(owner["epoch"]-1),
+                "X-DP-Ownership-Nonce":owner["nonce"]})
+            self.assertEqual(stale.status_code,200)
+            self.assertIsNone(stale.json()["request"])
+            accepted=self.client.get("/internal/dp-sync/next",headers={
+                **req_headers,"X-DP-Ownership-Epoch":str(owner["epoch"]),
+                "X-DP-Ownership-Nonce":owner["nonce"]})
+            self.assertEqual(accepted.status_code,200)
+            self.assertEqual(accepted.json()["request"]["ownership_epoch"],owner["epoch"])
 
     def test_epoch_revoke_requires_no_inflight(self):
         self.enqueue()
