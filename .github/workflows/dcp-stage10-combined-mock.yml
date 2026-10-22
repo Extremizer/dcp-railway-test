@@ -32,4 +32,4 @@ jobs:
         run: python -B -m pytest -q test_polaris_dealer_cart_contract.py test_polaris_dealer_cart_completion_contract.py test_polaris_cart_dom_layer_a.py test_polaris_cart_session_layer_c.py test_polaris_cart_exact_actions.py test_polaris_probe_cart_transaction.py test_polaris_consumer_pricesource.py
       - name: Stage 9 / 10 mock safety regression
         if: always()
-        run: python -B -m pytest -q test_dcp_stage9_mock_linux_runner.py test_dcp_stage9_safety_closure.py test_dcp_stage10_ownership_epoch.py
+        run: python -B -m pytest -q test_dcp_stage9_mock_linux_runner.py test_dcp_stage9_safety_closure.py test_dcp_stage10_ownership_epoch.py test_dcp_stage10_disabled_supplier.py test_dcp_stage10_epoch_broker_integration.py
