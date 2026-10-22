@@ -20,6 +20,7 @@ from pathlib import Path
 import dp_live_health
 import dp_live_admission
 import dcp_category_authority
+import dcp_stage10_ownership_epoch
 
 
 def _request_key(manufacturer: str, oem: str) -> tuple[str, str]:
@@ -286,7 +287,7 @@ def request_live_dp(
     return {"request_id": request_id, "status": "TIMEOUT"}
 
 
-def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> dict | None:
+def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test", ownership_proof: dict | None = None) -> dict | None:
     if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,64}", producer_id):
         raise ValueError("invalid_producer_id")
     init(db_file)
@@ -296,6 +297,11 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             return None
     with sqlite3.connect(str(db_file), timeout=10) as conn:
         conn.execute("BEGIN IMMEDIATE")
+        if os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1":
+            dcp_stage10_ownership_epoch._init(conn)
+            if not dcp_stage10_ownership_epoch.validate(conn, ownership_proof) or ownership_proof.get("owner") != producer_id:
+                conn.rollback()
+                return None
         if _quarantine_claims(conn, _now()):
             conn.commit()
             return None
@@ -362,6 +368,7 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test") -> di
             "category_source_ref": row[6],
             "category_verified_at": row[7],
             "resolved_oem": authority["resolved_oem"],
+            **({"ownership_epoch": ownership_proof["epoch"]} if os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1" else {}),
         }
 
 
