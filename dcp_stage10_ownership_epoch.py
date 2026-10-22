@@ -5,6 +5,7 @@ lease expiry. Admission of a different owner needs explicit revocation and
 independent cessation evidence. Designed for test-only wiring first.
 """
 import secrets
+import os
 import sqlite3
 from datetime import datetime, timezone
 
@@ -57,6 +58,8 @@ def validate(db, proof):
 
 def revoke(db_file, *, expected_epoch, cessation_confirmed=False, evidence_ref=None):
     """Never use expiration as proof of old host cessation."""
+    if os.getenv('EXTREMIZER_DP_OWNERSHIP_ENFORCE') == '1':
+        raise OwnershipDenied('secure_operator_attestation_required')
     if not cessation_confirmed or not isinstance(evidence_ref,str) or len(evidence_ref)<16:
         raise OwnershipDenied("independent_cessation_evidence_required")
     def op(db):
