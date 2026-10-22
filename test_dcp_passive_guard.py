@@ -6,7 +6,11 @@ import json
 import os
 import subprocess
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, Mock
+from types import SimpleNamespace
+import time
+import test_dcp_reliability as reliability
+import oemixibot_dcp_price as dcp_browser
 
 from dcp_authenticated_parts_search import extract_parts_rows, parts_dom_expression
 
@@ -117,6 +121,65 @@ class PassiveGuardTests(unittest.TestCase):
         bad=extract_parts_rows("Arctic Cat","2670-265",evidence(account=None),origin="server_html")
         self.assertEqual(bad.status,"AUTH_REQUIRED")
         self.assertIsNone(bad.dealer_price_usd)
+
+class DcpProducerPreflightContractTests(unittest.TestCase):
+    """Exercise the ACTUAL dp_sync_agent._preflight_dcp with inert CDP fixtures."""
+
+    def _run_actual_preflight(self, *, href):
+        # Reuse the code-extraction helper that executes the real AST function.
+        tab={"type":"page","url":HOST+"/account","title":"Account"}
+        tabs=Mock(return_value=[tab])
+        evaluate=Mock(return_value={
+            "authorized":True,"challenged":False,
+            **({"href":href} if href is not None else {}),
+        })
+        browser=SimpleNamespace(
+            _tabs=tabs,
+            _is_dcp_page=dcp_browser._is_dcp_page,
+            _runtime_evaluate=evaluate,
+        )
+        ns=reliability.functions("dp_sync_agent.py",{"_preflight_dcp"},{
+            "time":time,
+            "oemixibot_dcp_price":browser,
+            "_CF_MARKERS":("just a moment",),
+            "_DCP_STATUS":"UNKNOWN",
+            "_LAST_HEALTH_CHECK_MONO":0.0,
+        })
+        observed=[]
+        def record(status,**kwargs):
+            ns["_DCP_STATUS"]=status
+            observed.append((status,kwargs.get("detail")))
+        ns["_set_dcp_health"]=record
+        result=ns["_preflight_dcp"]()
+        tabs.assert_called_once_with()
+        evaluate.assert_called_once()
+        return result,observed,evaluate.call_args.args[1]
+
+    def test_missing_current_href_is_technical_error_never_ready(self):
+        result,observed,_=self._run_actual_preflight(href=None)
+        self.assertEqual(result,"TECHNICAL_ERROR")
+        self.assertEqual(observed,[("TECHNICAL_ERROR","dcp_document_context_changed")])
+        self.assertNotIn("READY",[status for status,_ in observed])
+
+    def test_foreign_origin_current_href_is_technical_error_never_ready(self):
+        result,observed,_=self._run_actual_preflight(
+            href="https://www.dealerorders.com/account")
+        self.assertEqual(result,"TECHNICAL_ERROR")
+        self.assertEqual(observed,[("TECHNICAL_ERROR","dcp_document_context_changed")])
+        self.assertNotIn("READY",[status for status,_ in observed])
+
+    def test_matching_ready_preflight_is_passive_no_fetch_or_navigation(self):
+        result,observed,expression=self._run_actual_preflight(href=HOST+"/account")
+        self.assertEqual(result,"READY")
+        self.assertEqual(observed,[("READY","authorized_session_ready")])
+        self.assertNotIn("fetch(",expression)
+        self.assertNotIn("XMLHttpRequest",expression)
+        self.assertNotIn("Page.navigate",expression)
+        self.assertNotIn("window.open",expression)
+        self.assertNotRegex(expression,
+            r"location\\s*\\.\\s*(?:href\\s*=|assign\\s*\\(|replace\\s*\\(|reload\\s*\\()")
+        self.assertNotRegex(expression,r"\\.reload\\s*\\(")
+
 
 if __name__=="__main__":
     unittest.main()
