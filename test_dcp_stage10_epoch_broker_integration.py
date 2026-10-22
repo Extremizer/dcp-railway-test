@@ -6,6 +6,10 @@ from unittest.mock import patch
 from concurrent.futures import ProcessPoolExecutor
 import os
 import sqlite3
+import json
+import secrets
+import dp_sync_protocol
+from test_dp_result_completion import KEY, OWNER
 import unittest
 
 from test_dp_result_completion import CompletionFixture, headers
@@ -23,7 +27,7 @@ def _independent_host_claim(arguments):
 class EpochBrokerIntegrationTests(CompletionFixture):
     def test_epoch_required_for_claim_and_stale_cannot_claim(self):
         self.enqueue()
-        old=epoch.acquire(self.db,"old-host")
+        old={**epoch.acquire(self.db,"old-host"),"request_nonce":secrets.token_hex(32)}
         with patch.dict("os.environ",{"EXTREMIZER_DP_OWNERSHIP_ENFORCE":"1"}):
             self.assertIsNone(bridge.claim_next(self.db,producer_id="new-host"))
             self.assertIsNone(bridge.claim_next(self.db,producer_id="old-host"))
@@ -34,7 +38,7 @@ class EpochBrokerIntegrationTests(CompletionFixture):
 
     def test_completion_denies_missing_or_stale_proof_with_no_cache_mutation(self):
         self.enqueue()
-        old=epoch.acquire(self.db,"mock-producer-1")
+        old={**epoch.acquire(self.db,"mock-producer-1"),"request_nonce":secrets.token_hex(32)}
         with patch.dict("os.environ",{"EXTREMIZER_DP_OWNERSHIP_ENFORCE":"1"}):
             claim=bridge.claim_next(self.db,producer_id="mock-producer-1",ownership_proof=old)
             self.assertIsNotNone(claim)
@@ -53,25 +57,48 @@ class EpochBrokerIntegrationTests(CompletionFixture):
 
     def test_signed_http_claim_requires_correct_epoch_headers(self):
         self.enqueue()
-        owner=epoch.acquire(self.db,"mock-producer-1")
+        owner={**epoch.acquire(self.db,"mock-producer-1"),"request_nonce":secrets.token_hex(32)}
         req_headers=headers("GET","/internal/dp-sync/next")
+        def signed_epoch(number,nonce):
+            binding=json.dumps({"epoch":number,"nonce":nonce,"request_nonce":owner["request_nonce"]},sort_keys=True,separators=(",",":")).encode()
+            h=dict(req_headers)
+            h.update({"X-DP-Ownership-Epoch":str(number),"X-DP-Ownership-Nonce":nonce,
+                      "X-DP-Ownership-Request-Nonce":owner["request_nonce"]})
+            h["X-DP-Sync-Sig"]=dp_sync_protocol.sign(
+                KEY,"GET","/internal/dp-sync/next",int(h["X-DP-Sync-Ts"]),OWNER,binding)
+            return h
         with patch.dict("os.environ",{"EXTREMIZER_DP_OWNERSHIP_ENFORCE":"1"}):
             missing=self.client.get("/internal/dp-sync/next",headers=req_headers)
             self.assertEqual(missing.status_code,409)
-            stale=self.client.get("/internal/dp-sync/next",headers={
-                **req_headers,"X-DP-Ownership-Epoch":str(owner["epoch"]-1),
-                "X-DP-Ownership-Nonce":owner["nonce"]})
+            stale=self.client.get("/internal/dp-sync/next",
+                headers=signed_epoch(owner["epoch"]-1,owner["nonce"]))
             self.assertEqual(stale.status_code,200)
             self.assertIsNone(stale.json()["request"])
-            accepted=self.client.get("/internal/dp-sync/next",headers={
-                **req_headers,"X-DP-Ownership-Epoch":str(owner["epoch"]),
-                "X-DP-Ownership-Nonce":owner["nonce"]})
+            tampered={**signed_epoch(owner["epoch"],owner["nonce"]),
+                      "X-DP-Ownership-Nonce":"0"*64}
+            forged=self.client.get("/internal/dp-sync/next",headers=tampered)
+            self.assertEqual(forged.status_code,401)
+            accepted=self.client.get("/internal/dp-sync/next",
+                headers=signed_epoch(owner["epoch"],owner["nonce"]))
             self.assertEqual(accepted.status_code,200)
             self.assertEqual(accepted.json()["request"]["ownership_epoch"],owner["epoch"])
+            replay=self.client.get("/internal/dp-sync/next",headers=signed_epoch(owner["epoch"],owner["nonce"]))
+            self.assertEqual(replay.status_code,200)
+            self.assertIsNone(replay.json()["request"])
+            # Remove the previous mock claim, enqueue another request, then
+            # replay the exact signed GET. It must still fail independent of
+            # active-claim exclusion.
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("DELETE FROM dp_live_requests WHERE status='claimed'")
+            self.enqueue()
+            again=self.client.get("/internal/dp-sync/next",
+                headers=signed_epoch(owner["epoch"],owner["nonce"]))
+            self.assertEqual(again.status_code,200)
+            self.assertIsNone(again.json()["request"])
 
     def test_independent_mock_hosts_compete_for_claim(self):
         self.enqueue()
-        owner=epoch.acquire(self.db,"mock-producer-1")
+        owner={**epoch.acquire(self.db,"mock-producer-1"),"request_nonce":secrets.token_hex(32)}
         with ProcessPoolExecutor(max_workers=2) as workers:
             outcome=list(workers.map(_independent_host_claim,[
                 (str(self.db),"mock-producer-1",owner),
@@ -85,7 +112,7 @@ class EpochBrokerIntegrationTests(CompletionFixture):
 
     def test_epoch_revoke_requires_no_inflight(self):
         self.enqueue()
-        old=epoch.acquire(self.db,"old-host")
+        old={**epoch.acquire(self.db,"old-host"),"request_nonce":secrets.token_hex(32)}
         with patch.dict("os.environ",{"EXTREMIZER_DP_OWNERSHIP_ENFORCE":"1"}):
             self.assertIsNotNone(bridge.claim_next(self.db,producer_id="old-host",ownership_proof=old))
         with self.assertRaises(epoch.OwnershipDenied):

@@ -302,6 +302,17 @@ def claim_next(db_file: Path | str, *, producer_id: str = "isolated-test", owner
             if not dcp_stage10_ownership_epoch.validate(conn, ownership_proof) or ownership_proof.get("owner") != producer_id:
                 conn.rollback()
                 return None
+            request_nonce=ownership_proof.get("request_nonce")
+            if not isinstance(request_nonce,str) or not re.fullmatch(r"[a-f0-9]{64}",request_nonce):
+                conn.rollback()
+                return None
+            conn.execute("""CREATE TABLE IF NOT EXISTS dp_owner_get_replay (
+                request_nonce TEXT PRIMARY KEY, owner TEXT NOT NULL, epoch INTEGER NOT NULL)""")
+            if conn.execute("SELECT 1 FROM dp_owner_get_replay WHERE request_nonce=?",(request_nonce,)).fetchone():
+                conn.rollback()
+                return None
+            conn.execute("INSERT INTO dp_owner_get_replay VALUES(?,?,?)",
+                (request_nonce,producer_id,ownership_proof["epoch"]))
         if _quarantine_claims(conn, _now()):
             conn.commit()
             return None

@@ -5,6 +5,7 @@ claim/result operations. Local loopback fixture ONLY; no actual browser, DCP,
 Railway, Windows agent, or new broker/cache path.
 """
 import json
+import secrets
 import time
 import urllib.request
 from urllib.parse import urlsplit
@@ -25,15 +26,19 @@ def install_mock_transport(agent, config, proof):
             {**payload,"ownership_proof":proof},
             ensure_ascii=False,separators=(",",":"),allow_nan=False).encode()
         ts=int(time.time())
+        request_nonce=secrets.token_hex(32) if method=="GET" else None
+        signing_body=(json.dumps({"epoch":proof["epoch"],"nonce":proof["nonce"],"request_nonce":request_nonce},
+            sort_keys=True,separators=(",",":")).encode() if method=="GET" else body)
         headers={
             "X-DP-Protocol":"2",
             "X-DP-Producer-ID":agent.PRODUCER_ID,
             "X-DP-Sync-Ts":str(ts),
-            "X-DP-Sync-Sig":dp_sync_protocol.sign(agent._key(),method,path,ts,agent.PRODUCER_ID,body),
+            "X-DP-Sync-Sig":dp_sync_protocol.sign(agent._key(),method,path,ts,agent.PRODUCER_ID,signing_body),
         }
         if method=="GET":
             headers["X-DP-Ownership-Epoch"]=str(proof["epoch"])
             headers["X-DP-Ownership-Nonce"]=proof["nonce"]
+            headers["X-DP-Ownership-Request-Nonce"]=request_nonce
         else:
             headers["Content-Type"]="application/json"
         req=urllib.request.Request(config["url"]+path,
