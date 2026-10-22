@@ -14,6 +14,6 @@ jobs:
         with:
           python-version: '3.12'
       - name: Syntax smoke
-        run: python -m py_compile dcp_stage10_ownership_epoch.py test_dcp_stage10_ownership_epoch.py dcp_stage9_mock_linux_runner.py
+        run: python -m py_compile dcp_stage10_ownership_epoch.py test_dcp_stage10_ownership_epoch.py dcp_stage10_disabled_supplier.py test_dcp_stage10_disabled_supplier.py dcp_stage9_mock_linux_runner.py
       - name: Independent process mock contention
-        run: python -B -m unittest -v test_dcp_stage10_ownership_epoch.py
+        run: python -B -m unittest -v test_dcp_stage10_ownership_epoch.py test_dcp_stage10_disabled_supplier.py
