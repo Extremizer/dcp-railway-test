@@ -1,42 +1,48 @@
-"""Stage 10 disabled supplier adapter boundary. Fixture DOM only; no network.
+"""Stage 10 fixture-only supplier identity boundary. Never opens Chromium.
 
-No session ownership, browser bootstrap or vendor transport is present.
-This adapter cannot produce a dealer FOUND. Theme 4 must separately approve
-real supplier semantics and an authorized browser before any live connection.
+Matches PR64 logout and single account identity semantics. Does NOT authorize
+Dealer FOUND, MSRP interpretation, network access or a Polaris cart path.
 """
-from html.parser import HTMLParser
+import hmac
+from urllib.parse import urljoin, urlsplit
 
 class AdapterDisabled(RuntimeError):
     pass
 
-class _Text(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.text=[]
-    def handle_data(self,data):
-        self.text.append(data)
-
-def fixture_identity(document, expected_email, *, enabled=False):
+def fixture_identity(document, expected_email, *, enabled=False,
+                     origin="https://www.dealercostparts.com"):
     if enabled:
         raise AdapterDisabled("live_supplier_transport_not_implemented")
-    if not isinstance(document,str) or not isinstance(expected_email,str) or not expected_email:
+    if not isinstance(document,str) or not isinstance(expected_email,str) or not expected_email.strip():
         return "AUTH_REQUIRED"
-    parser=_Text()
-    parser.feed(document)
-    text=" ".join(parser.text)
-    if "cloudflare" in text.lower() or "verify you are human" in text.lower():
+    from bs4 import BeautifulSoup
+    doc=BeautifulSoup(document,"html.parser")
+    if any(marker in doc.get_text(" ",strip=True).casefold() for marker in
+           ("cloudflare","verify you are human","just a moment")):
         return "CLOUDFLARE"
-    if "SIGN OUT" not in text.upper():
+    root=doc.select_one("#persistant-nav")
+    if root is None:
         return "AUTH_REQUIRED"
-    # Exact identity text; not a substring match against a different email.
-    import re
-    found=set(re.findall(r"[A-Za-z0-9_.+%-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",text))
-    if expected_email not in found:
+    actual=root.select(".displayname")
+    if len(actual)!=1:
+        return "AUTH_REQUIRED"
+    account=actual[0].get_text(strip=True)
+    if not hmac.compare_digest(account.casefold().encode(),expected_email.strip().casefold().encode()):
+        return "AUTH_REQUIRED"
+    logout=False
+    for anchor in root.select("a[href]"):
+        href=anchor.get("href")
+        if not href:continue
+        target=urlsplit(urljoin(origin,href))
+        reference=urlsplit(origin)
+        if (target.scheme,target.netloc,target.path,target.query,target.fragment)==(
+            reference.scheme,reference.netloc,"/account/logoff","",""):
+            logout=True
+    if not logout:
         return "AUTH_REQUIRED"
     return "FIXTURE_AUTHENTICATED_NOT_PRICE_VERIFIED"
 
 def fixture_price(*args, **kwargs):
-    # A fixture identity never proves live price/source semantics.
     return {"status":"TECHNICAL_ERROR","error_code":"SUPPLIER_DISABLED"}
 
 def prohibited_live(*args, **kwargs):
