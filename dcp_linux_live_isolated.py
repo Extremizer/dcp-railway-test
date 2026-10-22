@@ -49,9 +49,13 @@ def prepare_journal(state):
 
 def main():
     try:
+        print("DIAG_MAIN_ENTERED",flush=True)
         admission(os.environ)
+        print("DIAG_ADMISSION_VERIFIED",flush=True)
         config=browser_configuration()
+        print("DIAG_BROWSER_CONFIG_VERIFIED",flush=True)
         prepare_journal(config["state"])
+        print("DIAG_JOURNAL_READY",flush=True)
         print("LINUX_CHROMIUM_RUNTIME_STARTING_ADMISSION_CLOSED",flush=True)
         browser_run(config,app_module='dcp_linux_live_app:app')
         return 0
