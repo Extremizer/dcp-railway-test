@@ -1,0 +1,34 @@
+name: DCP First Live Readiness — no supplier access
+on:
+  push:
+    branches: [dcp-first-live-readonly-gate-20261022]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  readiness:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Static syntax and targeted fail-closed tests
+        run: |
+          python -m py_compile dcp_first_live_readonly.py test_dcp_first_live_readonly.py
+          python -B -m unittest -v test_dcp_first_live_readonly.py
+      - name: Must refuse unadmitted LIVE
+        run: |
+          set +e
+          python dcp_first_live_readonly.py > readiness.json
+          rc=$?
+          set -e
+          test "$rc" -eq 2
+          python - <<'PY'
+          import json
+          data=json.load(open('readiness.json'))
+          assert data['status']=='BLOCKED'
+          assert data['dealer_price_usd'] is None
+          assert data['browser_requests']==data['cart_mutations']==data['broker_completions']==0
+          print('LIVE_READINESS_FAIL_CLOSED_PASS')
+          PY
