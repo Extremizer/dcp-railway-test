@@ -4,7 +4,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir 'fastapi>=0.115,<1' 'uvicorn>=0.34,<1' 'websocket-client>=1.9,<2' 'requests>=2.32,<3'
 COPY dcp_cloud_browser_host.py dcp_phone_recovery_app.py dcp_phone_recovery_core.py dcp_phone_recovery.html dcp_phone_recovery.css dcp_phone_recovery.js dcp_phone_staging_mock.html dcp_linux_live_isolated.py dcp_linux_preflight.py dcp_linux_admission.py dcp_linux_cdp_identity.py dcp_linux_live_app.py polaris_dealer_session_identity_guard.py dp_cloud_producer_client.py dp_sync_protocol.py /app/
 ARG DCP_SOURCE_HEAD=UNSET
-RUN printf '%s\\n' "${DCP_SOURCE_HEAD}" > /app/dcp_build_source_head
+RUN printf '%s' "${DCP_SOURCE_HEAD}" > /app/dcp_build_source_head
 RUN useradd --uid 10001 --create-home --shell /usr/sbin/nologin dcp-runner
 USER dcp-runner
 ENV PYTHONUNBUFFERED=1 DCP_CLOUD_PRODUCER_ENABLED=0 DCP_PHONE_STAGING_MOCK_ONLY=0

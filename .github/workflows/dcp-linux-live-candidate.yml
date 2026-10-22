@@ -23,6 +23,9 @@ jobs:
         run: |
           timeout --signal=TERM --kill-after=10s 15m docker build --progress=plain --file Dockerfile.dcp-live-isolated --build-arg DCP_SOURCE_HEAD=${{ github.sha }} --tag dcp-live-candidate:ci .
           echo DOCKER_BUILD_PASS
+      - name: Verify baked exact source SHA offline
+        run: |
+          docker run --rm --network none -e GITHUB_SHA --entrypoint python dcp-live-candidate:ci -c 'import os; from pathlib import Path; baked=Path("/app/dcp_build_source_head").read_bytes(); expected=os.environ["GITHUB_SHA"].encode("ascii"); assert len(baked)==40 and baked==expected, "BAKED_SOURCE_SHA_MISMATCH"; print("BAKED_SOURCE_SHA_40_EXACT_PASS")'
       - name: Runtime smoke - network disabled and fail closed
         timeout-minutes: 2
         run: |
