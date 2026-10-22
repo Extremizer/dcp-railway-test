@@ -34,7 +34,7 @@ def seed_test_category_authority(db_file, *identities):
             source_kind TEXT NOT NULL,
             source_ref TEXT NOT NULL,
             last_verified_at TEXT NOT NULL,
-            previous_oems_json TEXT NOT NULL,
+            previous_oems_json TEXT NOT NULL DEFAULT '[]',
             PRIMARY KEY (manufacturer, current_oem)
         )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS oem_catalog_aliases (
