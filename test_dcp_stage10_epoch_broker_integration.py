@@ -102,7 +102,7 @@ class EpochBrokerIntegrationTests(CompletionFixture):
 
     def test_epoch_revoke_requires_no_inflight(self):
         self.enqueue()
-        old=epoch.acquire(self.db,"old-host")
+        old={**epoch.acquire(self.db,"old-host"),"request_nonce":secrets.token_hex(32)}
         with patch.dict("os.environ",{"EXTREMIZER_DP_OWNERSHIP_ENFORCE":"1"}):
             self.assertIsNotNone(bridge.claim_next(self.db,producer_id="old-host",ownership_proof=old))
         with self.assertRaises(epoch.OwnershipDenied):
