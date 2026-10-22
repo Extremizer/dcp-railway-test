@@ -20,7 +20,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ''
         run: |
           cd stage10_3_aws
-          terraform fmt -check -recursive
+          terraform fmt -diff -check -recursive
           terraform init -backend=false -input=false -no-color
           terraform validate -no-color
       - name: Offline IaC security scanner and negative tests
