@@ -27,16 +27,27 @@ jobs:
         timeout-minutes: 2
         run: |
           set +e
+          # Diagnose only if the mandatory real CMD does not terminate.
+          docker image inspect dcp-live-candidate:ci --format 'IMAGE_CMD={{json .Config.Cmd}} IMAGE_ENTRYPOINT={{json .Config.Entrypoint}}'
           timeout --signal=TERM --kill-after=5s 60s docker run --rm --network none dcp-live-candidate:ci > smoke.log 2>&1
           code=$?
           set -e
-          echo "CONTAINER_EXIT_CODE=$code"
-          if [ "$code" -ne 24 ]; then
-            echo "RUNTIME_SMOKE_FAIL_UNEXPECTED_EXIT"
-            exit 1
-          fi
-          if ! grep -q 'LINUX_PRODUCER_BLOCKED' smoke.log; then
-            echo "RUNTIME_SMOKE_FAIL_MARKER_MISSING"
+          echo "CMD_EXIT_CODE=$code"
+          if [ "$code" -ne 24 ] || ! grep -q 'LINUX_PRODUCER_BLOCKED' smoke.log; then
+            echo "MANDATORY_CMD_FAILED"
+            # Only emit bounded sanitized classification, never raw browser output.
+            if grep -q 'ModuleNotFoundError' smoke.log; then echo 'DIAG_MODULE_IMPORT_FAILURE'; fi
+            if grep -q 'xvfb-run: error' smoke.log; then echo 'DIAG_XVFB_FAILURE'; fi
+            if grep -q 'LINUX_PRODUCER_BLOCKED' smoke.log; then echo 'DIAG_BLOCKED_MARKER_PRESENT'; fi
+            set +e
+            timeout --signal=TERM --kill-after=5s 12s docker run --rm --network none --entrypoint python dcp-live-candidate:ci -u /app/dcp_linux_live_isolated.py > direct.log 2>&1
+            direct_code=$?
+            timeout --signal=TERM --kill-after=5s 12s docker run --rm --network none --entrypoint xvfb-run dcp-live-candidate:ci -a /bin/true > xvfb.log 2>&1
+            xvfb_code=$?
+            set -e
+            echo "DIRECT_PYTHON_EXIT_CODE=$direct_code"
+            echo "XVFB_START_EXIT_CODE=$xvfb_code"
+            if grep -q LINUX_PRODUCER_BLOCKED direct.log; then echo DIRECT_PYTHON_BLOCKED_MARKER_PRESENT; fi
             exit 1
           fi
           echo RUNTIME_SMOKE_FAIL_CLOSED_PASS
