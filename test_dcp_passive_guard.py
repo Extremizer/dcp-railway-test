@@ -176,9 +176,10 @@ class DcpProducerPreflightContractTests(unittest.TestCase):
         self.assertNotIn("XMLHttpRequest",expression)
         self.assertNotIn("Page.navigate",expression)
         self.assertNotIn("window.open",expression)
-        self.assertNotRegex(expression,
-            r"location\\s*\\.\\s*(?:href\\s*=|assign\\s*\\(|replace\\s*\\(|reload\\s*\\()")
-        self.assertNotRegex(expression,r"\\.reload\\s*\\(")
+        for prohibited in ("location.href=", "location.assign(",
+                           "location.replace(", "location.reload(",
+                           ".reload(", "window.location", "Page.navigate"):
+            self.assertNotIn(prohibited,expression)
 
 
 if __name__=="__main__":
