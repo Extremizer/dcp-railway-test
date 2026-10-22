@@ -46,6 +46,16 @@ for p in Path("/proc").iterdir():
         except (OSError,PermissionError): pass
 print("DIAG_XVFB_PROCESS=" + ("PRESENT" if any("xvfb" in n for n in names) else "ABSENT"))
 print("DIAG_CHROMIUM_PROCESS=" + ("PRESENT" if any(("chromium" in n or n=="chrome") for n in names) else "ABSENT"))
+print("DIAG_PYTHON_PROCESS=" + ("PRESENT" if any(n.startswith("python") for n in names) else "ABSENT"))
+print("DIAG_XVFB_PROCESS_STATES=" + ",".join(sorted(set(
+    ((p/"status").read_text().split("State:",1)[1].splitlines()[0].strip().split()[0])
+    for p in Path("/proc").iterdir()
+    if p.name.isdigit() and (p/"comm").is_file() and "xvfb" in (p/"comm").read_text().strip().lower()
+))) if any("xvfb" in n for n in names) else "NONE")
+from os import path
+print("DIAG_X11_SOCKET=" + ("PRESENT" if any(p.name.startswith("X") for p in Path("/tmp/.X11-unix").glob("*")) else "ABSENT"))
+print("DIAG_X11_LOCK=" + ("PRESENT" if any(p.name.startswith(".X") and p.name.endswith("-lock") for p in Path("/tmp").glob(".X*-lock")) else "ABSENT"))
+
 try:
     with socket.create_connection(("127.0.0.1",9222),timeout=1): pass
     print("DIAG_CDP_TCP9222=LISTENING")
@@ -72,6 +82,14 @@ PY
 for attempt in $(seq 1 30); do
   if [ "$attempt" -eq 5 ] || [ "$attempt" -eq 15 ]; then
     echo "OFFLINE_STARTUP_DIAGNOSTIC_ATTEMPT=$attempt"
+    if docker logs "$cid" 2>&1 | grep -q 'LINUX_CHROMIUM_RUNTIME_STARTING_ADMISSION_CLOSED'; then
+      echo "DIAG_PYTHON_RUNTIME_ENTRY=REACHED"
+    else
+      echo "DIAG_PYTHON_RUNTIME_ENTRY=NOT_REACHED"
+    fi
+    if docker logs "$cid" 2>&1 | grep -q 'LINUX_PRODUCER_BLOCKED'; then
+      echo "DIAG_ADMISSION_BLOCKED_MARKER=PRESENT"
+    fi
     diagnose
   fi
   if [ "$(docker inspect -f '{{.State.Running}}' "$cid")" != "true" ]; then
@@ -110,6 +128,11 @@ print("LOCAL_HEALTH_HTTP_PASS")
   sleep 2
 done
 echo "LOCAL_XVFB_CHROMIUM_STARTUP_TIMEOUT"
+if docker logs "$cid" 2>&1 | grep -q 'LINUX_CHROMIUM_RUNTIME_STARTING_ADMISSION_CLOSED'; then
+  echo "DIAG_PYTHON_RUNTIME_ENTRY=REACHED"
+else
+  echo "DIAG_PYTHON_RUNTIME_ENTRY=NOT_REACHED"
+fi
 diagnose
 docker inspect -f 'STATE={{.State.Status}} EXIT_CODE={{.State.ExitCode}}' "$cid"
 exit 1
