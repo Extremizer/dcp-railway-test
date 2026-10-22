@@ -980,6 +980,8 @@ def dp_sync_next(
     x_dp_sync_sig: str | None = Header(default=None),
     x_dp_protocol: str | None = Header(default=None),
     x_dp_producer_id: str | None = Header(default=None),
+    x_dp_ownership_epoch: str | None = Header(default=None),
+    x_dp_ownership_nonce: str | None = Header(default=None),
 ) -> dict[str, Any]:
     path = "/internal/dp-sync/next"
     if x_dp_protocol != "2":
@@ -991,6 +993,12 @@ def dp_sync_next(
                                 x_dp_producer_id, b"", x_dp_sync_sig)
     except dp_sync_protocol.ProtocolError as exc:
         raise HTTPException(status_code=401, detail={"code": str(exc)})
+    if dp_live_bridge.os.getenv("EXTREMIZER_DP_OWNERSHIP_ENFORCE") == "1":
+        if not x_dp_ownership_epoch or not x_dp_ownership_epoch.isdecimal() or not x_dp_ownership_nonce:
+            raise HTTPException(status_code=409, detail={"code": "producer_ownership_proof_missing"})
+        proof={"owner":x_dp_producer_id,"epoch":int(x_dp_ownership_epoch),"nonce":x_dp_ownership_nonce}
+        return {"request": dp_live_bridge.claim_next(
+            core.ORDERS_DB_FILE, producer_id=x_dp_producer_id, ownership_proof=proof)}
     return {"request": dp_live_bridge.claim_next(core.ORDERS_DB_FILE, producer_id=x_dp_producer_id)}
 
 
