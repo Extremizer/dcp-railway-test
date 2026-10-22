@@ -3,6 +3,8 @@
 All tests use disposable SQLite, fake source and in-process signed HTTP.
 """
 from unittest.mock import patch
+from concurrent.futures import ProcessPoolExecutor
+import os
 import sqlite3
 import unittest
 
@@ -10,6 +12,13 @@ from test_dp_result_completion import CompletionFixture, headers
 import dp_live_bridge as bridge
 import dp_result_completion as completion
 import dcp_stage10_ownership_epoch as epoch
+
+def _independent_host_claim(arguments):
+    db_file, producer, proof = arguments
+    os.environ["EXTREMIZER_DP_OWNERSHIP_ENFORCE"] = "1"
+    claim = bridge.claim_next(db_file, producer_id=producer, ownership_proof=proof)
+    return claim is not None
+
 
 class EpochBrokerIntegrationTests(CompletionFixture):
     def test_epoch_required_for_claim_and_stale_cannot_claim(self):
@@ -59,6 +68,20 @@ class EpochBrokerIntegrationTests(CompletionFixture):
                 "X-DP-Ownership-Nonce":owner["nonce"]})
             self.assertEqual(accepted.status_code,200)
             self.assertEqual(accepted.json()["request"]["ownership_epoch"],owner["epoch"])
+
+    def test_independent_mock_hosts_compete_for_claim(self):
+        self.enqueue()
+        owner=epoch.acquire(self.db,"mock-producer-1")
+        with ProcessPoolExecutor(max_workers=2) as workers:
+            outcome=list(workers.map(_independent_host_claim,[
+                (str(self.db),"mock-producer-1",owner),
+                (str(self.db),"foreign-producer",owner)]))
+        self.assertEqual(outcome.count(True),1)
+        self.assertEqual(outcome.count(False),1)
+        with sqlite3.connect(self.db) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT claim_owner FROM dp_live_requests WHERE status='claimed'").fetchone()[0],
+                "mock-producer-1")
 
     def test_epoch_revoke_requires_no_inflight(self):
         self.enqueue()
