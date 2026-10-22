@@ -47,6 +47,20 @@ for p in Path("/proc").iterdir():
 print("DIAG_XVFB_PROCESS=" + ("PRESENT" if any("xvfb" in n for n in names) else "ABSENT"))
 print("DIAG_CHROMIUM_PROCESS=" + ("PRESENT" if any(("chromium" in n or n=="chrome") for n in names) else "ABSENT"))
 print("DIAG_PYTHON_PROCESS=" + ("PRESENT" if any(n.startswith("python") for n in names) else "ABSENT"))
+roles={"XVFB_RUN_WRAPPER":False,"XAUTH":False,"PYTHON_MAIN":False,"XVFB_SERVER":False,"CHROMIUM_LAUNCH":False}
+for p in Path("/proc").iterdir():
+    if not p.name.isdigit(): continue
+    try:
+        argv=(p/"cmdline").read_bytes().decode("utf-8","replace").split(chr(0))
+    except (OSError,PermissionError):continue
+    joined=" ".join(argv).lower()
+    if "xvfb-run" in joined: roles["XVFB_RUN_WRAPPER"]=True
+    if any(x.endswith("/xauth") for x in argv): roles["XAUTH"]=True
+    if "/app/dcp_linux_live_isolated.py" in joined:roles["PYTHON_MAIN"]=True
+    if any(x.endswith("/xvfb") for x in argv):roles["XVFB_SERVER"]=True
+    if any(x.endswith("/chromium") for x in argv):roles["CHROMIUM_LAUNCH"]=True
+for key in sorted(roles): print("DIAG_ROLE_"+key+"="+("PRESENT" if roles[key] else "ABSENT"))
+
 print("DIAG_XVFB_PROCESS_STATES=" + ",".join(sorted(set(
     ((p/"status").read_text().split("State:",1)[1].splitlines()[0].strip().split()[0])
     for p in Path("/proc").iterdir()
