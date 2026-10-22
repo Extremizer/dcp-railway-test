@@ -12,8 +12,15 @@ body=json.dumps({"fixture":"ping","host":host}).encode()
 ts=int(time.time())
 headers={"x-time":str(ts),"x-host":host,"x-signature":signature(
     ("TEST-ONLY-OFFLINE-"+host).encode(),"POST","/signed",ts,body)}
-response=httpx.post("http://broker:8800/signed",content=body,headers=headers,timeout=8)
-response.raise_for_status()
+response=None
+for attempt in range(20):
+    try:
+        response=httpx.post("http://broker:8800/signed",content=body,headers=headers,timeout=3)
+        response.raise_for_status()
+        break
+    except httpx.ConnectError:
+        if attempt==19:raise
+        time.sleep(.25)
 if response.json()!={"accepted":True,"host":host}:raise RuntimeError("invalid_broker_ack")
 print("SIGNED_BROKER_OK",host,flush=True)
 
