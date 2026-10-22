@@ -6,6 +6,9 @@ from unittest.mock import patch
 from concurrent.futures import ProcessPoolExecutor
 import os
 import sqlite3
+import json
+import dp_sync_protocol
+from test_dp_result_completion import KEY, OWNER
 import unittest
 
 from test_dp_result_completion import CompletionFixture, headers
@@ -55,17 +58,26 @@ class EpochBrokerIntegrationTests(CompletionFixture):
         self.enqueue()
         owner=epoch.acquire(self.db,"mock-producer-1")
         req_headers=headers("GET","/internal/dp-sync/next")
+        def signed_epoch(number,nonce):
+            binding=json.dumps({"epoch":number,"nonce":nonce},sort_keys=True,separators=(",",":")).encode()
+            h=dict(req_headers)
+            h.update({"X-DP-Ownership-Epoch":str(number),"X-DP-Ownership-Nonce":nonce})
+            h["X-DP-Sync-Sig"]=dp_sync_protocol.sign(
+                KEY,"GET","/internal/dp-sync/next",int(h["X-DP-Sync-Ts"]),OWNER,binding)
+            return h
         with patch.dict("os.environ",{"EXTREMIZER_DP_OWNERSHIP_ENFORCE":"1"}):
             missing=self.client.get("/internal/dp-sync/next",headers=req_headers)
             self.assertEqual(missing.status_code,409)
-            stale=self.client.get("/internal/dp-sync/next",headers={
-                **req_headers,"X-DP-Ownership-Epoch":str(owner["epoch"]-1),
-                "X-DP-Ownership-Nonce":owner["nonce"]})
+            stale=self.client.get("/internal/dp-sync/next",
+                headers=signed_epoch(owner["epoch"]-1,owner["nonce"]))
             self.assertEqual(stale.status_code,200)
             self.assertIsNone(stale.json()["request"])
-            accepted=self.client.get("/internal/dp-sync/next",headers={
-                **req_headers,"X-DP-Ownership-Epoch":str(owner["epoch"]),
-                "X-DP-Ownership-Nonce":owner["nonce"]})
+            tampered={**signed_epoch(owner["epoch"],owner["nonce"]),
+                      "X-DP-Ownership-Nonce":"0"*64}
+            forged=self.client.get("/internal/dp-sync/next",headers=tampered)
+            self.assertEqual(forged.status_code,401)
+            accepted=self.client.get("/internal/dp-sync/next",
+                headers=signed_epoch(owner["epoch"],owner["nonce"]))
             self.assertEqual(accepted.status_code,200)
             self.assertEqual(accepted.json()["request"]["ownership_epoch"],owner["epoch"])
 
