@@ -85,6 +85,16 @@ class EpochBrokerIntegrationTests(CompletionFixture):
             replay=self.client.get("/internal/dp-sync/next",headers=signed_epoch(owner["epoch"],owner["nonce"]))
             self.assertEqual(replay.status_code,200)
             self.assertIsNone(replay.json()["request"])
+            # Remove the previous mock claim, enqueue another request, then
+            # replay the exact signed GET. It must still fail independent of
+            # active-claim exclusion.
+            with sqlite3.connect(self.db) as conn:
+                conn.execute("DELETE FROM dp_live_requests WHERE status='claimed'")
+            self.enqueue()
+            again=self.client.get("/internal/dp-sync/next",
+                headers=signed_epoch(owner["epoch"],owner["nonce"]))
+            self.assertEqual(again.status_code,200)
+            self.assertIsNone(again.json()["request"])
 
     def test_independent_mock_hosts_compete_for_claim(self):
         self.enqueue()
