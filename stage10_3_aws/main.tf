@@ -114,8 +114,14 @@ resource "aws_instance" "producer" {
   associate_public_ip_address = false
   vpc_security_group_ids = [aws_security_group.producers.id]
   monitoring = true
-  metadata_options { http_endpoint = "disabled" }
-  root_block_device { volume_type = "gp3" volume_size = 16 encrypted = true }
+  metadata_options {
+    http_endpoint = "disabled"
+  }
+  root_block_device {
+    volume_type = "gp3"
+    volume_size = 16
+    encrypted   = true
+  }
   tags = {
     Name = "${local.prefix}-${each.key}"
     Stage = "MOCK_ONLY"
