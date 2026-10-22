@@ -109,6 +109,9 @@ for attempt in $(seq 1 30); do
   if [ "$(docker inspect -f '{{.State.Running}}' "$cid")" != "true" ]; then
     echo "ADMITTED_CONTAINER_EXITED"
     docker inspect -f 'EXIT_CODE={{.State.ExitCode}}' "$cid"
+    for code in browser_terminated_during_startup browser_loopback_unavailable existing_persistent_state_dir_required interactive_display_required explicit_installed_chromium_required missing_owner_telegram_auth ephemeral_or_root_state_forbidden invalid_http_port; do
+      if docker logs "$cid" 2>&1 | grep -Fq "HostConfigurationError $code"; then echo "SAFE_BROWSER_ERROR=$code"; fi
+    done
     for name in LINUX_PRODUCER_BLOCKED LOCAL_XVFB_START_EXITED LOCAL_XVFB_START_TIMEOUT LOCAL_XVFB_SOCKET_READY DIAG_MAIN_ENTERED DIAG_ADMISSION_VERIFIED DIAG_BROWSER_CONFIG_VERIFIED DIAG_JOURNAL_READY LINUX_CHROMIUM_RUNTIME_STARTING_ADMISSION_CLOSED; do
       if docker logs "$cid" 2>&1 | grep -q "$name"; then echo "EARLY_EXIT_MARKER=$name"; fi
     done
