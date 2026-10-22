@@ -1,7 +1,8 @@
-"""DCP dealer SEARCH after an authenticated SIGN OUT session, Parts only.
+"""DCP dealer SEARCH after a confirmed DCP logout link, Parts only.
 
-A publicly visible Parts Price is MSRP if SIGN IN; once SIGN OUT is confirmed
-the same field is dealer price (owner-verified DCP account contract).
+A publicly visible Parts Price is MSRP without DCP dealer login; once the
+same-origin /account/logoff link is confirmed inside #persistant-nav,
+the same field is eligible for dealer price (owner DCP account contract).
 An old/struck-through SKU is NOT a competing item when its .itemnumnew
 shows the requested current OEM. Multiple such rows must agree on price.
 Polaris must never call this module; its verified cart route is separate.
@@ -86,13 +87,24 @@ def parts_dom_expression(slug, query_oem, *, live):
       if(location.origin!=='https://www.dealercostparts.com')
         return {context_changed:true};
       if(cf)return {challenged:true};
-      if(!/sign out/i.test(part))return {authorized:false};"""
+      // Prefer the DCP account's actual LOG OUT endpoint, not decorative
+      // page text.  The path is the same under "Log out" and "Sign out".
+      const hasLogout=(doc)=>[...doc.querySelectorAll('#persistant-nav a[href]')].some(a=>{
+        try{
+          const href=a.getAttribute('href');
+          if(!href)return false;
+          const u=new URL(href,location.origin);
+          return u.origin===location.origin && u.pathname==='/account/logoff'
+            && !u.search && !u.hash;
+        }catch(_){return false;}
+      });
+      if(!hasLogout(document))return {authorized:false};"""
     parse="""const text=doc.body?.textContent||'';
       const lower=text.toLowerCase();
       if(['just a moment','verify you are human','checking your browser',
           'performing security verification','enable javascript and cookies to continue'].some(x=>lower.includes(x)))
           return {challenged:true,http_status:status};
-      if(!/sign out/i.test(text))return {authorized:false,http_status:status};
+      if(!hasLogout(doc))return {authorized:false,http_status:status};
       const forms=[...doc.querySelectorAll('form[id^="add_"]')];
       const rows=forms.map(f=>{
         const sku=f.querySelector('input[name="sku"]')?.value||'';
