@@ -16,3 +16,6 @@ response=httpx.post("http://broker:8800/signed",content=body,headers=headers,tim
 response.raise_for_status()
 if response.json()!={"accepted":True,"host":host}:raise RuntimeError("invalid_broker_ack")
 print("SIGNED_BROKER_OK",host,flush=True)
+
+# Remain alive solely for CI runtime network namespace inspection.
+while True:time.sleep(60)
