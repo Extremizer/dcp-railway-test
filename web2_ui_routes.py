@@ -83,6 +83,13 @@ def attach_web2_ui(app: FastAPI, *, prefix: str = "/web2") -> None:
     def web2_index() -> FileResponse:
         return FileResponse(WEB2_DIR / "index.html", media_type="text/html")
 
+    @app.get("/web2-header-asset/{kind}", include_in_schema=False)
+    def web2_header_asset(kind: str) -> FileResponse:
+        path = _verified_header_asset(kind)
+        if path is None:
+            raise HTTPException(status_code=404, detail="approved header asset unavailable")
+        return FileResponse(path, media_type="image/svg+xml" if kind == "wordmark" else "image/png")
+
     @app.get("/web2-brand-logo", include_in_schema=False)
     def web2_brand_logo() -> FileResponse:
         path = _verified_canonical_logo_path()
@@ -124,3 +131,35 @@ def _verified_powersports_garage_path() -> Path | None:
     if raw_sha.lower() != APPROVED_POWERSPORTS_GARAGE_SHA256:
         return None
     return _verified_png_path(Path(raw_path), raw_sha)
+
+# v1.1 header assets are supplied by isolated staging; never substitute originals.
+HEADER_ASSET_SHA = {
+    "wordmark": "0651e2d482c496ac135497910506b1ae7d0672d55d6e47f9cf7f87f87b3c5afa",
+    "search": "26d942c4f05047ae12aab0de024dbc9723a8179789385c16649d13df2b89d2d8",
+    "cart": "920a3463a55a0b0dd3ea21155b3f3ba185ed60df066cec40bb3591e15af2a28b",
+    "private": "c40e3950728ae670d1ca7c1a02d507a1a5d5eaa7f4b7aad09c4396b4b928cb3c",
+}
+HEADER_ASSET_ENV = {
+    "wordmark": "EXTREMIZER_HEADER_WORDMARK_PATH",
+    "search": "EXTREMIZER_HEADER_SEARCH_PATH",
+    "cart": "EXTREMIZER_HEADER_CART_PATH",
+    "private": "EXTREMIZER_HEADER_PRIVATE_PATH",
+}
+
+def _verified_header_asset(kind: str) -> Path | None:
+    if kind not in HEADER_ASSET_ENV:
+        return None
+    raw = os.getenv(HEADER_ASSET_ENV[kind], "").strip()
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_file():
+        return None
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != HEADER_ASSET_SHA[kind]:
+        return None
+    if kind == "wordmark" and b"<svg" not in data[:4096]:
+        return None
+    if kind != "wordmark" and not data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+        return None
+    return path
