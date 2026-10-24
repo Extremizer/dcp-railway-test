@@ -8,23 +8,27 @@
   <link rel="stylesheet" href="/web2-static/styles.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand-slot" href="/web2" aria-label="На главную EXTREMIZER">
-      <img class="brand-logo" src="/web2-powersports-logo" alt="" hidden>
-      <span class="visually-hidden">На главную EXTREMIZER</span>
+  <header class="topbar global-header-v11" aria-label="Глобальная навигация EXTREMIZER">
+    <a class="brand-slot" href="/web2" aria-label="EXTREMIZER — главная">
+      <img class="brand-logo" src="/web2-header-asset/wordmark" alt="EXTREMIZER" hidden>
+      <span class="visually-hidden">EXTREMIZER — главная</span>
     </a>
-    <nav class="topnav" aria-label="Навигация">
-      <span class="nav-life">LIFE</span>
-      <a class="nav-oem" href="#oemInput">OEM +</a>
-      <button id="cartButton" class="cart-button" type="button" aria-label="Открыть корзину">
-        <span class="cart-icon" aria-hidden="true">🛒</span>
-        <span>КОРЗИНА</span>
+    <nav class="topnav global-header-nav" aria-label="Главная навигация">
+      <a class="gh-action gh-search" href="#oemInput" aria-label="Поиск OEM"><img src="/web2-header-asset/search" alt="" aria-hidden="true"></a>
+      <span class="gh-separator" aria-hidden="true"></span>
+      <a class="gh-label gh-life" href="/web2/life">LIFE</a>
+      <span class="gh-separator" aria-hidden="true"></span>
+      <button id="cartButton" class="cart-button gh-action gh-cart" type="button" aria-label="Открыть корзину">
+        <img src="/web2-header-asset/cart" alt="" aria-hidden="true">
         <span id="cartCount" class="cart-count">0</span>
-        <span id="cartButtonTotal" class="cart-button-total">0 ₽</span>
+        <span id="cartButtonTotal" class="cart-button-total visually-hidden">0 ₽</span>
       </button>
+      <span class="gh-separator" aria-hidden="true"></span>
+      <a class="gh-label gh-hub" href="/web2/hub">МОЙ ХАБ</a>
+      <span class="gh-separator" aria-hidden="true"></span>
+      <a class="gh-action gh-private" href="/web2/messages" aria-label="Личные сообщения"><img src="/web2-header-asset/private" alt="" aria-hidden="true"></a>
     </nav>
   </header>
-
   <main>
     <section class="hero" aria-label="POWERSPORTS — MACHINE">
       <img class="hero-photo" src="/web2-powersports-hero" alt="" aria-hidden="true">
