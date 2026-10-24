@@ -75,6 +75,15 @@ class RetentionTests(unittest.TestCase):
         self.store.objects.clear()
         with self.assertRaisesRegex(RuntimeError,'inventory'): self.clean()
         self.assertFalse(self.store.deleted)
+    def test_dry_run_inventory_preserves_aged_verified_archives(self):
+        for day in range(31, 51):
+            self.store.add(day * ops.DAY)
+        result = self.clean(dry_run=True)
+        self.assertEqual(result['status'], 'PASS')
+        self.assertGreater(result['eligible'], 0)
+        self.assertEqual(result['deleted'], 0)
+        self.assertEqual(self.store.deleted, [])
+
     def test_dry_run_never_deletes(self):
         for day in range(31,41): self.store.add(day*ops.DAY)
         self.assertGreater(self.clean(dry_run=True)['eligible'],0)
