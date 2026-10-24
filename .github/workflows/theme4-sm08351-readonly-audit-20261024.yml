@@ -1,0 +1,20 @@
+name: SM-08351 Warehouse Readonly Audit Isolated
+on:
+  push:
+    branches: [theme4-p1-sm08351-warehouse-audit-20261024]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax and readonly tests
+        run: |
+          python -B -m compileall -q warehouse_sm08351_readonly_audit.py test_warehouse_sm08351_readonly_audit.py
+          python -B -m unittest -v test_warehouse_sm08351_readonly_audit.py
