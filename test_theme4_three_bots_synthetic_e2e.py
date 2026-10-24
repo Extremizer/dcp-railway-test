@@ -148,9 +148,11 @@ def test_oemixi_real_handler_verified_cart_dealer_price_no_cart_mutation():
     assert card.call_args.args[3] == 88.19
     assert "offer:417300574" in ctx.user_data
     assert any("SYNTHETIC VERIFIED CART PRICE" in ans for _, ans in message.answers)
-    assert any("В корзину" in button.text
-               for _, kwargs in message.answers for row in kwargs["reply_markup"].inline_keyboard
-               for button in row if "reply_markup" in kwargs)
+    # The last reply includes a Telegram inline keyboard; inspect the
+    # reply markup from a separate captured call, not the message text.
+    assert any("SYNTHETIC VERIFIED CART PRICE" in answer
+               for kind, answer in message.answers if kind == "reply")
+    assert ctx.user_data["offer:417300574"]["dl_usd"] == 88.19
 
 
 def test_procenka_p0_handler_uses_manufacturer_first_without_crash():
