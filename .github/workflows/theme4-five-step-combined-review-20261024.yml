@@ -1,0 +1,32 @@
+name: Theme4 Five Step Combined Review Gate
+on:
+  push:
+    branches: [theme4-p4-release-gate-review-20261024]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Dependencies
+        run: python -m pip install -r requirements.txt pytest beautifulsoup4
+      - name: Syntax and runtime import
+        run: |
+          python -B -m compileall -q extremizer_bot.py probnik_app.py oemixibot_app.py warehouse_sm08351_readonly_audit.py probnik_dcp_readonly_diagnostic.py
+          python -B -c "import extremizer_bot,probnik_app,oemixibot_app"
+      - name: Unified isolated regressions
+        run: |
+          python -B -m pytest -q test_theme4_three_bots_synthetic_e2e.py test_procenka_mixed_mode_p0.py test_manufacturer_first_three_bots.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_warehouse_sm08351_readonly_audit.py test_probnik_dcp_readonly_diagnostic.py test_dcp_admission.py test_dp_result_completion.py
+      - name: Runtime change scope vs production SHA
+        run: |
+          git diff --exit-code d05827268039c40c7cb7f2f920c06c31a760c9f0 HEAD -- probnik_app.py oemixibot_app.py backup_snapshot_helper.py dp_live_admission.py
+      - name: Release restrictions
+        run: echo "CANDIDATE ONLY; NO MERGE / NO DEPLOY / BACKUP HOLD / NO LIVE DCP"
