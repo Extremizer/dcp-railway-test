@@ -1,0 +1,117 @@
+name: Ski-Doo OEMixi Gateway RC Isolated
+
+on:
+  push:
+    branches:
+      - fix/dcp-ski-doo-gateway-core-20261024
+      - fix/dcp-ski-doo-gateway-oemixi-20261024
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gateway-exact-head:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exact commit and scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "EXACT_HEAD=$(git rev-parse HEAD)"
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          case "$GITHUB_REF_NAME" in
+            fix/dcp-ski-doo-gateway-core-20261024) BASE_SHA="ee4d22851036faed409f63ef405398f4fb3b1611" ;;
+            fix/dcp-ski-doo-gateway-oemixi-20261024) BASE_SHA="d05827268039c40c7cb7f2f920c06c31a760c9f0" ;;
+            *) exit 44 ;;
+          esac
+          export BASE_SHA
+          echo "RELEASE_BASE_SHA=$BASE_SHA" >> "$GITHUB_ENV"
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          git diff --check "$BASE_SHA" HEAD
+          python - <<'PY'
+          from pathlib import Path
+          import os
+          import subprocess
+          allowed = {
+              "dcp_price_gateway.py",
+              "test_ski_doo_exact_gateway_release_candidate.py",
+              ".github/workflows/ski-doo-gateway-rc-isolated.yml",
+          }
+          changed = set(subprocess.check_output(
+              ["git", "diff", "--name-only", os.environ["BASE_SHA"], "HEAD"],
+              text=True
+          ).splitlines())
+          assert changed == allowed, (changed, allowed)
+          for name in changed:
+              assert Path(name).is_file(), name
+          PY
+      - name: Install isolated regression dependencies
+        run: python -m pip install -r requirements.txt pytest httpx beautifulsoup4
+      - name: Syntax and import smoke
+        run: |
+          python -B -m compileall -q dcp_price_gateway.py oemixi_secure_gateway_transport.py oemixibot_catalog.py
+          python -B -c "import dcp_price_gateway, oemixi_secure_gateway_transport"
+      - name: Exact Ski-Doo proof and fail-closed matrix
+        run: python -B -m unittest -v test_ski_doo_exact_gateway_release_candidate.py test_dcp_authenticated_parts_search.py
+      - name: Shared gateway and Polaris baseline differential
+        shell: bash
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/clean-base" "$RELEASE_BASE_SHA"
+          git worktree add --detach "$RUNNER_TEMP/clean-candidate" "$GITHUB_SHA"
+          set +e
+          (cd "$RUNNER_TEMP/clean-base" && python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py) > "$RUNNER_TEMP/base-regression.log" 2>&1
+          base_exit=$?
+          (cd "$RUNNER_TEMP/clean-candidate" && python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py) > "$RUNNER_TEMP/candidate-regression.log" 2>&1
+          candidate_exit=$?
+          set -e
+          export BASE_EXIT="$base_exit" CANDIDATE_EXIT="$candidate_exit"
+          python - <<'PY'
+          import os, re
+          from pathlib import Path
+          root = Path(os.environ["RUNNER_TEMP"])
+          def read(kind):
+              output = (root / (kind + "-regression.log")).read_text(errors="replace")
+              ran = re.search(r"Ran (\d+) tests", output)
+              if not ran:
+                  raise RuntimeError("missing_test_count_" + kind)
+              sections = re.findall(
+                  r"(?ms)^(ERROR|FAIL): ([^\n]+)\n-+\n(.*?)(?=^(?:ERROR|FAIL): |^Ran \d+ tests|\Z)",
+                  output
+              )
+              failures = []
+              for status, name, body in sections:
+                  errors = re.findall(r"(?m)^([\w.]+(?:Error|Exception):[^\n]*)$", body)
+                  failures.append((
+                      status,
+                      name.strip(),
+                      errors[-1] if errors else "NO_EXCEPTION_MESSAGE"
+                  ))
+              return int(ran.group(1)), sorted(failures)
+          baseline = read("base")
+          candidate = read("candidate")
+          base_exit = int(os.environ["BASE_EXIT"])
+          candidate_exit = int(os.environ["CANDIDATE_EXIT"])
+          print("BASELINE_EXIT:", base_exit, "CASES:", baseline[0], "FAILURES:", len(baseline[1]))
+          print("CANDIDATE_EXIT:", candidate_exit, "CASES:", candidate[0], "FAILURES:", len(candidate[1]))
+          if candidate_exit == 0:
+              print("FULL_REGRESSION_PASS")
+          elif candidate_exit == base_exit and candidate == baseline:
+              print("NO_ADDED_REGRESSIONS; EXISTING BASELINE FAILURES REMAIN")
+              for status, name, reason in candidate[1]:
+                  print("KNOWN_BASELINE_FAILURE:", status, name[:130], reason[:180])
+          else:
+              print("NEW_OR_CHANGED_REGRESSION")
+              print("ADDED:", sorted(set(candidate[1]) - set(baseline[1])))
+              print("MISSING:", sorted(set(baseline[1]) - set(candidate[1])))
+              raise SystemExit(1)
+          PY
