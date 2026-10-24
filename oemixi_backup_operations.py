@@ -175,7 +175,8 @@ def maintenance(store, last):
     if os.getenv('OEMIXIBOT_BACKUP_RETENTION_DAYS') != str(KEEP_DAYS):
         return {'status': 'DISABLED'}
     return cleanup_verified(store, last, service_id=os.environ['RAILWAY_SERVICE_ID'],
-                            environment_id=os.environ['RAILWAY_ENVIRONMENT_ID'])
+                            environment_id=os.environ['RAILWAY_ENVIRONMENT_ID'],
+                            dry_run=os.getenv('OEMIXIBOT_BACKUP_RETENTION_DRY_RUN') == '1')
 
 
 def get_alerts():
