@@ -38,6 +38,16 @@ class RetentionTests(unittest.TestCase):
     def setUp(self):
         self.store=Store();self.latest=self.store.add(0)
     def clean(self,**kw): return ops.cleanup_verified(self.store,self.latest,service_id='svc',environment_id='env',now=NOW,**kw)
+    def test_maintenance_explicit_dry_run_never_deletes(self):
+        for day in range(31, 45): self.store.add(day * ops.DAY)
+        environment = {'OEMIXIBOT_BACKUP_RETENTION_DAYS': '30', 'OEMIXIBOT_BACKUP_RETENTION_DRY_RUN': '1', 'RAILWAY_SERVICE_ID': 'svc', 'RAILWAY_ENVIRONMENT_ID': 'env'}
+        with patch.dict('os.environ', environment), patch.object(ops.time, 'time', return_value=NOW):
+            result = ops.maintenance(self.store, self.latest)
+        self.assertTrue(result['dry_run'])
+        self.assertGreater(result['eligible'], 0)
+        self.assertEqual(result['deleted'], 0)
+        self.assertFalse(self.store.deleted)
+
     def test_no_old_copies_means_no_deletion(self): self.assertEqual(self.clean()['deleted'],0)
     def test_minimum_seven_even_if_old_and_keep_latest(self):
         for day in range(31,40): self.store.add(day*ops.DAY)
