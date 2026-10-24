@@ -20,6 +20,15 @@ class GlobalHeaderM0(unittest.TestCase):
     def test_approved_css_tokens(self):
         for fragment in ['--gh-gray:#A5A5A5','--gh-lime:#BFF803','--gh-l1:','font-family:Manrope','font-size:24px','font-weight:500','letter-spacing:0','object-fit:contain']:
             self.assertIn(fragment,CSS)
+    def test_exact_staging_provisioning_contract(self):
+        src=(ROOT/"scripts/provision_header_m0.py").read_text(encoding="utf-8")
+        self.assertIn("ZIP_SHA =",src)
+        self.assertIn("Canonical ZIP SHA-256 mismatch",src)
+        self.assertIn("Original {kind} SHA-256 mismatch",src)
+        self.assertIn("len(matches)!=1",src)
+        for kind in ("wordmark","search","cart","private"):
+            self.assertIn('"'+kind+'":',src)
+
     def test_asset_fail_closed(self):
         for k in ['wordmark','search','cart','private']:
             self.assertIn('"'+k+'":',ROUTES)
