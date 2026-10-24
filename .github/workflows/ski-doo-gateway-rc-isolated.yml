@@ -44,6 +44,12 @@ jobs:
           allowed = {
               "dcp_price_gateway.py",
               "test_ski_doo_exact_gateway_release_candidate.py",
+              "test_ski_doo_gateway_bot_acceptance.py",
+              "dcp_isolated_category_fixture.py",
+              "test_dcp_three_adapters.py",
+              "test_oemixi_secure_gateway_transport.py",
+              "test_polaris_consumer_pricesource.py",
+              "test_polaris_dp_e2e_integration.py",
               ".github/workflows/ski-doo-gateway-rc-isolated.yml",
           }
           changed = set(subprocess.check_output(
@@ -62,56 +68,19 @@ jobs:
           python -B -c "import dcp_price_gateway, oemixi_secure_gateway_transport"
       - name: Exact Ski-Doo proof and fail-closed matrix
         run: python -B -m unittest -v test_ski_doo_exact_gateway_release_candidate.py test_dcp_authenticated_parts_search.py
-      - name: Shared gateway and Polaris baseline differential
+      - name: Shared gateway and Polaris strict regression
+        run: python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py
+      - name: Ski-Doo signed gateway to actual bot reply (offline)
+        run: python -B test_ski_doo_gateway_bot_acceptance.py
+      - name: Corrected regression fixtures on unchanged release base
         shell: bash
         run: |
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/clean-base" "$RELEASE_BASE_SHA"
-          git worktree add --detach "$RUNNER_TEMP/clean-candidate" "$GITHUB_SHA"
-          set +e
-          (cd "$RUNNER_TEMP/clean-base" && python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py) > "$RUNNER_TEMP/base-regression.log" 2>&1
-          base_exit=$?
-          (cd "$RUNNER_TEMP/clean-candidate" && python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py) > "$RUNNER_TEMP/candidate-regression.log" 2>&1
-          candidate_exit=$?
-          set -e
-          export BASE_EXIT="$base_exit" CANDIDATE_EXIT="$candidate_exit"
-          python - <<'PY'
-          import os, re
-          from pathlib import Path
-          root = Path(os.environ["RUNNER_TEMP"])
-          def read(kind):
-              output = (root / (kind + "-regression.log")).read_text(errors="replace")
-              ran = re.search(r"Ran (\d+) tests", output)
-              if not ran:
-                  raise RuntimeError("missing_test_count_" + kind)
-              sections = re.findall(
-                  r"(?ms)^(ERROR|FAIL): ([^\n]+)\n-+\n(.*?)(?=^(?:ERROR|FAIL): |^Ran \d+ tests|\Z)",
-                  output
-              )
-              failures = []
-              for status, name, body in sections:
-                  errors = re.findall(r"(?m)^([\w.]+(?:Error|Exception):[^\n]*)$", body)
-                  failures.append((
-                      status,
-                      name.strip(),
-                      errors[-1] if errors else "NO_EXCEPTION_MESSAGE"
-                  ))
-              return int(ran.group(1)), sorted(failures)
-          baseline = read("base")
-          candidate = read("candidate")
-          base_exit = int(os.environ["BASE_EXIT"])
-          candidate_exit = int(os.environ["CANDIDATE_EXIT"])
-          print("BASELINE_EXIT:", base_exit, "CASES:", baseline[0], "FAILURES:", len(baseline[1]))
-          print("CANDIDATE_EXIT:", candidate_exit, "CASES:", candidate[0], "FAILURES:", len(candidate[1]))
-          if candidate_exit == 0:
-              print("FULL_REGRESSION_PASS")
-          elif candidate_exit == base_exit and candidate == baseline:
-              print("NO_ADDED_REGRESSIONS; EXISTING BASELINE FAILURES REMAIN")
-              for status, name, reason in candidate[1]:
-                  print("KNOWN_BASELINE_FAILURE:", status, name[:130], reason[:180])
-          else:
-              print("NEW_OR_CHANGED_REGRESSION")
-              print("ADDED:", sorted(set(candidate[1]) - set(baseline[1])))
-              print("MISSING:", sorted(set(baseline[1]) - set(candidate[1])))
-              raise SystemExit(1)
-          PY
+          # Use the same corrected tests on both versions; never overlay runtime.
+          for path in dcp_isolated_category_fixture.py test_dcp_three_adapters.py test_oemixi_secure_gateway_transport.py test_polaris_consumer_pricesource.py test_polaris_dp_e2e_integration.py; do
+            cp "$path" "$RUNNER_TEMP/clean-base/$path"
+          done
+          git -C "$RUNNER_TEMP/clean-base" diff --exit-code -- '*.py' ':!dcp_isolated_category_fixture.py' ':!test_*.py'
+          cd "$RUNNER_TEMP/clean-base"
+          python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py

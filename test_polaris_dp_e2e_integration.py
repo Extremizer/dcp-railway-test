@@ -358,7 +358,7 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
         self.assertTrue(client["fresh"])
         self.assertEqual(client["dealer_price_usd"], 184.07)
 
-        trial = probnik._identity_and_price("2205250")
+        trial = probnik._identity_and_price("2205250", "Polaris")
         self.assertEqual(trial["manufacturer"], "Polaris")
         self.assertEqual(trial["current_oem"], "2206328")
         self.assertEqual(trial["dp_usd"], 184.07)
@@ -515,7 +515,7 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             "request_live_dp",
             return_value={"status": "AUTH_REQUIRED"},
         ):
-            trial = probnik._identity_and_price("2205250")
+            trial = probnik._identity_and_price("2205250", "Polaris")
         self.assertEqual(trial["msrp_usd"], 239.99)
         self.assertIsNone(trial["dp_usd"])
         self.assertFalse(trial["price_fresh"])

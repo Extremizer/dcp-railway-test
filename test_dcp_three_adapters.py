@@ -17,6 +17,9 @@ from types import SimpleNamespace
 from unittest.mock import Mock, AsyncMock
 import unittest
 
+import manufacturer_first_ux as mfgux
+from polaris_dealer_cart_completion_contract import SOURCE
+from dcp_isolated_category_fixture import seed_test_category_authority
 import dcp_price_gateway as gateway
 import dp_live_bridge as bridge
 import dp_live_health as health
@@ -37,19 +40,19 @@ def actual_functions(filename,names,namespace):
 class ThreeAdapterTests(CompletionFixture):
     def setUp(self):
         super().setUp()
+        seed_test_category_authority(self.db, ("Polaris", "2206328"))
         with sqlite3.connect(self.db) as c:
             c.execute("DELETE FROM dealer_price_cache")
-            completion._write_identity(c,"Arctic Cat","2670-265","2670-265","known identity","fixture",health._now())
-            c.execute("CREATE TABLE oem_catalog_cache(manufacturer,current_oem,name,msrp_usd,last_verified_at,msrp_verified)")
-            c.execute("INSERT INTO oem_catalog_cache VALUES('Arctic Cat','2670-265','public catalog',999,?,1)",(health._now(),))
+            completion._write_identity(c,"Polaris","2206328","2206328","known identity","fixture",health._now())
+            c.execute("UPDATE oem_catalog_cache SET name='public catalog',msrp_usd=999 WHERE manufacturer='Polaris' AND current_oem='2206328'")
         self.browser=SimpleNamespace(get_dealer_price_dict=Mock(side_effect=AssertionError("direct DCP lookup forbidden")))
-        self.finder=SimpleNamespace(manufacturer_alias=lambda m:bridge._request_key(m,"2670-265")[0],
-                                    normalize_oem=lambda o:bridge._request_key("Arctic Cat",o)[1])
+        self.finder=SimpleNamespace(manufacturer_alias=lambda m:bridge._request_key(m,"2206328")[0],
+                                    normalize_oem=lambda o:bridge._request_key("Polaris",o)[1])
 
     def adapters(self,lookup):
         probnik=actual_functions("probnik_app.py",{"_identity_and_price","_customer_price_rub","_db_tables"},{
             "ORDERS_DB":self.db,"DP_MAX_AGE_HOURS":168,"finder":self.finder,
-            "sqlite3":sqlite3,"math":math,"normalize_oem":self.finder.normalize_oem,
+            "sqlite3":sqlite3,"math":math,"normalize_oem":self.finder.normalize_oem,"mfgux":mfgux,
             "PRICE_COEFFICIENT":1,"USD_RUB_RATE":100,
             "dp_live_bridge":SimpleNamespace(request_live_dp=lambda db,m,o,**kw:lookup(m,o)),
         })
@@ -64,7 +67,7 @@ class ThreeAdapterTests(CompletionFixture):
         procenka["upsert_dealer_price_cache"]=Mock(side_effect=AssertionError("consumer DP write forbidden"))
         dealer=actual_functions("oemixibot_catalog.py",{"resolve_identity","resolve_offer"},{
             "finder":self.finder,"oem_reference_service":SimpleNamespace(lookup_oem=lambda o:{}),
-            "oem_identity_service":SimpleNamespace(lookup=lambda o:{"manufacturer":"Arctic Cat","item_type":"parts"}),
+            "oem_identity_service":SimpleNamespace(lookup=lambda o:{"manufacturer":"Polaris","item_type":"parts"}),
             "oemixibot_dcp_price":self.browser,"confirm_identity":Mock(),
         })
         runtime=actual_functions('oemixibot_app.py',
@@ -74,7 +77,7 @@ class ThreeAdapterTests(CompletionFixture):
                 'ContextTypes':SimpleNamespace(DEFAULT_TYPE=object),'Update':object,
                 'asyncio':asyncio,'resolve_offer':dealer['resolve_offer'],
                 '_dealer':lambda update:{'id':'mock-dealer','price_coefficient':1},
-                'normalize_oem':self.finder.normalize_oem,'logging':logging,
+                'normalize_oem':self.finder.normalize_oem,'logging':logging,'mfgux':mfgux,
                 'STORE':SimpleNamespace(cart_view=lambda d:{'items':[],'total_usd':0}),
                 'price_card':lambda m,o,n,p,*a:'dealer USD '+str(p),
                 'InlineKeyboardButton':lambda *a,**kw:None,
@@ -82,27 +85,54 @@ class ThreeAdapterTests(CompletionFixture):
             })
         application=SimpleNamespace(bot_data={})
         runtime['bind_shared_price_gateway'](application,lookup,dealer_max_age_hours=168)
-        context=SimpleNamespace(application=application,user_data={})
+        context=SimpleNamespace(application=application,user_data={"manufacturer":"Polaris"})
         self.dealer_context=context
         self.dealer_reply=AsyncMock()
         update=SimpleNamespace(effective_user=None,
-            effective_message=SimpleNamespace(text='2670-265',reply_text=self.dealer_reply))
+            effective_message=SimpleNamespace(text='2206328',reply_text=self.dealer_reply))
         async def dealer_handler():
             await runtime['oem_message'](update,context)
-            return context.user_data.get('offer:2670-265') or {'status':'NO_PRICE','dl_usd':None}
+            return context.user_data.get('offer:2206328') or {'status':'NO_PRICE','dl_usd':None}
         # Preserve raw statuses on non-FOUND replies while invoking the actual handler.
         original=runtime['_resolve_runtime_offer']
-        async def recording(oem,ctx):
-            value=await original(oem,ctx);self.dealer_result=value;return value
+        async def recording(oem,ctx,manufacturer=None):
+            value=await original(oem,ctx,manufacturer=manufacturer);self.dealer_result=value;return value
         runtime['_resolve_runtime_offer']=recording
         def resolve_dealer():
             asyncio.run(dealer_handler());return self.dealer_result
         return (
-            lambda:probnik["_identity_and_price"]("2670-265"),
+            lambda:probnik["_identity_and_price"]("2206328", "Polaris"),
             lambda:asyncio.run(procenka["enrich_found_result_with_dealer_price"]({
-                "status":"FOUND","catalog":"Parts","manufacturer":"Arctic Cat","oem":"2670-265","msrp_usd":999})),
+                "status":"FOUND","catalog":"Parts","manufacturer":"Polaris","oem":"2206328","msrp_usd":999})),
             resolve_dealer,
         )
+
+    def payload(self, claim, **changes):
+        value=super().payload(claim)
+        value.update(manufacturer="Polaris",query_oem="2206328",matched_sku="2206328",
+                     current_oem="2206328",source=SOURCE)
+        value["dealer_cart_proof"]={
+            "status":"ADMIN_DEALER_CART_PRICE_VERIFIED",
+            "dealer_authenticated":True,"dealer_context_verified":True,
+            "trusted_preflight":True,"cart_restored":True,"production_found":False,
+            "dealer_price_usd":None,"requested_oem":"2206328","resolved_oem":"2206328",
+            "matched_sku":"2206328","currency":"USD","quantity":1,
+            "unit_price_usd":31.25,"subtotal_usd":31.25,
+            "dealer_identity_proof_ref":"synthetic://three-adapter-cart",
+            "category_source_kind":claim["category_source_kind"],
+            "category_source_ref":claim["category_source_ref"],
+            "category_verified_at":claim["category_verified_at"],
+        }
+        return {**value,**changes}
+
+    def claim(self):
+        return super().claim("Polaris","2206328")
+
+    def complete_verified_cache(self):
+        claim=self.claim()
+        response=self.post(self.payload(claim))
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertTrue(response.json()["server_cache_committed"])
 
     def pipeline(self,status,*,expected_requests=1):
         all_arrived=threading.Event();barrier=threading.Barrier(3);errors=[];claims=[]
@@ -149,7 +179,7 @@ class ThreeAdapterTests(CompletionFixture):
         self.assertEqual(results[0]["customer_rub"],3200)
         self.assertEqual(results[1]["_dealer_price_usd"],31.25)
         self.assertEqual(results[2]["dl_usd"],31.25)
-        self.assertEqual(self.dealer_context.user_data['offer:2670-265']['dl_usd'],31.25)
+        self.assertEqual(self.dealer_context.user_data['offer:2206328']['dl_usd'],31.25)
         self.assertIn('USD 31.25',self.dealer_reply.call_args.args[0])
         with sqlite3.connect(self.db) as c:
             self.assertEqual(c.execute("SELECT dealer_price_usd FROM dealer_price_cache").fetchall(),[(31.25,)])
@@ -203,23 +233,22 @@ class ThreeAdapterTests(CompletionFixture):
         self.assertEqual(len(self.snapshot()['dp_live_requests']),0)
 
     def test_runtime_dealer_unverified_gateway_prices_never_found(self):
-        base={'status':'FOUND','manufacturer':'Arctic Cat','query_oem':'2670-265',
+        base={'status':'FOUND','manufacturer':'Polaris','query_oem':'2206328',
               'currency':'USD','last_verified_at':health._now(),'dealer_price_usd':31.25,
-              'source':'verified_local_dcp:server_html:#add_2670-265 .c2 .dbl'}
+              'source':SOURCE}
         for change in ({'source':'public_msrp'},{'currency':'RUB'},
                        {'dealer_price_usd':None,'msrp_usd':999,'rrp':999},
                        {'last_verified_at':'2020-01-01T00:00:00Z'},{'manufacturer':'Honda'}):
             dealer=self.adapters(lambda m,o,**kw:{**base,**change})[2]
             result=dealer()
-            self.assertEqual(result['status'],'NO_PRICE')
+            self.assertEqual(result['status'],'DEALER_PRICE_UNVERIFIED')
             self.assertIsNone(result['dl_usd'])
-            self.assertNotIn('offer:2670-265',self.dealer_context.user_data)
+            self.assertNotIn('offer:2206328',self.dealer_context.user_data)
             self.browser.get_dealer_price_dict.assert_not_called()
         self.assertEqual(len(self.snapshot()['dp_live_requests']),0)
 
     def test_all_adapters_fresh_cache_hit_never_call_live(self):
-        with sqlite3.connect(self.db) as c:
-            completion._write_cache(c,"Arctic Cat","2670-265",31.25,"verified_local_dcp:server_html:#add_2670-265 .c2 .dbl",health._now())
+        self.complete_verified_cache()
         live=Mock(side_effect=AssertionError("cache hit must not request DCP"))
         def lookup(m,o,*,max_age_hours=168):return gateway.request_price(self.db,m,o,live_request=live,max_age_hours=max_age_hours)
         results=[fn() for fn in self.adapters(lookup)]
@@ -237,24 +266,23 @@ class ThreeAdapterTests(CompletionFixture):
         self.assertEqual(before,self.snapshot())
 
     def test_dealer_adapter_rejects_retail_msrp_wrong_identity_and_expiry(self):
-        base={"status":"FOUND","manufacturer":"Arctic Cat","query_oem":"2670-265",
+        base={"status":"FOUND","manufacturer":"Polaris","query_oem":"2206328",
               "currency":"USD","last_verified_at":health._now(),"dealer_price_usd":31.25,
-              "source":"verified_local_dcp:server_html:#add_2670-265 .c2 .dbl"}
+              "source":SOURCE}
         for changes in ({"source":"dealerorders_public_retail"},{"dealer_price_usd":None,"msrp_usd":999},
                         {"currency":"RUB"},{"manufacturer":"Honda"},{"query_oem":"wrong"},
                         {"last_verified_at":"2020-01-01T00:00:00+00:00"}):
             adapter=gateway.SharedDealerPriceAdapter(lambda m,o,**kw:{**base,**changes},max_age_hours=168)
-            self.assertEqual(adapter.get_dealer_price_dict("Arctic Cat","2670-265")["status"],"NO_PRICE")
+            self.assertEqual(adapter.get_dealer_price_dict("Polaris","2206328")["status"],"DEALER_PRICE_UNVERIFIED")
 
     def test_gateway_found_without_atomic_cache_commit_is_not_found(self):
-        result=gateway.request_price(self.db,"Arctic Cat","2670-265",
+        result=gateway.request_price(self.db,"Polaris","2206328",
             live_request=lambda *a,**k:{"status":"FOUND","dealer_price_usd":999,"msrp_usd":999})
         self.assertEqual(result["status"],"NO_PRICE")
         with sqlite3.connect(self.db) as c:self.assertEqual(c.execute("SELECT COUNT(*) FROM dealer_price_cache").fetchone()[0],0)
 
     def test_cache_first_survives_cloudflare_block(self):
-        with sqlite3.connect(self.db) as c:
-            completion._write_cache(c,"Arctic Cat","2670-265",31.25,"verified_local_dcp:server_html:#add_2670-265 .c2 .dbl",health._now())
+        self.complete_verified_cache()
         health.set_health(self.db,"CLOUDFLARE")
         live=Mock(side_effect=AssertionError("fresh cache is available"))
         results=[fn() for fn in self.adapters(lambda m,o,**kw:gateway.request_price(self.db,m,o,live_request=live,**kw))]
