@@ -22,11 +22,71 @@ def _verified_price(result, manufacturer, oem, max_age_hours):
     )
 
 
-def _read_cache(db_file, manufacturer, oem, max_age_hours, *, now=None):
-    """Only server-committed, evidenced Polaris dealer-cart cache is readable.
+def _read_exact_ski_doo_cache(db_file, manufacturer, oem, max_age_hours, *, now=None):
+    """Fail closed: only exact, server-committed Ski-Doo Parts DCP search.
 
-    No cache timestamp refresh or MRSP fallback. Non-Polaris gates unchanged.
+    Existing Polaris cart semantics are untouched; no MSRP/retail fallback.
+    Every accepted value must have an atomic request completion matching the
+    cache value, source, OEM, category authority, and verification timestamp.
     """
+    if manufacturer != "Ski-Doo":
+        return None
+    try:
+        limit=min(float(max_age_hours), 24.0)
+        if not math.isfinite(limit) or limit <= 0:
+            return None
+        observed=now if now is not None else datetime.now(timezone.utc)
+        if observed.tzinfo is None:
+            return None
+        source_values=(
+            f"verified_local_dcp:live_dom:current_oem_{oem}",
+            f"verified_local_dcp:server_html:current_oem_{oem}",
+        )
+        uri=Path(db_file).resolve().as_uri()+"?mode=ro"
+        with closing(sqlite3.connect(uri,uri=True,timeout=5)) as conn:
+            row=conn.execute("""
+                SELECT c.dealer_price_usd,c.source,c.last_verified_at,
+                       r.current_oem,r.request_id,r.result_manufacturer,
+                       r.item_category,r.category_source_kind,
+                       r.category_source_ref,r.category_verified_at
+                  FROM dealer_price_cache c
+                  JOIN dp_live_requests r
+                    ON r.manufacturer=c.manufacturer AND r.oem=c.oem
+                   AND r.dealer_price_usd=c.dealer_price_usd
+                   AND r.result_source=c.source
+                   AND r.cache_committed_at=c.last_verified_at
+                   AND r.result_status='FOUND' AND r.status='finished'
+                 WHERE c.manufacturer=? AND c.oem=?
+                 ORDER BY r.cache_committed_at DESC LIMIT 1
+            """,(manufacturer,oem)).fetchone()
+        if not row:
+            return None
+        price,source,verified,matched,rid,result_mfg,category,kind,ref,cat_verified=row
+        if (source not in source_values or matched!=oem or result_mfg!=manufacturer
+            or category!="Parts" or kind!="explicit_manufacturer_parts_search"
+            or not ref or not cat_verified or not rid
+            or not dp_live_bridge._valid_dp(price,source)):
+            return None
+        stamp=dp_live_bridge.dp_live_health._parse_datetime(verified)
+        if stamp is None:
+            return None
+        age=(observed-stamp).total_seconds()
+        if not -60 <= age <= limit*3600:
+            return None
+        return {"status":"FOUND","manufacturer":manufacturer,"query_oem":oem,
+                "current_oem":oem,"dealer_price_usd":float(price),
+                "source":source,"currency":"USD","last_verified_at":verified,
+                "server_cache_committed":True,"verified_cache_hit":True,
+                "request_id":rid}
+    except (OSError,sqlite3.Error,ValueError,TypeError,OverflowError):
+        return None
+
+
+def _read_cache(db_file, manufacturer, oem, max_age_hours, *, now=None):
+    """Read strictly evidenced, current dealer prices without MSRP fallback."""
+    if manufacturer == "Ski-Doo":
+        return _read_exact_ski_doo_cache(
+            db_file,manufacturer,oem,max_age_hours,now=now)
     if manufacturer != "Polaris":
         return None
     try:
@@ -116,11 +176,24 @@ class SharedDealerPriceAdapter:
             return {"status":"TECHNICAL_ERROR","error_code":"invalid_gateway_response"}
         if result.get("status") != "FOUND":
             return {k:v for k,v in result.items() if k not in {"dealer_price_usd","msrp_usd","retail","rrp"}}
-        # Only Polaris Parts verified dealer-cart cache may bypass legacy HOLD.
-        # Other manufacturers retain their existing Stage 2 behavior.
+        # Preserve the Polaris dealer-cart-only contract unchanged.
         if (manufacturer=="Polaris" and result.get("server_cache_committed") is True
             and _verified_price(result,manufacturer,oem,min(self.max_age_hours,24.0))
             and result.get("source")==SOURCE):
             return {k:v for k,v in result.items() if k not in
                     ("msrp_usd","retail","rrp")}
+        # Allow only the exact server-committed Ski-Doo Parts proof. A raw
+        # FOUND, MSRP, client price or uncorrelated source cannot unlock it.
+        exact_source={
+            f"verified_local_dcp:live_dom:current_oem_{oem}",
+            f"verified_local_dcp:server_html:current_oem_{oem}",
+        }
+        if (manufacturer=="Ski-Doo"
+            and result.get("server_cache_committed") is True
+            and result.get("verified_cache_hit") is True
+            and result.get("current_oem")==oem
+            and result.get("request_id")
+            and result.get("source") in exact_source
+            and _verified_price(result,manufacturer,oem,min(self.max_age_hours,24.0))):
+            return {k:v for k,v in result.items() if k not in ("msrp_usd","retail","rrp")}
         return {"status":"DEALER_PRICE_UNVERIFIED"}
