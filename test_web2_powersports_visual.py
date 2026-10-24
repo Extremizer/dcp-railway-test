@@ -19,9 +19,10 @@ class PowersportsVisualGuards(unittest.TestCase):
     def test_owner_visual_contract(self):
         for needle in ("POWERSPORTS", "MACHINE", "ПРАКТИКА ВЛАДЕНИЯ",
                        "ОБСЛУЖИВАНИЕ", "ЭКСПЛУАТАЦИЯ", "ПОДГОТОВКА",
-                       "Введи", "каталожный номер", "Искать", "LIFE", "OEM +"):
+                       "Введи", "каталожный номер", "Искать", "LIFE"):
             self.assertIn(needle, HTML)
-        self.assertIn('src="/web2-powersports-logo"', HTML)
+        self.assertIn('src="/web2-header-asset/wordmark"', HTML)
+        self.assertIn('href="#oemInput" aria-label="Поиск OEM"', HTML)
         self.assertIn('src="/web2-powersports-hero"', HTML)
         self.assertIn('--acid:#BFF803', CSS)
         self.assertIn('--metal:#D8DAD7', CSS)
