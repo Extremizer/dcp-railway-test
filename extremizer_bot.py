@@ -11816,7 +11816,8 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     jobs=[(selected_manufacturer, oem) for oem in oems]
-    context.user_data["last_search_was_mixed"]=False
+    mixed_mode = False  # Manufacturer-first OEM input; no mixed-search path here.
+    context.user_data["last_search_was_mixed"]=mixed_mode
 
     context.user_data["last_oem"] = jobs[-1][1]
     context.user_data["last_oems"] = [oem for _, oem in jobs]
