@@ -242,6 +242,8 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             adapter=adapter,
             now=now,
             dealer_identity_proof_ref="sha256:missing-sku-e2e",
+            lock_path=Path(self.tmp.name)/"polaris-probe.lock",
+            journal_path=Path(self.tmp.name)/"polaris-probe.json",
         )
         self.assertEqual(result["status"],"FOUND")
         self.assertEqual(result["query_oem"],"2205250")
@@ -269,6 +271,8 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             category_evidence=claim,
             adapter=FakePolarisAdapter(),
             dealer_identity_proof_ref="sha256:isolated-dealer-proof",
+            lock_path=Path(self.tmp.name)/"polaris-probe.lock",
+            journal_path=Path(self.tmp.name)/"polaris-probe.json",
         )
         self.assertEqual(raw["status"], "FOUND")
         self.assertEqual(raw["dealer_price_usd"], 184.07)
@@ -375,6 +379,8 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             category_evidence=claim,
             adapter=FakePolarisAdapter(),
             dealer_identity_proof_ref="sha256:isolated-dealer-proof",
+            lock_path=Path(self.tmp.name)/"polaris-probe.lock",
+            journal_path=Path(self.tmp.name)/"polaris-probe.json",
         )
         raw["dealer_cart_proof"]["cart_restored"] = False
         validated = dp_sync_agent._validated_result(claim, raw)
@@ -430,6 +436,8 @@ class PolarisDealerPriceE2EIntegrationTests(unittest.TestCase):
             category_evidence=claim,
             adapter=FakePolarisAdapter(),
             dealer_identity_proof_ref="sha256:isolated-dealer-proof",
+            lock_path=Path(self.tmp.name)/"polaris-probe.lock",
+            journal_path=Path(self.tmp.name)/"polaris-probe.json",
         )
         value = dp_sync_agent._validated_result(claim, raw)
         return {

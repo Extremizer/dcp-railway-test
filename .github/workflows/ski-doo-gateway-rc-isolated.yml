@@ -45,6 +45,9 @@ jobs:
               "dcp_price_gateway.py",
               "test_ski_doo_exact_gateway_release_candidate.py",
               "test_ski_doo_gateway_bot_acceptance.py",
+              "test_ski_doo_release_compatibility.py",
+              "test_dcp_stage3_consistency.py",
+              "test_dcp_release_rehearsal.py",
               "dcp_isolated_category_fixture.py",
               "test_dcp_three_adapters.py",
               "test_oemixi_secure_gateway_transport.py",
@@ -72,15 +75,19 @@ jobs:
         run: python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py
       - name: Ski-Doo signed gateway to actual bot reply (offline)
         run: python -B test_ski_doo_gateway_bot_acceptance.py
+      - name: Producer, admission, single-writer and paired-release regression
+        run: python -B -m unittest -v test_dp_result_completion.py test_dcp_admission.py test_dcp_stage3_consistency.py test_dcp_producer_v2.py test_dcp_release_rehearsal.py
+      - name: Mixed-version release and rollback compatibility
+        run: python -B test_ski_doo_release_compatibility.py
       - name: Corrected regression fixtures on unchanged release base
         shell: bash
         run: |
           set -euo pipefail
           git worktree add --detach "$RUNNER_TEMP/clean-base" "$RELEASE_BASE_SHA"
           # Use the same corrected tests on both versions; never overlay runtime.
-          for path in dcp_isolated_category_fixture.py test_dcp_three_adapters.py test_oemixi_secure_gateway_transport.py test_polaris_consumer_pricesource.py test_polaris_dp_e2e_integration.py; do
+          for path in dcp_isolated_category_fixture.py test_dcp_three_adapters.py test_oemixi_secure_gateway_transport.py test_polaris_consumer_pricesource.py test_polaris_dp_e2e_integration.py test_dcp_stage3_consistency.py test_dcp_release_rehearsal.py; do
             cp "$path" "$RUNNER_TEMP/clean-base/$path"
           done
           git -C "$RUNNER_TEMP/clean-base" diff --exit-code -- '*.py' ':!dcp_isolated_category_fixture.py' ':!test_*.py'
           cd "$RUNNER_TEMP/clean-base"
-          python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py
+          python -B -m unittest -v test_oemixi_secure_gateway_transport.py test_unified_price_contract_v1.py test_dcp_three_adapters.py test_polaris_consumer_pricesource.py test_dp_result_completion.py test_dcp_admission.py test_dcp_stage3_consistency.py test_dcp_producer_v2.py test_dcp_release_rehearsal.py
