@@ -29,6 +29,25 @@ class GlobalHeaderM0(unittest.TestCase):
         for kind in ("wordmark","search","cart","private"):
             self.assertIn('"'+kind+'":',src)
 
+    def test_png_signature_uses_real_binary_magic(self):
+        import importlib.util
+        import tempfile
+        from unittest.mock import patch
+        import os
+        spec = importlib.util.spec_from_file_location("web2_header_routes_m0", ROOT / "web2_ui_routes.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        png = bytes.fromhex("89504e470d0a1a0a") + b"minimal-test"
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "search.png"
+            path.write_bytes(png)
+            import hashlib
+            with patch.dict(module.HEADER_ASSET_SHA, {"search": hashlib.sha256(png).hexdigest()}):
+                with patch.dict(os.environ, {"EXTREMIZER_HEADER_SEARCH_PATH": str(path)}):
+                    self.assertEqual(module._verified_header_asset("search"), path)
+                    path.write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + b"minimal-test")
+                    self.assertIsNone(module._verified_header_asset("search"))
+
     def test_asset_fail_closed(self):
         for k in ['wordmark','search','cart','private']:
             self.assertIn('"'+k+'":',ROUTES)
