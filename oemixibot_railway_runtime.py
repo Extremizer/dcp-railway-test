@@ -34,6 +34,7 @@ class RuntimeState:
     ready: bool = False
     shutting_down: bool = False
     last_error: str | None = None
+    backup: dict[str, Any] | None = None
     db_path: str | None = None
     gateway_url: str | None = None
 
@@ -44,6 +45,7 @@ class RuntimeState:
             "ready": self.ready,
             "shutting_down": self.shutting_down,
             "last_error": self.last_error,
+            "backup": self.backup,
         }
 
 
@@ -358,6 +360,7 @@ def run(
     application = None
     readiness_stop = None
     readiness_thread = None
+    backup_stop = None
 
     try:
         lock.acquire()
@@ -372,6 +375,9 @@ def run(
             application,
         )
 
+        from oemixi_recurring_backup import start_worker
+        backup_stop = start_worker(state)
+
         # PTB owns SIGINT/SIGTERM handling in the main thread and performs a
         # graceful updater/application shutdown. Railway restart policy can
         # restart the worker after an abnormal exit.
@@ -383,6 +389,8 @@ def run(
         state.last_error = type(exc).__name__
         raise
     finally:
+        if backup_stop is not None:
+            backup_stop.set()
         state.shutting_down = True
         state.ready = False
         if readiness_stop is not None:
