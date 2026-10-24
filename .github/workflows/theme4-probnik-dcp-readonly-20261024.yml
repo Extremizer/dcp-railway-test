@@ -1,0 +1,20 @@
+name: Probnik DCP Readonly Diagnostic
+on:
+  push:
+    branches: [theme4-p2-probnik-dcp-readonly-20261024]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline syntax and classification regression
+        run: |
+          python -B -m compileall -q probnik_dcp_readonly_diagnostic.py test_probnik_dcp_readonly_diagnostic.py
+          python -B -m unittest -v test_probnik_dcp_readonly_diagnostic.py
