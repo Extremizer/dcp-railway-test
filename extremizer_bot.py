@@ -2668,6 +2668,24 @@ def _client_safe_item_name(value) -> str:
 
 def format_client_offer_card(result: dict) -> str:
     status = str(result.get("status") or "").upper()
+    if status == "CACHE_MISS":
+        # The U.S. catalogue is NOT verified; domestic supplier stock is
+        # independent evidence and can still be displayed if fresh.
+        # Never invent MSRP, dealer price, OEM identity, or cart eligibility.
+        oem = _client_stock_oem(result)
+        manufacturer = escape(str(result.get("manufacturer") or "—"))
+        lines = [
+            f"🔎 <b>Запрошен OEM:</b> <code>{escape(oem)}</code>",
+            f"<b>Выбран производитель:</b> {manufacturer}",
+            "",
+            "🇺🇸 <b>Каталог США:</b> данные сейчас не подтверждены.",
+            "Цена США сейчас недоступна. Попробуйте повторить запрос позже.",
+        ]
+        if oem:
+            stock_message = _format_client_stock_message(oem)
+            if stock_message:
+                lines.extend(["", stock_message])
+        return "\n".join(lines)
     if status not in {"FOUND", "PARTIAL"}:
         return format_result(result)
 
