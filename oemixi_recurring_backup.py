@@ -135,9 +135,18 @@ def start_worker(state):
     stop = threading.Event()
     def worker():
         import backup_object_store as store
+        from oemixi_backup_operations import get_alerts, maintenance
+        alerts = None
         while not stop.is_set():
             wait = RETRY
+            phase = 'backup'
             try:
+                alert_init_error = None
+                if alerts is None:
+                    try:
+                        alerts = get_alerts()
+                    except Exception as alert_exc:
+                        alert_init_error = type(alert_exc).__name__
                 try:
                     last = json.loads(store.read_bytes_verified(LATEST))
                 except FileNotFoundError:
@@ -148,9 +157,29 @@ def start_worker(state):
                 state.backup = {'status': 'SUCCESS', 'verification': 'VERIFIED', 'restore_test': 'PASS',
                                 'snapshot_epoch': last['snapshot_epoch']}
                 wait = max(1, last['snapshot_epoch'] + INTERVAL - time.time())
+                if alert_init_error:
+                    state.backup['alerts'] = {'status': 'FAILED', 'error_type': alert_init_error}
+                    wait = min(wait, RETRY)
+                phase = 'retention'
+                state.backup['retention'] = maintenance(store, last)
+                if alerts is not None:
+                    try:
+                        state.backup['alerts'] = alerts.recovered()
+                    except Exception as alert_exc:
+                        state.backup['alerts'] = {'status': 'FAILED', 'error_type': type(alert_exc).__name__}
+                        wait = min(wait, RETRY)
                 print('OEMIXI_BACKUP ' + json.dumps(state.backup), flush=True)
             except Exception as exc:
-                state.backup = {'status': 'FAILED', 'error_type': type(exc).__name__, 'retry_seconds': RETRY}
+                wait = RETRY
+                if phase == 'backup':
+                    state.backup = {'status': 'FAILED', 'error_type': type(exc).__name__, 'retry_seconds': RETRY}
+                else:
+                    state.backup['retention'] = {'status': 'FAILED', 'error_type': type(exc).__name__}
+                if alerts is not None:
+                    try:
+                        state.backup['alerts'] = alerts.failure(phase, type(exc).__name__)
+                    except Exception as alert_exc:
+                        state.backup['alerts'] = {'status': 'FAILED', 'error_type': type(alert_exc).__name__}
                 print('OEMIXI_BACKUP ' + json.dumps(state.backup), flush=True)
             stop.wait(wait)
     thread = threading.Thread(target=worker, name='oemixi-auto-backup', daemon=True)
