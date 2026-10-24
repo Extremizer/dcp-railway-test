@@ -160,6 +160,6 @@ def _verified_header_asset(kind: str) -> Path | None:
         return None
     if kind == "wordmark" and b"<svg" not in data[:4096]:
         return None
-    if kind != "wordmark" and not data.startswith(b"\\x89PNG\\r\\n\\x1a\\n"):
+    if kind != "wordmark" and not data.startswith(bytes.fromhex("89504e470d0a1a0a")):
         return None
     return path
