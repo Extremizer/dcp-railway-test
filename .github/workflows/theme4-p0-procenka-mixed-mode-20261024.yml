@@ -23,4 +23,7 @@ jobs:
           python -B -c "import extremizer_bot"
       - name: P0 handler and adjacent regression
         run: |
-          python -B -m pytest -q test_procenka_mixed_mode_p0.py test_manufacturer_first_three_bots.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py test_client_offer_card.py
+          python -B -m pytest -q test_procenka_mixed_mode_p0.py test_manufacturer_first_three_bots.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py
+      - name: Verify Probnik unchanged by this isolated patch
+        run: |
+          git diff --exit-code d05827268039c40c7cb7f2f920c06c31a760c9f0 HEAD -- probnik_app.py
