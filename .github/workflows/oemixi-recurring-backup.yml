@@ -1,7 +1,7 @@
 name: OEMixi recurring backup
 on:
   push:
-    branches: [fix/oemixi-recurring-backup-20261024]
+    branches: [fix/oemixi-backup-alerts-retention-20261024]
   workflow_dispatch:
 permissions:
   contents: read
@@ -22,18 +22,18 @@ jobs:
       - name: Exact HEAD and isolated scope
         run: |
           test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
-          git diff --check c0b06c27aced8b9024178ede2f01f9d04bb3c333 HEAD
+          git diff --check 4323f26571473e5de71a9bf696b23767a2c6bd7e HEAD
           python - <<'PY'
           import subprocess
-          allowed = {'oemixi_recurring_backup.py', 'oemixibot_railway_runtime.py', 'test_oemixi_recurring_backup.py', '.github/workflows/oemixi-recurring-backup.yml'}
-          changed = set(subprocess.check_output(['git', 'diff', '--name-only', 'c0b06c27aced8b9024178ede2f01f9d04bb3c333', 'HEAD'], text=True).splitlines())
+          allowed = {'oemixi_recurring_backup.py', 'oemixi_backup_operations.py', 'test_oemixi_backup_operations.py', '.github/workflows/oemixi-recurring-backup.yml'}
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only', '4323f26571473e5de71a9bf696b23767a2c6bd7e', 'HEAD'], text=True).splitlines())
           assert changed == allowed, changed
           PY
       - run: python -m pip install -r requirements.txt pytest httpx beautifulsoup4
       - name: Backup safety, restore, runtime and price regressions
         run: >-
           python -B -m unittest -v
-          test_oemixi_recurring_backup test_oemixibot_railway_runtime
+          test_oemixi_backup_operations test_oemixi_recurring_backup test_oemixibot_railway_runtime
           test_ski_doo_exact_gateway_release_candidate test_dcp_authenticated_parts_search
           test_oemixi_secure_gateway_transport test_unified_price_contract_v1 test_dcp_three_adapters test_polaris_consumer_pricesource
           test_ski_doo_gateway_bot_acceptance
