@@ -28,9 +28,17 @@ jobs:
           set -euo pipefail
           echo "EXACT_HEAD=$(git rev-parse HEAD)"
           test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
-          git diff --check HEAD~2 HEAD
+          case "$GITHUB_REF_NAME" in
+            fix/dcp-ski-doo-gateway-core-20261024) BASE_SHA="ee4d22851036faed409f63ef405398f4fb3b1611" ;;
+            fix/dcp-ski-doo-gateway-oemixi-20261024) BASE_SHA="d05827268039c40c7cb7f2f920c06c31a760c9f0" ;;
+            *) exit 44 ;;
+          esac
+          export BASE_SHA
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          git diff --check "$BASE_SHA" HEAD
           python - <<'PY'
           from pathlib import Path
+          import os
           allowed = {
               "dcp_price_gateway.py",
               "test_ski_doo_exact_gateway_release_candidate.py",
@@ -38,7 +46,7 @@ jobs:
           }
           import subprocess
           changed=set(subprocess.check_output(
-              ["git","diff","--name-only","HEAD~2","HEAD"],
+              ["git","diff","--name-only",os.environ["BASE_SHA"],"HEAD"],
               text=True
           ).splitlines())
           assert changed == allowed, (changed, allowed)
