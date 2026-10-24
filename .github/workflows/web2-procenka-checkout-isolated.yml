@@ -12,6 +12,7 @@ on:
       - web2-cart-ux-m3-20261017
       - web2-mobile-responsive-m4-20261017
       - web2-powersports-pr50-oem-ux-fix-20261017
+      - web2-global-header-v11-m0-20261024
   workflow_dispatch:
 
 permissions:
