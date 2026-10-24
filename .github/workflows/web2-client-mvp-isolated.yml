@@ -13,6 +13,7 @@ on:
       - web2-cart-ux-m3-20261017
       - web2-mobile-responsive-m4-20261017
       - web2-powersports-pr50-oem-ux-fix-20261017
+      - web2-global-header-v11-m0-20261024
       - web2-powersports-visual-v1-20261017
   workflow_dispatch:
 
@@ -73,6 +74,9 @@ jobs:
           name: web2-mobile-m4-screenshots
           path: artifacts/mobile-m4/*.png
           if-no-files-found: error
+
+      - name: Global Header M0 structural regression
+        run: python -B -m unittest -v test_web2_global_header_m0.py
 
       - name: Upload MVP screenshots
         uses: actions/upload-artifact@v4
