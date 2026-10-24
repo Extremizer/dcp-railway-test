@@ -26,12 +26,15 @@ def seed_test_category_authority(db_file, *identities):
         conn.execute("""CREATE TABLE IF NOT EXISTS oem_catalog_cache (
             manufacturer TEXT NOT NULL,
             current_oem TEXT NOT NULL,
+            name TEXT,
+            msrp_usd REAL,
+            first_seen_at TEXT,
             catalog TEXT NOT NULL,
             msrp_verified INTEGER NOT NULL,
             source_kind TEXT NOT NULL,
             source_ref TEXT NOT NULL,
             last_verified_at TEXT NOT NULL,
-            previous_oems_json TEXT NOT NULL,
+            previous_oems_json TEXT NOT NULL DEFAULT '[]',
             PRIMARY KEY (manufacturer, current_oem)
         )""")
         conn.execute("""CREATE TABLE IF NOT EXISTS oem_catalog_aliases (
