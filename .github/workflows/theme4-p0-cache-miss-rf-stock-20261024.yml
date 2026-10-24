@@ -1,0 +1,24 @@
+name: P0 Cache Miss RF Stock Isolated
+on:
+  push:
+    branches: [theme4-p0-procenka-cache-miss-rf-stock-20261024]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python -m pip install -r requirements.txt pytest beautifulsoup4
+      - name: Compile and import
+        run: |
+          python -B -m compileall -q extremizer_bot.py test_procenka_cache_miss_rf_stock_p0.py
+          python -B -c "import extremizer_bot"
+      - name: Scoped regression tests
+        run: python -B -m pytest -q test_procenka_cache_miss_rf_stock_p0.py test_procenka_mixed_mode_p0.py test_manufacturer_first_three_bots.py test_procenka_dp_bridge.py test_procenka_partial_parts_bridge.py
