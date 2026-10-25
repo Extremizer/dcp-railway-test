@@ -47,6 +47,18 @@ class UltraVdsMockTests(unittest.TestCase):
         with self.assertRaisesRegex(host.VpsMockBlocked,"mock_only_admission_required"):
             host.preflight(e,uid=1001,platform="linux")
 
+    def test_local_health_mode_disables_remote_grants(self):
+        import dcp_phone_staging_app as appmod
+        env=self.env()
+        env.pop("DCP_RECOVERY_TELEGRAM_BOT_TOKEN")
+        env.pop("DCP_RECOVERY_OWNER_ID")
+        env["DCP_PHONE_ULTRAVDS_LOCAL_PREFLIGHT"]="1"
+        with patch.dict(os.environ,env,clear=True):
+            appmod.configure()
+            self.assertIsNone(appmod.app.state.grants)
+            self.assertIsNone(appmod.app.state.coordinator)
+            self.assertIsNotNone(appmod.app.state.browser)
+
     def test_chromium_args_keep_sandbox_and_loopback(self):
         args=host.browser_args(host.STATE/"test-profile")
         self.assertNotIn("--no-sandbox",args)
