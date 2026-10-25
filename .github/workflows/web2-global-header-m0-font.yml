@@ -1,0 +1,56 @@
+name: WEB2 Global Header M0 Font Gate
+on:
+  push:
+    branches:
+      - web2-global-header-v11-m0-20261024
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manrope-m0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install focused dependencies
+        run: |
+          python -m pip install fastapi playwright
+          python -m playwright install --with-deps chromium
+      - name: Targeted M0 structural and asset tests
+        run: python -m unittest -v test_web2_global_header_m0
+      - name: Browser check local Manrope file and rendered font
+        run: |
+          python - <<'PY'
+          import threading, http.server, socketserver, pathlib, json
+          from playwright.sync_api import sync_playwright
+          root = pathlib.Path.cwd()
+          alias = root / 'web2-static'
+          if not alias.exists():
+              alias.symlink_to(root / 'web2', target_is_directory=True)
+          class Quiet(http.server.SimpleHTTPRequestHandler):
+              def log_message(self, *args): pass
+          with socketserver.TCPServer(('127.0.0.1',0),Quiet) as server:
+              threading.Thread(target=server.serve_forever,daemon=True).start()
+              port=server.server_address[1]
+              with sync_playwright() as pw:
+                  browser=pw.chromium.launch(headless=True)
+                  page=browser.new_page(viewport={'width':1280,'height':800})
+                  page.goto(f'http://127.0.0.1:{port}/web2/index.html')
+                  page.evaluate('document.fonts.ready')
+                  actual=page.evaluate("""() => ({
+                    status: document.fonts.check('500 24px Manrope'),
+                    family: getComputedStyle(document.querySelector('.gh-life')).fontFamily,
+                    size: getComputedStyle(document.querySelector('.gh-life')).fontSize,
+                    faces: [...document.fonts].filter(f=>f.family==='Manrope').map(f=>({status:f.status,weight:f.weight}))
+                  })""")
+                  print(json.dumps(actual,ensure_ascii=False))
+                  assert actual['status'], 'Manrope not rendered'
+                  assert 'Manrope' in actual['family']
+                  assert any(f['status']=='loaded' for f in actual['faces'])
+                  browser.close()
+          PY
