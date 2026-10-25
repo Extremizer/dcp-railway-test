@@ -17,6 +17,22 @@ async function snapshot(){
  if(old.startsWith("blob:")) URL.revokeObjectURL(old);
 }
 async function action(name,payload){await call(name,{method:"POST",body:payload});await snapshot()}
+async function dryrun(){
+ try{
+  $("dryrunStatus").textContent="queued";
+  const queued=await call("dry-run",{method:"POST",body:{manufacturer:"SAFE-MFR",oem:"SAFE-OEM-000"}});
+  $("dryrunStatus").textContent=queued.status+" "+queued.request_id;
+  for(let i=0;i<20;i++){
+   await new Promise(r=>setTimeout(r,500));
+   const result=await call("dry-run/"+encodeURIComponent(queued.request_id));
+   if(result.status==="DRY_RUN_OK"){
+    $("dryrunStatus").textContent="DRY_RUN_OK";
+    return;
+   }
+  }
+  $("dryrunStatus").textContent="TIMEOUT";
+ }catch(e){$("dryrunStatus").textContent=e.message}
+}
 async function start(){
  try{
   const tg=window.Telegram?.WebApp;
@@ -44,4 +60,5 @@ $("viewport").onclick=async e=>{try{
 $("type").onclick=async()=>{const v=$("typing").value;$("typing").value="";try{await action("text",{text:v})}catch(e){message(e.message)}};
 $("up").onclick=()=>action("scroll",{dy:-450}).catch(e=>message(e.message));
 $("down").onclick=()=>action("scroll",{dy:450}).catch(e=>message(e.message));
+$("dryrun").onclick=()=>dryrun();
 start();

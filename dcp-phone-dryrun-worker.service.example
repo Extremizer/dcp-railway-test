@@ -1,0 +1,28 @@
+[Unit]
+Description=EXTREMIZER PHONE-FIRST staging DRY-RUN worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/extremizer/dcp-phone
+Environment=DCP_PHONE_DRYRUN_BASE_URL=https://dcp-phone-mock-only-production.up.railway.app
+Environment=DP_SYNC_TOKEN_FILE=%h/.config/extremizer/dcp-phone-dryrun/dp_sync_token
+Environment=DCP_PHONE_DRYRUN_PRODUCER_ID=cloud-vps-dryrun-0001
+Environment=DCP_PHONE_DRYRUN_INTERVAL_SECONDS=10
+Environment=DCP_PHONE_DRYRUN_TIMEOUT_SECONDS=10
+ExecStart=/usr/bin/python3 -u /opt/extremizer/dcp-phone/dcp_phone_dryrun_worker.py
+Restart=on-failure
+RestartSec=15
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ProtectSystem=strict
+ReadOnlyPaths=/opt/extremizer/dcp-phone
+ReadWritePaths=%h/.config/extremizer/dcp-phone-dryrun
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=default.target
