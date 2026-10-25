@@ -102,3 +102,26 @@ jobs:
           name: m0-header-diagnostic-font-only
           path: m0-browser-evidence/
           if-no-files-found: warn
+
+      - name: Check canonical asset bundle admission
+        id: asset_gate
+        shell: bash
+        run: |
+          if [ -f ci-assets/EXTREMIZER_M0_CANONICAL_ASSETS_4OF4.zip ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::VISUAL HOLD — canonical asset bundle unavailable in CI; full screenshots NOT verified"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Capture original header 4/4 and Manrope (only with archive)
+        if: steps.asset_gate.outputs.available == 'true'
+        run: |
+          python -m pip install uvicorn
+          python scripts/capture_header_m0.py ci-assets/EXTREMIZER_M0_CANONICAL_ASSETS_4OF4.zip --out m0-final-capture
+      - name: Upload 4/4 owner visual evidence
+        if: steps.asset_gate.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: m0-header-original-4of4-manrope
+          path: m0-final-capture/
+          if-no-files-found: error
