@@ -44,7 +44,11 @@ def preflight(env=None, *, uid=None, platform=None):
     }
     if any(env.get(key) != expected for key,expected in required.items()):
         raise VpsMockBlocked("mock_only_admission_required")
-    if not env.get("DCP_RECOVERY_TELEGRAM_BOT_TOKEN") or not env.get("DCP_RECOVERY_OWNER_ID", "").isdigit():
+    local_probe = env.get("DCP_PHONE_ULTRAVDS_LOCAL_PREFLIGHT") == "1"
+    if not local_probe and (
+        not env.get("DCP_RECOVERY_TELEGRAM_BOT_TOKEN")
+        or not env.get("DCP_RECOVERY_OWNER_ID", "").isdigit()
+    ):
         raise VpsMockBlocked("owner_telegram_required")
     if env.get("DCP_CLOUD_STATE_DIR") != str(STATE):
         raise VpsMockBlocked("fixed_state_directory_required")
