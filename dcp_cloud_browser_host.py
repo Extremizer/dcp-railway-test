@@ -110,7 +110,17 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
                         elif "/home/" in err or "/home:" in err:
                             code="crashpad_permission_home"
                         else:
-                            code="crashpad_permission_unknown_path"
+                            # Only emit fixed known errors, never raw stderr or paths.
+                            if "chrome_crashpad_handler" in err and "exec" in err:
+                                code="crashpad_handler_exec_denied"
+                            elif "setuid" in err or "suid" in err:
+                                code="crashpad_setuid_denied"
+                            elif "ptrace" in err:
+                                code="crashpad_ptrace_denied"
+                            elif "socket" in err:
+                                code="crashpad_socket_denied"
+                            else:
+                                code="crashpad_permission_unknown_path"
                     elif "operation not permitted" in err or "sandbox" in err or "namespace" in err:
                         code="crashpad_sandbox_or_namespace_denied"
                     elif "not found" in err or "no such file" in err:
