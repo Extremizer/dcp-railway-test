@@ -99,7 +99,18 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
                     if "database is required" in err:
                         code="crashpad_database_argument_missing"
                     elif "permission denied" in err or "access denied" in err:
-                        code="crashpad_permission_denied"
+                        if "/data/" in err or "/data:" in err:
+                            code="crashpad_permission_data"
+                        elif "/tmp/" in err or "/tmp:" in err:
+                            code="crashpad_permission_tmp"
+                        elif "/dev/shm" in err:
+                            code="crashpad_permission_shm"
+                        elif "/proc/" in err:
+                            code="crashpad_permission_proc"
+                        elif "/home/" in err or "/home:" in err:
+                            code="crashpad_permission_home"
+                        else:
+                            code="crashpad_permission_unknown_path"
                     elif "operation not permitted" in err or "sandbox" in err or "namespace" in err:
                         code="crashpad_sandbox_or_namespace_denied"
                     elif "not found" in err or "no such file" in err:
