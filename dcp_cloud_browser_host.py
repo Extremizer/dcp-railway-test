@@ -131,6 +131,16 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
                     code="chromium_filesystem_permission"
                 else:
                     code="browser_terminated_during_startup"
+                # Show only a bounded, sanitized Chromium diagnostic line.
+                import re
+                lines=[line.strip() for line in err.splitlines() if "crashpad" in line or "permission denied" in line]
+                if lines:
+                    line=lines[0][:400]
+                    line=re.sub(r"(?i)(?:/[a-z0-9_.-]+)+", "[PATH]", line)
+                    line=re.sub(r"(?i)[a-z0-9_.+-]+@[a-z0-9.-]+", "[EMAIL]", line)
+                    line=re.sub(r"(?i)(?:token|password|authorization|cookie)[=: ]+\\S+", "[REDACTED]", line)
+                    line=re.sub(r"[A-Za-z0-9_-]{32,}", "[REDACTED]", line)
+                    print("CHROMIUM_DIAGNOSTIC_SANITIZED",line[:300],flush=True)
                 raise HostConfigurationError(code)
             try:
                 with urllib.request.urlopen("http://127.0.0.1:9222/json/version",timeout=1) as response:
