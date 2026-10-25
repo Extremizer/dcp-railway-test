@@ -96,7 +96,16 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
                 elif any(marker in err for marker in ("cannot open display", "missing x server")):
                     code="chromium_display_unavailable"
                 elif "crashpad" in err:
-                    code="chromium_crashpad_failure"
+                    if "database is required" in err:
+                        code="crashpad_database_argument_missing"
+                    elif "permission denied" in err or "access denied" in err:
+                        code="crashpad_permission_denied"
+                    elif "operation not permitted" in err or "sandbox" in err or "namespace" in err:
+                        code="crashpad_sandbox_or_namespace_denied"
+                    elif "not found" in err or "no such file" in err:
+                        code="crashpad_missing_file"
+                    else:
+                        code="chromium_crashpad_failure"
                 elif "permission denied" in err:
                     code="chromium_filesystem_permission"
                 else:
