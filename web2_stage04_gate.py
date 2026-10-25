@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
 from fastapi import FastAPI, HTTPException, File, Form, UploadFile
+from web2_stage04_icon_patch import corrected_png, APPROVED_CORRECTED_PIXEL_SHA256
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 
 ARCHIVE_SHA = "37da3250803462f0a846d29517da20634cd19cd0aee2e89abd8b23a8ce58d508"
@@ -60,15 +61,23 @@ def attach_stage04(app: FastAPI) -> None:
 
     @app.get("/web2/stage04/assets/approved_powersports_1536x1024.png", include_in_schema=False)
     def image() -> Response:
-        return Response(_read_archive()["assets/approved_powersports_1536x1024.png"], media_type="image/png",
-            headers={"Cache-Control":"no-store","X-Content-SHA256":EXPECTED["assets/approved_powersports_1536x1024.png"]})
+        source = _read_archive()["assets/approved_powersports_1536x1024.png"]
+        try:
+            corrected, _ = corrected_png(source)
+        except ValueError as exc:
+            raise HTTPException(503, f"ICON_PATCH_FAIL_CLOSED:{exc}") from None
+        return Response(corrected, media_type="image/png",
+            headers={"Cache-Control":"no-store","X-Content-SHA256":hashlib.sha256(corrected).hexdigest(),
+                     "X-Extremizer-Source-Image-SHA256":EXPECTED["assets/approved_powersports_1536x1024.png"],
+                     "X-Extremizer-Corrected-Pixel-SHA256":APPROVED_CORRECTED_PIXEL_SHA256})
 
     @app.get("/web2/stage04/asset-gate", include_in_schema=False)
     def gate() -> JSONResponse:
         _read_archive()
         return JSONResponse({"status":"READY","archive_sha256":ARCHIVE_SHA,
           "image_sha256":EXPECTED["assets/approved_powersports_1536x1024.png"],
-          "synthetic_oem_only":True,"production_data":False},headers={"Cache-Control":"no-store"})
+          "synthetic_oem_only":True,"production_data":False,"icons_patch":"APPROVED_TWO_RECTANGLES",
+          "corrected_pixel_sha256":APPROVED_CORRECTED_PIXEL_SHA256},headers={"Cache-Control":"no-store"})
 
     @app.get("/web2/stage04/upload", include_in_schema=False)
     def upload_page_disabled():
