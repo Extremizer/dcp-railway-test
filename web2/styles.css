@@ -379,7 +379,14 @@ main {max-width:none;margin:0;padding:0;}
 .global-header-v11 .brand-slot { flex:0 1 clamp(175px,24vw,360px); width:auto; height:65px; min-width:0; }
 .global-header-v11 .brand-logo { width:100%; max-height:65px; height:100%; object-fit:contain; object-position:left center; }
 .global-header-nav { --gh-ink-gap:var(--gh-l1); margin-left:auto; display:flex; flex-wrap:nowrap; gap:0; align-items:center; justify-content:flex-end; min-width:0; }
+/* L1 is measured from visible icon ink, not the 44px touch-box. */
 .global-header-nav .gh-separator { flex:0 0 1px; width:1px; height:26px; background:var(--gh-gray); opacity:1; margin-inline:var(--gh-l1); }
+/* Search/cart/private PNGs have transparent padding inside their 44px targets.
+   Compensate only the icon-facing separator sides; label-facing sides stay L1. */
+.global-header-nav .gh-separator:nth-child(2) { margin-left:max(0px,calc(var(--gh-l1) - 9px)); }
+.global-header-nav .gh-separator:nth-child(4) { margin-right:max(0px,calc(var(--gh-l1) - 9px)); }
+.global-header-nav .gh-separator:nth-child(6) { margin-left:max(0px,calc(var(--gh-l1) - 9px)); }
+.global-header-nav .gh-separator:nth-child(8) { margin-right:max(0px,calc(var(--gh-l1) - 10px)); }
 .global-header-nav .gh-label { font-family:Manrope,Arial,sans-serif; font-size:24px; font-weight:500; font-style:normal; letter-spacing:0; text-transform:uppercase; color:var(--gh-gray); text-decoration:none; line-height:1.3; white-space:nowrap; display:inline-flex; align-items:center; justify-content:center; min-height:44px; }
 .global-header-nav .gh-action { display:inline-flex; position:relative; align-items:center; justify-content:center; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border:0; border-radius:0; background:transparent; color:var(--gh-gray); box-shadow:none; text-decoration:none; }
 .global-header-nav .gh-action img { display:block; width:30px; height:30px; object-fit:contain; }
@@ -396,7 +403,7 @@ main {max-width:none;margin:0;padding:0;}
  .global-header-nav .gh-separator { margin-inline:var(--gh-l1); }
 }
 @media(max-width:430px) {
- .global-header-nav { justify-content:space-between; }
+ .global-header-nav { justify-content:flex-end; }
  .global-header-v11 { --gh-l1:clamp(3px,1vw,5px); }
  .global-header-nav .gh-label { font-size:clamp(14px,4.2vw,18px); }
  .global-header-nav .gh-separator { height:20px; }
