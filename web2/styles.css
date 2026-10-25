@@ -441,8 +441,8 @@ main {max-width:none;margin:0;padding:0;}
     display:flex;
     justify-content:center;
     align-items:center;
-    width:clamp(96px,27vw,116px);
-    max-width:calc(100% - 240px);
+    width:clamp(132px,38vw,164px);
+    max-width:calc(100% - 216px);
     height:44px;
     min-width:0;
     margin:0;
@@ -457,7 +457,7 @@ main {max-width:none;margin:0;padding:0;}
   }
   .global-header-nav {
     display:grid;
-    grid-template-columns:minmax(0,1fr) minmax(44px,1fr) minmax(0,1fr);
+    grid-template-columns:repeat(3,minmax(0,1fr));
     grid-template-rows:44px 44px;
     align-items:center;
     justify-items:center;
@@ -477,8 +477,8 @@ main {max-width:none;margin:0;padding:0;}
     min-height:44px;
     padding:0;
   }
-  .global-header-nav .gh-life { grid-row:1; grid-column:1; justify-self:start; }
-  .global-header-nav .gh-hub { grid-row:1; grid-column:3; justify-self:end; }
+  .global-header-nav .gh-life { grid-row:1; grid-column:1; justify-self:center; }
+  .global-header-nav .gh-hub { grid-row:1; grid-column:3; justify-self:center; }
   .global-header-nav .gh-search { grid-row:2; grid-column:1; }
   .global-header-nav .gh-cart { grid-row:2; grid-column:2; }
   .global-header-nav .gh-private { grid-row:2; grid-column:3; }
