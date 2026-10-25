@@ -13,6 +13,8 @@ app = FastAPI(title="EXTREMIZER WEB2 isolated MOCK staging", docs_url=None, redo
 attach_web2_ui(app)
 from web2_stage04_gate import attach_stage04
 attach_stage04(app)
+from web2_stage04_mobile_qa import attach_mobile_qa
+attach_mobile_qa(app)
 
 TEST_OEM = "417300574"
 
