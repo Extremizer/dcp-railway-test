@@ -408,4 +408,9 @@ main {max-width:none;margin:0;padding:0;}
  .global-header-nav .gh-label { font-size:clamp(14px,4.2vw,18px); }
  .global-header-nav .gh-separator { height:20px; }
  .global-header-nav .gh-action { width:44px; min-width:44px; }
+ /* Compensate the ~9px visual PNG side padding, preserving 44px touch boxes. */
+ .global-header-nav .gh-separator:nth-child(2),
+ .global-header-nav .gh-separator:nth-child(6) { margin-left:-5px; }
+ .global-header-nav .gh-separator:nth-child(4),
+ .global-header-nav .gh-separator:nth-child(8) { margin-right:-5px; }
 }
