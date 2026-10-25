@@ -11,6 +11,8 @@ from web2_ui_routes import attach_web2_ui
 
 app = FastAPI(title="EXTREMIZER WEB2 isolated MOCK staging", docs_url=None, redoc_url=None, openapi_url=None)
 attach_web2_ui(app)
+from web2_stage04_gate import attach_stage04
+attach_stage04(app)
 
 TEST_OEM = "417300574"
 
