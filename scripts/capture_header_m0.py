@@ -70,7 +70,9 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                 assert data["manrope"] and "loaded" in data["faces"]
                 assert not data["overflow"]
                 assert all(responses.get(name)==200 for name in ("wordmark","search","cart","private")), responses
-                assert sum(x["imgLoaded"] is True for x in data["elements"])==3, "all three navigation icons must render"\n                logo=page.locator("header.global-header-v11 .brand-logo")\n                assert logo.evaluate("(el) => el.complete && el.naturalWidth > 0 && !el.hidden"), "approved SVG wordmark must render"
+                assert sum(x["imgLoaded"] is True for x in data["elements"])==3, "all three navigation icons must render"
+                logo=page.locator("header.global-header-v11 .brand-logo")
+                assert logo.evaluate("(el) => el.complete && el.naturalWidth > 0 && !el.hidden"), "approved SVG wordmark must render"
                 page.locator("header.global-header-v11").screenshot(path=str(out/f"header_{width}.png"))
                 (out/f"header_{width}_metrics.json").write_text(json.dumps(data,ensure_ascii=False,indent=2))
                 page.close()
