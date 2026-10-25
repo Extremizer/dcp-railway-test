@@ -465,6 +465,30 @@ main {max-width:none;margin:0;padding:0;}
     margin:0;
     gap:8px 0;
   }
+  /* Approved source: one horizontal rule and two row-2 dividers. */
+  .global-header-v11::after {
+    content:"";
+    position:absolute;
+    top:64px;
+    left:12px;
+    right:12px;
+    height:1px;
+    background:#434343;
+    pointer-events:none;
+  }
+  .global-header-nav { position:relative; }
+  .global-header-nav::before,
+  .global-header-nav::after {
+    content:"";
+    position:absolute;
+    top:60px;
+    height:30px;
+    width:1px;
+    background:#555;
+    pointer-events:none;
+  }
+  .global-header-nav::before { left:33.333333%; }
+  .global-header-nav::after { left:66.666667%; }
   .global-header-nav .gh-separator { display:none; }
   .global-header-nav .gh-label {
     font-family:Manrope,Arial,sans-serif;
