@@ -1,3 +1,11 @@
+/* Local Manrope / official Google Fonts OFL 1.1, M0 font gate. */
+@font-face {
+  font-family: "Manrope";
+  src: url("/web2-static/fonts/Manrope-variable.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
 :root {
   --bg: #050606;
   --panel: #0d0f0f;
