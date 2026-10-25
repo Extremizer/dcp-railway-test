@@ -71,36 +71,9 @@ def attach_stage04(app: FastAPI) -> None:
           "synthetic_oem_only":True,"production_data":False},headers={"Cache-Control":"no-store"})
 
     @app.get("/web2/stage04/upload", include_in_schema=False)
-    def upload_page() -> HTMLResponse:
-        return HTMLResponse('''<!doctype html><html lang="ru"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow"><title>EXTREMIZER STAGE04 asset upload</title><style>body{background:#080808;color:#fff;font:16px Arial;padding:20px;max-width:780px;margin:auto}input,button{font:16px Arial;margin:8px 0;padding:10px}button{background:#BFF803;border:0;cursor:pointer}p{color:#A5A5A5}</style><h2>POWERSPORTS — загрузка утверждённого ZIP</h2><p>Только изолированный staging. Принимается исключительно побайтово идентичный EXTREMIZER_POWERSPORTS_WEB_STAGE_02_OEM_WEB2.zip. Неверный SHA-256 будет отвергнут.</p><form method="post" enctype="multipart/form-data"><label>STAGE04 upload token <input type="password" name="token" required autocomplete="off"></label><p><input type="file" name="asset" accept=".zip" required></p><button type="submit">Загрузить утверждённый ZIP</button></form></html>''', headers={"Cache-Control":"no-store"})
+    def upload_page_disabled():
+        raise HTTPException(410, "STAGE04_UPLOAD_CLOSED")
 
     @app.post("/web2/stage04/upload", include_in_schema=False)
-    async def upload_asset(token: str = Form(...), asset: UploadFile = File(...)) -> HTMLResponse:
-        expected_token = os.environ.get("EXTREMIZER_STAGE04_UPLOAD_TOKEN","")
-        if not expected_token or not hmac.compare_digest(token,expected_token):
-            raise HTTPException(403,"UPLOAD_AUTH_REQUIRED")
-        data = await asset.read(ARCHIVE_SIZE+1)
-        if len(data)!=ARCHIVE_SIZE or hashlib.sha256(data).hexdigest()!=ARCHIVE_SHA:
-            raise HTTPException(422,"APPROVED_STAGE02_ZIP_SHA_OR_SIZE_MISMATCH")
-        try:
-            with ZipFile(io.BytesIO(data)) as z:
-                for key,digest in EXPECTED.items():
-                    if hashlib.sha256(z.read(ROOT+key)).hexdigest()!=digest:
-                        raise HTTPException(422,"APPROVED_STAGE02_ASSET_SHA_MISMATCH")
-        except (BadZipFile,KeyError):
-            raise HTTPException(422,"APPROVED_STAGE02_ZIP_INVALID") from None
-        if not STAGING_ZIP_PATH.parent.is_dir():
-            raise HTTPException(503,"STAGE04_VOLUME_NOT_MOUNTED")
-        temp=None
-        try:
-            with tempfile.NamedTemporaryFile(dir=STAGING_ZIP_PATH.parent,prefix=".stage04-",delete=False) as f:
-                temp=f.name
-                f.write(data)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(temp,STAGING_ZIP_PATH)
-        finally:
-            if temp and os.path.exists(temp):
-                os.unlink(temp)
-        _read_archive()
-        return HTMLResponse('''<!doctype html><html lang="ru"><meta name="viewport" content="width=device-width,initial-scale=1"><body style="background:#080808;color:#BFF803;font:18px Arial;padding:36px"><h2>SHA-256 PASS — исходник установлен.</h2><p><a style="color:#BFF803" href="/web2/stage04">Открыть POWERSPORTS STAGE04</a></p></body></html>''',headers={"Cache-Control":"no-store"})
+    async def upload_asset_disabled():
+        raise HTTPException(410, "STAGE04_UPLOAD_CLOSED")
