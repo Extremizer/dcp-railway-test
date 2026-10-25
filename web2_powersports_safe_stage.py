@@ -15,6 +15,8 @@ from web2_stage04_gate import attach_stage04
 attach_stage04(app)
 from web2_stage04_mobile_qa import attach_mobile_qa
 attach_mobile_qa(app)
+from web2_stage04_mobile_candidate import attach_mobile_candidate
+attach_mobile_candidate(app)
 
 TEST_OEM = "417300574"
 
