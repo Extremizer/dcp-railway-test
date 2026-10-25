@@ -441,8 +441,8 @@ main {max-width:none;margin:0;padding:0;}
     display:flex;
     justify-content:center;
     align-items:center;
-    width:clamp(124px,35vw,150px);
-    max-width:calc(100% - 202px);
+    width:clamp(130px,36.5vw,156px);
+    max-width:calc(100% - 224px);
     height:44px;
     min-width:0;
     margin:0;
