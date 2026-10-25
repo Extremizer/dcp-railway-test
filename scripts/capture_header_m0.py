@@ -69,8 +69,8 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                 }""")
                 assert data["manrope"] and "loaded" in data["faces"]
                 assert not data["overflow"]
-                assert all(r==200 for name,r in responses.items() if name in ("wordmark","search","cart","private"))
-                assert sum(x["imgLoaded"] is True for x in data["elements"])==3
+                assert all(responses.get(name)==200 for name in ("wordmark","search","cart","private")), responses
+                assert sum(x["imgLoaded"] is True for x in data["elements"])==4, "all four original header images must render"
                 page.locator("header.global-header-v11").screenshot(path=str(out/f"header_{width}.png"))
                 (out/f"header_{width}_metrics.json").write_text(json.dumps(data,ensure_ascii=False,indent=2))
                 page.close()
