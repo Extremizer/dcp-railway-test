@@ -21,8 +21,13 @@ class MockBrowser(RemoteBrowser):
         import urllib.request,urllib.parse,websocket,threading
         with urllib.request.urlopen(self.endpoint,timeout=3) as r:
             pages=json.load(r)
-        matches=[p for p in pages if p.get("type")=="page" and
-           str(p.get("url","")).startswith("file:///app/dcp_phone_staging_mock.html")]
+        expected_url = ("file:///home/extremizer-dcp/snap/chromium/common/dcp-phone-first-mock.html"
+                        if os.getenv("DCP_PHONE_ULTRAVDS_MOCK_ONLY") == "1"
+                        and os.getenv("DCP_PHONE_STAGING_MOCK_ONLY") == "1"
+                        and os.getenv("DCP_CLOUD_PRODUCER_ENABLED") == "0"
+                        and os.getenv("DCP_LIVE_NAVIGATION_GO") == "0"
+                        else "file:///app/dcp_phone_staging_mock.html")
+        matches=[p for p in pages if p.get("type")=="page" and p.get("url")==expected_url]
         if len(matches)!=1:raise BrowserUnavailable("mock_tab_required")
         target=urllib.parse.urlsplit(matches[0]["webSocketDebuggerUrl"])
         if target.hostname not in ("127.0.0.1","localhost") or target.port!=9222 or target.scheme!="ws":
