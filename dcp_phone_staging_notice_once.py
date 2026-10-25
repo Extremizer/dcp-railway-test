@@ -24,7 +24,8 @@ def send_once(*, coordinator, state_dir, request_id: str, browser_status: str) -
     digest=hashlib.sha256(request_id.encode()).hexdigest()
     marker=state/("phone-test-notification-"+digest+".lock")
     try:
-        fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY|os.O_NOFOLLOW,0o600)
+        nofollow=getattr(os,"O_NOFOLLOW",0)
+        fd=os.open(marker,os.O_CREAT|os.O_EXCL|os.O_WRONLY|nofollow,0o600)
     except FileExistsError:
         return "ALREADY_ATTEMPTED"
     try:

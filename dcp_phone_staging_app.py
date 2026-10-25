@@ -12,8 +12,17 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
+import dp_sync_protocol
+import dp_cloud_producer_ownership as cloud_owner
+import dcp_phone_dryrun_contract as dryrun
 from dcp_phone_recovery_core import RecoveryGrants, RecoveryDenied, BrowserUnavailable, RemoteBrowser
 from dcp_phone_recovery_notice import RecoveryNoticeCoordinator,send_recovery_message
+
+def signing_key(scoped_token: str) -> bytes:
+    import hashlib
+    if not isinstance(scoped_token, str) or len(scoped_token.strip()) < 32:
+        raise ValueError("dedicated_dp_signing_token_required")
+    return hashlib.sha256(b"extremizer-dp-sync-v1\0" + scoped_token.encode()).digest()
 
 class MockBrowser(RemoteBrowser):
     def _call(self,method,params=None):
@@ -49,6 +58,8 @@ app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
 app.state.grants=None
 app.state.browser=None
 app.state.coordinator=None
+app.state.dry_run_db=None
+app.state.dry_run_key=None
 
 def _telegram_getme_readonly(token: str, *, opener=None) -> str:
     """GET /getMe without sending messages; returns only whitelisted diagnostic codes.
@@ -105,6 +116,13 @@ def configure():
     if not bot or not owner.isdigit():return
     app.state.grants=RecoveryGrants(bot,int(owner))
     app.state.browser=MockBrowser()
+    if os.getenv("DCP_PHONE_STAGING_DRY_RUN") == "1":
+        token = os.getenv("DP_SYNC_TOKEN", "")
+        state = Path(os.getenv("DCP_CLOUD_STATE_DIR", "/data"))
+        if token and state.is_dir() and not state.is_symlink():
+            app.state.dry_run_db = state / "phone-dry-run.sqlite"
+            app.state.dry_run_key = signing_key(token)
+            dryrun.init(app.state.dry_run_db)
     url=os.getenv("DCP_RECOVERY_PUBLIC_URL","")
     if url.startswith("https://"):
         from dcp_phone_recovery_notice import recovery_url
@@ -167,13 +185,28 @@ async def secure(request,call_next):
 
 @app.get("/health")
 def health():
-    return {"mode":"MOCK_ONLY","ready":app.state.browser is not None,"dcp_enabled":False,"admission":False}
+    return {"mode":"MOCK_ONLY","ready":app.state.browser is not None,"dcp_enabled":False,
+            "admission":False,"dry_run_enabled":app.state.dry_run_db is not None}
 
 def auth(header):
     if not app.state.grants or not app.state.browser:raise HTTPException(503,detail="staging_not_configured")
     if not header or not header.startswith("Bearer ") or not app.state.grants.authorized(header[7:]):
         raise HTTPException(401,detail="unauthorized")
     return header[7:]
+
+async def signed_producer(request: Request, path: str, method: str,
+                          ts: str | None, sig: str | None,
+                          version: str | None, producer: str | None) -> bytes:
+    if app.state.dry_run_db is None or app.state.dry_run_key is None:
+        raise HTTPException(503,detail={"code":"dry_run_disabled"})
+    if version != "2":
+        raise HTTPException(401,detail={"code":"signed_v2_required"})
+    body = await request.body()
+    try:
+        dp_sync_protocol.verify(app.state.dry_run_key, method, path, ts, producer, body, sig)
+    except dp_sync_protocol.ProtocolError as exc:
+        raise HTTPException(401,detail={"code":str(exc)}) from None
+    return body
 
 @app.get("/recovery")
 def page():
@@ -196,6 +229,92 @@ def exchange(p:Exchange):
     if not app.state.grants:raise HTTPException(503,detail="not_configured")
     try:return {"bearer":app.state.grants.exchange(p.ticket,p.init_data),"expires_in_seconds":720}
     except RecoveryDenied:raise HTTPException(401,detail="unauthorized")
+
+class DryRunRequest(BaseModel):
+    manufacturer:str
+    oem:str
+
+@app.post("/recovery/dry-run")
+def recovery_dry_run(p:DryRunRequest, authorization:str|None=Header(None)):
+    auth(authorization)
+    if app.state.dry_run_db is None:
+        raise HTTPException(503,detail={"code":"dry_run_disabled"})
+    try:
+        return dryrun.enqueue(app.state.dry_run_db,p.manufacturer,p.oem)
+    except dryrun.DryRunError as exc:
+        raise HTTPException(exc.status_code,detail={"code":exc.code}) from None
+
+@app.get("/recovery/dry-run/{request_id}")
+def recovery_dry_run_result(request_id:str, authorization:str|None=Header(None)):
+    auth(authorization)
+    if app.state.dry_run_db is None:
+        raise HTTPException(503,detail={"code":"dry_run_disabled"})
+    try:
+        return dryrun.get_result(app.state.dry_run_db,request_id)
+    except dryrun.DryRunError as exc:
+        raise HTTPException(exc.status_code,detail={"code":exc.code}) from None
+
+@app.post("/internal/dp-cloud/owner/{operation}")
+async def dry_run_owner(operation: str, request: Request,
+    x_dp_sync_ts: str | None = Header(default=None),
+    x_dp_sync_sig: str | None = Header(default=None),
+    x_dp_protocol: str | None = Header(default=None),
+    x_dp_producer_id: str | None = Header(default=None)):
+    path=f"/internal/dp-cloud/owner/{operation}"
+    body=await signed_producer(request,path,"POST",x_dp_sync_ts,x_dp_sync_sig,x_dp_protocol,x_dp_producer_id)
+    try:
+        payload=json.loads(body)
+    except (ValueError,UnicodeDecodeError):
+        raise HTTPException(400,detail={"code":"invalid_owner_payload"}) from None
+    if operation == "acquire" and payload != {}:
+        raise HTTPException(400,detail={"code":"invalid_owner_payload"})
+    if operation in {"renew","release"} and (set(payload)!={"owner_epoch"} or not isinstance(payload["owner_epoch"],str)):
+        raise HTTPException(400,detail={"code":"invalid_owner_payload"})
+    if operation not in {"acquire","renew","release"}:
+        raise HTTPException(404,detail={"code":"operation_not_found"})
+    import sqlite3
+    with sqlite3.connect(str(app.state.dry_run_db),timeout=10) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if operation == "acquire":
+            outcome=cloud_owner.acquire(conn,x_dp_producer_id)
+        elif operation == "renew":
+            outcome=cloud_owner.renew(conn,x_dp_producer_id,payload["owner_epoch"])
+        else:
+            outcome=cloud_owner.release(conn,x_dp_producer_id,payload["owner_epoch"])
+        conn.commit()
+    if outcome["status"] not in {"ACQUIRED","RENEWED","RELEASED"}:
+        raise HTTPException(409,detail={"code":outcome["status"].lower()})
+    return outcome
+
+@app.get("/internal/dp-cloud/next")
+async def dry_run_next(request: Request,
+    x_dp_sync_ts: str | None = Header(default=None),
+    x_dp_sync_sig: str | None = Header(default=None),
+    x_dp_protocol: str | None = Header(default=None),
+    x_dp_producer_id: str | None = Header(default=None),
+    x_dp_owner_epoch: str | None = Header(default=None)):
+    await signed_producer(request,"/internal/dp-cloud/next","GET",x_dp_sync_ts,x_dp_sync_sig,x_dp_protocol,x_dp_producer_id)
+    if not x_dp_owner_epoch:
+        raise HTTPException(409,detail={"code":"owner_epoch_missing"})
+    return {"request":dryrun.claim_next(app.state.dry_run_db,producer_id=x_dp_producer_id,owner_epoch=x_dp_owner_epoch)}
+
+@app.post("/internal/dp-cloud/result")
+async def dry_run_result(request: Request,
+    x_dp_sync_ts: str | None = Header(default=None),
+    x_dp_sync_sig: str | None = Header(default=None),
+    x_dp_protocol: str | None = Header(default=None),
+    x_dp_producer_id: str | None = Header(default=None)):
+    body=await signed_producer(request,"/internal/dp-cloud/result","POST",x_dp_sync_ts,x_dp_sync_sig,x_dp_protocol,x_dp_producer_id)
+    try:
+        payload=json.loads(body)
+    except (ValueError,UnicodeDecodeError):
+        raise HTTPException(400,detail={"code":"invalid_result_payload"}) from None
+    if payload.get("producer_id") != x_dp_producer_id:
+        raise HTTPException(409,detail={"code":"claim_fence_mismatch"})
+    try:
+        return dryrun.complete(app.state.dry_run_db,payload)
+    except dryrun.DryRunError as exc:
+        raise HTTPException(exc.status_code,detail={"code":exc.code}) from None
 
 @app.get("/recovery/status")
 def status(authorization:str|None=Header(None)):

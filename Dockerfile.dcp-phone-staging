@@ -3,6 +3,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
 WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir 'fastapi>=0.115,<1' 'uvicorn>=0.34,<1' 'websocket-client>=1.9,<2'
-COPY dcp_phone_staging_app.py dcp_phone_recovery_core.py dcp_phone_recovery_notice.py dcp_phone_recovery.html dcp_phone_recovery.css dcp_phone_recovery.js dcp_phone_staging_mock.html dcp_phone_staging_entrypoint.py dcp_phone_staging_notice_once.py /app/
+COPY dcp_phone_staging_app.py dcp_phone_recovery_core.py dcp_phone_recovery_notice.py dcp_phone_recovery.html dcp_phone_recovery.css dcp_phone_recovery.js dcp_phone_staging_mock.html dcp_phone_staging_entrypoint.py dcp_phone_staging_notice_once.py dcp_phone_dryrun_contract.py dp_sync_protocol.py dp_cloud_producer_ownership.py /app/
 ENV PYTHONUNBUFFERED=1 DCP_PHONE_STAGING_MOCK_ONLY=1
 CMD ["python","-u","dcp_phone_staging_entrypoint.py"]
