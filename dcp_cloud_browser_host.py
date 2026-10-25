@@ -8,6 +8,7 @@ global server-side ownership and separately authorized to use DCP.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 import shutil
 import signal
@@ -62,6 +63,7 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
     lockpath=state/"cloud-browser-owner.lock"
     descriptor=os.open(lockpath,os.O_RDWR|os.O_CREAT|os.O_NOFOLLOW,0o600)
     browser=None
+    diagnostic=tempfile.TemporaryFile(mode="w+b")
     try:
         fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
         browser=subprocess.Popen([
@@ -74,11 +76,23 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
             "file:///app/dcp_phone_staging_mock.html"
             if os.environ.get("DCP_PHONE_STAGING_MOCK_ONLY") == "1"
             else "about:blank",
-        ],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+        ],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=diagnostic,
         close_fds=True,start_new_session=True)
         for _ in range(35):
             if browser.poll() is not None:
-                raise HostConfigurationError("browser_terminated_during_startup")
+                diagnostic.seek(0)
+                err=diagnostic.read(8192).decode("utf-8","replace").lower()
+                if any(marker in err for marker in ("no usable sandbox", "failed to move to new namespace", "operation not permitted", "namespace sandbox")):
+                    code="chromium_sandbox_unavailable"
+                elif any(marker in err for marker in ("cannot open display", "missing x server")):
+                    code="chromium_display_unavailable"
+                elif "crashpad" in err:
+                    code="chromium_crashpad_failure"
+                elif "permission denied" in err:
+                    code="chromium_filesystem_permission"
+                else:
+                    code="browser_terminated_during_startup"
+                raise HostConfigurationError(code)
             try:
                 with urllib.request.urlopen("http://127.0.0.1:9222/json/version",timeout=1) as response:
                     if response.status==200:break
@@ -94,6 +108,7 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
             browser.terminate()
             try:browser.wait(timeout=5)
             except subprocess.TimeoutExpired:browser.kill()
+        diagnostic.close()
         os.close(descriptor)
 
 
