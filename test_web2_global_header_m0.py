@@ -48,6 +48,16 @@ class GlobalHeaderM0(unittest.TestCase):
                     path.write_bytes(b"\\x89PNG\\r\\n\\x1a\\n" + b"minimal-test")
                     self.assertIsNone(module._verified_header_asset("search"))
 
+    def test_local_manrope_without_external_dependency(self):
+        self.assertIn('font-family: "Manrope"',CSS)
+        self.assertIn('/web2-static/fonts/Manrope-variable.ttf',CSS)
+        self.assertIn('font-weight: 200 800',CSS)
+        self.assertNotIn('fonts.googleapis.com',HTML)
+        font = ROOT / 'web2/fonts/Manrope-variable.ttf'
+        self.assertTrue(font.is_file())
+        self.assertEqual(font.read_bytes()[:4], bytes.fromhex('00010000'))
+        self.assertTrue((ROOT / 'web2/fonts/OFL.txt').is_file())
+
     def test_asset_fail_closed(self):
         for k in ['wordmark','search','cart','private']:
             self.assertIn('"'+k+'":',ROUTES)
