@@ -105,6 +105,16 @@ def _telegram_getme_readonly(token: str, *, opener=None) -> str:
 @app.on_event("startup")
 def configure():
     if os.getenv("DCP_PHONE_STAGING_MOCK_ONLY")!="1":return
+    # VPS localhost smoke: report browser readiness with NO Telegram grants
+    # and NO remotely authorized browser actions.
+    if (os.getenv("DCP_PHONE_ULTRAVDS_MOCK_ONLY")=="1"
+        and os.getenv("DCP_PHONE_ULTRAVDS_LOCAL_PREFLIGHT")=="1"
+        and os.getenv("DCP_CLOUD_PRODUCER_ENABLED")=="0"
+        and os.getenv("DCP_LIVE_NAVIGATION_GO")=="0"):
+        app.state.grants=None
+        app.state.coordinator=None
+        app.state.browser=MockBrowser()
+        return
     bot=os.getenv("DCP_RECOVERY_TELEGRAM_BOT_TOKEN","")
     owner=os.getenv("DCP_RECOVERY_OWNER_ID","")
     if not bot or not owner.isdigit():return
