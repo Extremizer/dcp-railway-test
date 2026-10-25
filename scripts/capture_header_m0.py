@@ -5,23 +5,36 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from playwright.sync_api import sync_playwright
 
 SHA = {
-    "wordmark.svg":"0651e2d482c496ac135497910506b1ae7d0672d55d6e47f9cf7f87f87b3c5afa",
-    "search.png":"26d942c4f05047ae12aab0de024dbc9723a8179789385c16649d13df2b89d2d8",
-    "cart.png":"920a3463a55a0b0dd3ea21155b3f3ba185ed60df066cec40bb3591e15af2a28b",
-    "private.png":"c40e3950728ae670d1ca7c1a02d507a1a5d5eaa7f4b7aad09c4396b4b928cb3c",
+    "wordmark.png": "46c3c4295313c0737094cc1b45a48fd64ea18cf3f971d48110640f64cd3a662f",
+    "search.png": "26d942c4f05047ae12aab0de024dbc9723a8179789385c16649d13df2b89d2d8",
+    "cart.png": "920a3463a55a0b0dd3ea21155b3f3ba185ed60df066cec40bb3591e15af2a28b",
+    "private.png": "c40e3950728ae670d1ca7c1a02d507a1a5d5eaa7f4b7aad09c4396b4b928cb3c",
+}
+SOURCE_MEMBERS = {
+    "wordmark.png": "Extremizer_transparent(5).png",
+    "search.png": "поиск 777!!! для шапки(1).png",
+    "cart.png": "корзина для шапки(1).png",
+    "private.png": "личка 77 для шапки(1).png",
 }
 
 def run(bundle:pathlib.Path,out:pathlib.Path):
     root=pathlib.Path(__file__).resolve().parents[1]
     out.mkdir(parents=True,exist_ok=True)
     with zipfile.ZipFile(bundle) as z:
-        assert sorted(z.namelist()) == sorted([*SHA,"manifest.json"]), "unexpected asset bundle members"
-        files={k:z.read(k) for k in SHA}
-        for name,raw in files.items():
-            assert hashlib.sha256(raw).hexdigest() == SHA[name], name
+        names = z.namelist()
+        assert all(not pathlib.PurePosixPath(name).is_absolute() and ".." not in pathlib.PurePosixPath(name).parts for name in names), "unsafe asset bundle path"
+        assert sorted(names) == sorted([*SOURCE_MEMBERS.values(), "ASSET_MANIFEST.json"]), "unexpected asset bundle members"
+        manifest = json.loads(z.read("ASSET_MANIFEST.json").decode("utf-8"))
+        files = {}
+        for output_name, source_name in SOURCE_MEMBERS.items():
+            raw = z.read(source_name)
+            digest = hashlib.sha256(raw).hexdigest()
+            assert digest == SHA[output_name], output_name
+            assert manifest["files"][source_name]["sha256"] == digest, source_name
+            files[output_name] = raw
     assert (root/"web2/fonts/Manrope-variable.ttf").is_file()
     os.environ.update({
-        "EXTREMIZER_HEADER_WORDMARK_PATH":str((out/"wordmark.svg").resolve()),
+        "EXTREMIZER_HEADER_WORDMARK_PATH":str((out/"wordmark.png").resolve()),
         "EXTREMIZER_HEADER_SEARCH_PATH":str((out/"search.png").resolve()),
         "EXTREMIZER_HEADER_CART_PATH":str((out/"cart.png").resolve()),
         "EXTREMIZER_HEADER_PRIVATE_PATH":str((out/"private.png").resolve()),
@@ -55,6 +68,11 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                 data=page.evaluate("""() => {
                     const nav=document.querySelector('.global-header-nav');
                     const items=[...nav.children];
+                    const rect = (el) => {
+                        const r = el.getBoundingClientRect();
+                        return {left:r.left, right:r.right, width:r.width, height:r.height};
+                    };
+                    const separators = [...document.querySelectorAll('.gh-separator')];
                     return {
                         viewport:innerWidth,
                         overflow:document.documentElement.scrollWidth>innerWidth,
@@ -62,12 +80,22 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                         fontFamily:getComputedStyle(document.querySelector('.gh-life')).fontFamily,
                         labelSize:getComputedStyle(document.querySelector('.gh-life')).fontSize,
                         labelWeight:getComputedStyle(document.querySelector('.gh-life')).fontWeight,
+                        l1Token:getComputedStyle(document.querySelector('.global-header-v11')).getPropertyValue('--gh-l1').trim(),
                         faces:[...document.fonts].filter(f=>f.family==='Manrope').map(f=>f.status),
                         elements:items.map(el=>{const r=el.getBoundingClientRect(); const img=el.querySelector('img');return {
                             name:el.className,x:r.left,right:r.right,w:r.width,h:r.height,
                             imgLoaded:img ? img.complete&&img.naturalWidth>0:null,
                             imgW:img ? img.naturalWidth:null
-                        };})
+                        };}),
+                        l1Gaps:separators.map((sep) => {
+                            const previous = sep.previousElementSibling;
+                            const next = sep.nextElementSibling;
+                            const s = rect(sep);
+                            return {
+                                left: previous ? Math.round((s.left - rect(previous).right) * 100) / 100 : null,
+                                right: next ? Math.round((rect(next).left - s.right) * 100) / 100 : null
+                            };
+                        })
                     };
                 }""")
                 assert data["manrope"] and "loaded" in data["faces"]
@@ -80,7 +108,7 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                 assert all(responses.get(name)==200 for name in ("wordmark","search","cart","private")), responses
                 assert sum(x["imgLoaded"] is True for x in data["elements"])==3, "all three navigation icons must render"
                 logo=page.locator("header.global-header-v11 .brand-logo")
-                assert logo.evaluate("(el) => el.complete && el.naturalWidth > 0 && !el.hidden"), "approved SVG wordmark must render"
+                assert logo.evaluate("(el) => el.complete && el.naturalWidth > 0 && !el.hidden"), "approved PNG wordmark must render"
                 page.locator("header.global-header-v11").screenshot(path=str(out/f"header_{width}.png"))
                 (out/f"header_{width}_metrics.json").write_text(json.dumps(data,ensure_ascii=False,indent=2))
                 page.close()

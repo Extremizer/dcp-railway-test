@@ -88,7 +88,7 @@ def attach_web2_ui(app: FastAPI, *, prefix: str = "/web2") -> None:
         path = _verified_header_asset(kind)
         if path is None:
             raise HTTPException(status_code=404, detail="approved header asset unavailable")
-        return FileResponse(path, media_type="image/svg+xml" if kind == "wordmark" else "image/png")
+        return FileResponse(path, media_type="image/png")
 
     @app.get("/web2-brand-logo", include_in_schema=False)
     def web2_brand_logo() -> FileResponse:
@@ -134,7 +134,7 @@ def _verified_powersports_garage_path() -> Path | None:
 
 # v1.1 header assets are supplied by isolated staging; never substitute originals.
 HEADER_ASSET_SHA = {
-    "wordmark": "0651e2d482c496ac135497910506b1ae7d0672d55d6e47f9cf7f87f87b3c5afa",
+    "wordmark": "46c3c4295313c0737094cc1b45a48fd64ea18cf3f971d48110640f64cd3a662f",
     "search": "26d942c4f05047ae12aab0de024dbc9723a8179789385c16649d13df2b89d2d8",
     "cart": "920a3463a55a0b0dd3ea21155b3f3ba185ed60df066cec40bb3591e15af2a28b",
     "private": "c40e3950728ae670d1ca7c1a02d507a1a5d5eaa7f4b7aad09c4396b4b928cb3c",
@@ -158,8 +158,6 @@ def _verified_header_asset(kind: str) -> Path | None:
     data = path.read_bytes()
     if hashlib.sha256(data).hexdigest() != HEADER_ASSET_SHA[kind]:
         return None
-    if kind == "wordmark" and b"<svg" not in data[:4096]:
-        return None
-    if kind != "wordmark" and not data.startswith(bytes.fromhex("89504e470d0a1a0a")):
+    if not data.startswith(bytes.fromhex("89504e470d0a1a0a")):
         return None
     return path

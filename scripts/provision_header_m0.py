@@ -1,6 +1,6 @@
 """Provision owner-approved Global Header v1.1 assets for isolated staging only.
 
-Usage: eval "$(python scripts/provision_header_m0.py /path/canonical.zip /tmp/header-assets)"
+Usage: eval "$(python scripts/provision_header_m0.py /path/EXTREMIZER_M0_CANONICAL_ASSETS_4OF4.zip /tmp/header-assets)"
 Then launch the *isolated* staging server in the same shell.
 No asset substitution; no production side effects.
 """
@@ -11,12 +11,12 @@ import shlex
 import sys
 import zipfile
 
-ZIP_SHA = "4d6827e12f1f8d5bda25309bbbd637a191663dcdab24e0511d299446318bd4ee"
+ZIP_SHA = "737b6595f7024afef52a919b942c075e337ef2773a4a9e1a1025070dc6ea83f9"
 ASSETS = {
-    "wordmark": ("02_CANONICAL_WORDMARK/Extremizer_vector(5).svg", "0651e2d482c496ac135497910506b1ae7d0672d55d6e47f9cf7f87f87b3c5afa", "EXTREMIZER_HEADER_WORDMARK_PATH", "wordmark.svg"),
-    "search": ("04_HEADER_ICONS/поиск 777!!! для шапки(1).png", "26d942c4f05047ae12aab0de024dbc9723a8179789385c16649d13df2b89d2d8", "EXTREMIZER_HEADER_SEARCH_PATH", "search.png"),
-    "cart": ("04_HEADER_ICONS/корзина для шапки(1).png", "920a3463a55a0b0dd3ea21155b3f3ba185ed60df066cec40bb3591e15af2a28b", "EXTREMIZER_HEADER_CART_PATH", "cart.png"),
-    "private": ("04_HEADER_ICONS/личка 77 для шапки(1).png", "c40e3950728ae670d1ca7c1a02d507a1a5d5eaa7f4b7aad09c4396b4b928cb3c", "EXTREMIZER_HEADER_PRIVATE_PATH", "private.png"),
+    "wordmark": ("Extremizer_transparent(5).png", "46c3c4295313c0737094cc1b45a48fd64ea18cf3f971d48110640f64cd3a662f", "EXTREMIZER_HEADER_WORDMARK_PATH", "wordmark.png"),
+    "search": ("поиск 777!!! для шапки(1).png", "26d942c4f05047ae12aab0de024dbc9723a8179789385c16649d13df2b89d2d8", "EXTREMIZER_HEADER_SEARCH_PATH", "search.png"),
+    "cart": ("корзина для шапки(1).png", "920a3463a55a0b0dd3ea21155b3f3ba185ed60df066cec40bb3591e15af2a28b", "EXTREMIZER_HEADER_CART_PATH", "cart.png"),
+    "private": ("личка 77 для шапки(1).png", "c40e3950728ae670d1ca7c1a02d507a1a5d5eaa7f4b7aad09c4396b4b928cb3c", "EXTREMIZER_HEADER_PRIVATE_PATH", "private.png"),
 }
 def provision(zip_path: Path, dest: Path) -> dict[str, Path]:
     blob = zip_path.read_bytes()
@@ -25,7 +25,7 @@ def provision(zip_path: Path, dest: Path) -> dict[str, Path]:
     verified = {}
     with zipfile.ZipFile(zip_path) as archive:
         for kind,(suffix,expected,env,filename) in ASSETS.items():
-            matches=[name for name in archive.namelist() if name.endswith("/"+suffix)]
+            matches=[name for name in archive.namelist() if name == suffix]
             if len(matches)!=1:
                 raise ValueError(f"Expected exactly one original {kind}")
             raw=archive.read(matches[0])
