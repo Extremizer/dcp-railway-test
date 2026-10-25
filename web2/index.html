@@ -6,8 +6,17 @@
   <title>EXTREMIZER — OEM, запчасти и аксессуары</title>
   <meta name="description" content="Поиск OEM, цена и наличие EXTREMIZER">
   <link rel="stylesheet" href="/web2-static/styles.css">
-</head>
-<body>
+<style>
+.extremizer-stage-banner{position:fixed;z-index:1000;bottom:16px;left:16px;
+max-width:calc(100vw - 32px);padding:10px 14px;color:#080808;background:#BFF803;
+border:2px solid #080808;border-radius:6px;font:700 13px/1.4 Manrope,Arial,sans-serif;
+box-shadow:0 3px 15px #000a;pointer-events:none;}
+</style></head>
+<body><aside class="extremizer-stage-banner" role="status">ISOLATED MOCK DATA — ЦЕНЫ И ОСТАТКИ ТЕСТОВЫЕ. ЗАКАЗЫ ОТКЛЮЧЕНЫ.</aside>
+<script>document.addEventListener("DOMContentLoaded",function(){
+const b=document.getElementById("telegramButton");
+if(b){b.disabled=true;b.textContent="Оформление отключено — тестовый стенд";b.setAttribute("aria-disabled","true");}
+});</script>
   <header class="topbar global-header-v11" aria-label="Глобальная навигация EXTREMIZER">
     <a class="brand-slot" href="/web2" aria-label="EXTREMIZER — главная">
       <img class="brand-logo" src="/web2-header-asset/wordmark" alt="EXTREMIZER" hidden>
