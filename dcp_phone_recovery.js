@@ -30,7 +30,8 @@ async function start(){
   if(!response.ok)throw new Error("Авторизация владельца не подтверждена");
   bearer=(await response.json()).bearer;
   $("app").style.display="block";
-  message("Доступ разрешён. Восстановите SIGN OUT в браузере DCP.");
+  const state=await call("status");
+  message(state.dcp_status==="MOCK_ONLY"?"Доступ разрешён. Тестовый Chromium — DCP отключён.":"Доступ разрешён. Восстановите SIGN OUT в браузере DCP.");
   await snapshot();
  }catch(e){message(e.message)}
 }

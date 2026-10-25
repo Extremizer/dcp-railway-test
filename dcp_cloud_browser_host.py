@@ -49,7 +49,28 @@ def configuration(env=None, *, platform=None):
     port=int(env.get("PORT","8080"))
     if not 1024 <= port <= 65535 or port == 9222:
         raise HostConfigurationError("invalid_http_port")
-    return {"state":root,"executable":executable,"port":port}
+    bind = env.get("DCP_RECOVERY_BIND_HOST", "0.0.0.0")
+    if bind not in ("0.0.0.0", "127.0.0.1"):
+        raise HostConfigurationError("invalid_http_bind")
+    return {"state":root,"executable":executable,"port":port,"bind":bind}
+
+
+def mock_page_uri(env=None):
+    """Default Docker path or a byte-identical mock file in persistent state."""
+    import hashlib
+    env = os.environ if env is None else env
+    explicit = env.get("DCP_STAGING_MOCK_HTML", "")
+    if not explicit:
+        return "file:///app/dcp_phone_staging_mock.html"
+    path = Path(explicit)
+    state = Path(env.get("DCP_CLOUD_STATE_DIR", ""))
+    source = Path(__file__).with_name("dcp_phone_staging_mock.html")
+    if (not path.is_absolute() or path.is_symlink() or not path.is_file()
+            or path.name != source.name or not state.is_absolute()
+            or not path.resolve().is_relative_to(state.resolve())
+            or hashlib.sha256(path.read_bytes()).digest() != hashlib.sha256(source.read_bytes()).digest()):
+        raise HostConfigurationError("mock_file_not_verified")
+    return path.resolve().as_uri()
 
 
 def run(config, *, app_module='dcp_phone_recovery_app:app'):
@@ -82,7 +103,7 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
             "--no-default-browser-check",
             "--disable-crash-reporter",
             "--user-data-dir="+str(profile),
-            "file:///app/dcp_phone_staging_mock.html"
+            mock_page_uri()
             if os.environ.get("DCP_PHONE_STAGING_MOCK_ONLY") == "1"
             else "about:blank",
         ],env=browser_env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=diagnostic,
@@ -150,7 +171,7 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
         else:
             raise HostConfigurationError("browser_loopback_unavailable")
         # Only a manually operated UI is launched. This does not imply DCP READY.
-        uvicorn.run(app_module,host="0.0.0.0",port=config["port"],
+        uvicorn.run(app_module,host=config.get("bind","0.0.0.0"),port=config["port"],
                     log_level="warning",access_log=False,workers=1)
     finally:
         if browser and browser.poll() is None:

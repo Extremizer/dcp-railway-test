@@ -22,7 +22,7 @@ class MockBrowser(RemoteBrowser):
         with urllib.request.urlopen(self.endpoint,timeout=3) as r:
             pages=json.load(r)
         matches=[p for p in pages if p.get("type")=="page" and
-           str(p.get("url","")).startswith("file:///app/dcp_phone_staging_mock.html")]
+           str(p.get("url","")).split("#",1)[0] == __import__("dcp_cloud_browser_host").mock_page_uri()]
         if len(matches)!=1:raise BrowserUnavailable("mock_tab_required")
         target=urllib.parse.urlsplit(matches[0]["webSocketDebuggerUrl"])
         if target.hostname not in ("127.0.0.1","localhost") or target.port!=9222 or target.scheme!="ws":
