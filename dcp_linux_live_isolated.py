@@ -41,7 +41,11 @@ def prepare_journal(state):
     journal=root/"linux-producer-journal.json"
     if not journal.exists():
         # First use ONLY: refuse to silently reinitialize a used persistent volume.
-        if any(root.iterdir()):
+        entries=list(root.iterdir())
+        # Empty filesystem mounts may contain the ext4 service directory.
+        # Never ignore browser profiles, locks, unexpected paths or symlinks.
+        if any(entry.name != "lost+found" or entry.is_symlink() or not entry.is_dir()
+               for entry in entries):
             raise AdmissionDenied("EXISTING_PROFILE_WITHOUT_JOURNAL_QUARANTINED")
         persist_journal(root,{"state":"CLEAN","claim":None,"status":"NEW_PROFILE"})
     if journal.is_symlink():
