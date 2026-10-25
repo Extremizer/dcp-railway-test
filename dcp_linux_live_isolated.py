@@ -68,7 +68,7 @@ def main():
         safe_codes={"browser_terminated_during_startup","browser_loopback_unavailable",
                     "existing_persistent_state_dir_required","interactive_display_required",
                     "explicit_installed_chromium_required","missing_owner_telegram_auth",
-                    "ephemeral_or_root_state_forbidden","invalid_http_port", "chromium_sandbox_unavailable", "chromium_display_unavailable", "chromium_crashpad_failure", "chromium_filesystem_permission"}
+                    "ephemeral_or_root_state_forbidden","invalid_http_port", "chromium_sandbox_unavailable", "chromium_display_unavailable", "chromium_crashpad_failure", "chromium_filesystem_permission", "crashpad_database_argument_missing", "crashpad_permission_denied", "crashpad_sandbox_or_namespace_denied", "crashpad_missing_file"}
         detail=str(exc) if isinstance(exc,HostConfigurationError) and str(exc) in safe_codes else "UNCLASSIFIED"
         print("LINUX_PRODUCER_BLOCKED",type(exc).__name__,detail,flush=True)
         return 24
