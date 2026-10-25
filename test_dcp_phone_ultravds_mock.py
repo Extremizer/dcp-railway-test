@@ -34,6 +34,19 @@ class UltraVdsMockTests(unittest.TestCase):
         with self.assertRaises(host.VpsMockBlocked):
             host.preflight(e,uid=1001,platform="win32")
 
+    def test_local_preflight_does_not_require_secrets_but_keeps_mock_gate(self):
+        e=self.env()
+        e.pop("DCP_RECOVERY_TELEGRAM_BOT_TOKEN")
+        e.pop("DCP_RECOVERY_OWNER_ID")
+        e["DCP_PHONE_ULTRAVDS_LOCAL_PREFLIGHT"]="1"
+        with self.assertRaises(host.VpsMockBlocked) as caught:
+            host.preflight(e,uid=1001,platform="linux")
+        self.assertIn(str(caught.exception),
+                      ("snap_chromium_not_installed","snap_user_session_missing"))
+        e["DCP_CLOUD_PRODUCER_ENABLED"]="1"
+        with self.assertRaisesRegex(host.VpsMockBlocked,"mock_only_admission_required"):
+            host.preflight(e,uid=1001,platform="linux")
+
     def test_chromium_args_keep_sandbox_and_loopback(self):
         args=host.browser_args(host.STATE/"test-profile")
         self.assertNotIn("--no-sandbox",args)
