@@ -59,6 +59,9 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                         viewport:innerWidth,
                         overflow:document.documentElement.scrollWidth>innerWidth,
                         manrope:document.fonts.check('500 24px Manrope'),
+                        fontFamily:getComputedStyle(document.querySelector('.gh-life')).fontFamily,
+                        labelSize:getComputedStyle(document.querySelector('.gh-life')).fontSize,
+                        labelWeight:getComputedStyle(document.querySelector('.gh-life')).fontWeight,
                         faces:[...document.fonts].filter(f=>f.family==='Manrope').map(f=>f.status),
                         elements:items.map(el=>{const r=el.getBoundingClientRect(); const img=el.querySelector('img');return {
                             name:el.className,x:r.left,right:r.right,w:r.width,h:r.height,
@@ -69,6 +72,11 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                 }""")
                 assert data["manrope"] and "loaded" in data["faces"]
                 assert not data["overflow"]
+                assert "Manrope" in data["fontFamily"] and data["labelWeight"]=="500"
+                if width==1280:
+                    assert data["labelSize"]=="24px", "desktop approved Manrope size"
+                actions=[e for e in data["elements"] if "gh-action" in e["name"]]
+                assert len(actions)==3 and all(e["w"]>=44 and e["h"]>=44 for e in actions), "44x44 touch target"
                 assert all(responses.get(name)==200 for name in ("wordmark","search","cart","private")), responses
                 assert sum(x["imgLoaded"] is True for x in data["elements"])==3, "all three navigation icons must render"
                 logo=page.locator("header.global-header-v11 .brand-logo")
