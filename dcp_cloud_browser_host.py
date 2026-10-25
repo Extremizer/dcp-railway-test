@@ -58,6 +58,14 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
 
     state=config["state"]
     profile=state/"browser-profile"
+    runtime_home=state/"chromium-home"
+    runtime_config=runtime_home/".config"
+    runtime_cache=runtime_home/".cache"
+    for location in (runtime_home,runtime_config,runtime_cache):
+        location.mkdir(mode=0o700,parents=True,exist_ok=True)
+        os.chmod(location,0o700)
+    browser_env=os.environ.copy()
+    browser_env.update({"HOME":str(runtime_home),"XDG_CONFIG_HOME":str(runtime_config),"XDG_CACHE_HOME":str(runtime_cache)})
     profile.mkdir(mode=0o700,exist_ok=True)
     os.chmod(profile,0o700)
     lockpath=state/"cloud-browser-owner.lock"
@@ -72,11 +80,12 @@ def run(config, *, app_module='dcp_phone_recovery_app:app'):
             "--remote-debugging-port=9222",
             "--no-first-run",
             "--no-default-browser-check",
+            "--disable-crash-reporter",
             "--user-data-dir="+str(profile),
             "file:///app/dcp_phone_staging_mock.html"
             if os.environ.get("DCP_PHONE_STAGING_MOCK_ONLY") == "1"
             else "about:blank",
-        ],stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=diagnostic,
+        ],env=browser_env,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=diagnostic,
         close_fds=True,start_new_session=True)
         for _ in range(35):
             if browser.poll() is not None:
