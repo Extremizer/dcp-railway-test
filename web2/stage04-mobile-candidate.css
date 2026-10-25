@@ -1,0 +1,53 @@
+
+/* ONE MOBILE CANDIDATE — no change at desktop widths */
+.mobile-hero,.mobile-practice{display:none}
+@media(max-width:750px){
+ html,body{overflow-x:clip;background:#080808!important}
+ .page{max-width:100%!important;padding:0!important}
+ .canvas{aspect-ratio:auto!important;height:auto!important;display:flex;flex-direction:column;background:#080808}
+ .canvas>.approved-image{display:none!important}
+ .hotspots{position:relative!important;inset:auto!important;display:grid!important;grid-template-columns:minmax(0,1fr) 44px 44px 44px;grid-template-rows:56px 50px;align-items:center;order:0;width:100%;padding:0 12px;border-bottom:1px solid #333;pointer-events:auto}
+ .hotspots .zone{position:relative!important;inset:auto!important;left:auto!important;top:auto!important;width:auto!important;height:48px!important;min-width:44px!important;border:0!important;border-radius:3px!important;display:flex;align-items:center;justify-content:center;outline-offset:-3px!important}
+ .hotspots .zone:focus-visible{outline:2px solid #BFF803!important}
+ .hotspots .brand{grid-column:1;grid-row:1;min-width:0!important;background-image:url('/web2/stage04/assets/approved_powersports_1536x1024.png');background-size:1044.48px 696.32px;background-position:-35px -8px;background-repeat:no-repeat}
+ .hotspots .nav-search{grid-column:2;grid-row:1;background-image:url('/web2/stage04/assets/approved_powersports_1536x1024.png');background-size:1044.48px 696.32px;background-position:-583px -5px;background-repeat:no-repeat}
+ .hotspots .nav-cart{grid-column:3;grid-row:1;background-image:url('/web2/stage04/assets/approved_powersports_1536x1024.png');background-size:1044.48px 696.32px;background-position:-769px -5px;background-repeat:no-repeat}
+ .hotspots .nav-messages{grid-column:4;grid-row:1;background-image:url('/web2/stage04/assets/approved_powersports_1536x1024.png');background-size:1044.48px 696.32px;background-position:-983px -5px;background-repeat:no-repeat}
+ .hotspots .nav-life,.hotspots .nav-hub{background:none;min-height:44px;color:#A5A5A5!important;text-decoration:none!important;font:500 17px/1 Manrope,Arial,sans-serif;letter-spacing:0;text-transform:uppercase}
+ .hotspots .nav-life{grid-column:1/3;grid-row:2;border-right:1px solid #A5A5A5!important}
+ .hotspots .nav-hub{grid-column:3/5;grid-row:2}
+ .hotspots .nav-life:after{content:'LIFE'}
+ .hotspots .nav-hub:after{content:'МОЙ ХАБ'}
+ #cartCount{position:absolute!important;top:1px!important;right:2px!important;width:auto!important;height:auto!important;opacity:1!important;overflow:visible!important;background:#BFF803;color:#080808;font:700 11px Arial;padding:1px 4px;border-radius:9px;min-width:13px;text-align:center}
+ #cartCount:empty{display:none!important}
+ .mobile-hero{order:1;position:relative;display:block!important;height:clamp(235px,66vw,310px);overflow:hidden;background:#171717;isolation:isolate}
+ .mobile-hero:before{content:'';position:absolute;inset:0;background-image:url('/web2/stage04/assets/approved_powersports_1536x1024.png');background-repeat:no-repeat;background-size:auto clamp(550px,145vw,700px);background-position:5% -54px}
+ .mobile-hero:after{content:'';position:absolute;inset:0;background:linear-gradient(180deg,#08080877 0%,transparent 38%,#08080866 100%);pointer-events:none}
+ .mobile-hero h1{position:absolute;z-index:1;top:14px;right:16px;left:12px;font:700 clamp(29px,9vw,43px)/1 'Space Grotesk',Manrope,Arial,sans-serif;color:white;margin:0;text-align:right;letter-spacing:-.045em}
+ .mobile-hero .mobile-machine{position:absolute;z-index:1;right:16px;top:58px;font:500 16px/1.1 Manrope,Arial,sans-serif;color:#BFF803}
+ .search-area{position:relative!important;inset:auto!important;order:2;pointer-events:auto;height:auto;width:100%;padding:16px 16px 11px}
+ .oem-form{position:relative!important;inset:auto!important;display:flex!important;align-items:stretch;gap:8px;width:100%;margin:0!important;pointer-events:auto;height:48px}
+ .oem-form input{position:relative!important;inset:auto!important;left:auto!important;top:auto!important;width:calc(100% - 112px)!important;min-width:0;height:48px!important;flex:1 1 auto;font:500 16px/1.2 Manrope,Arial,sans-serif!important;padding:0 12px!important;background:#131514!important;color:#f4f4f4!important;caret-color:#BFF803!important;border:1px solid #A5A5A5!important;border-radius:6px!important;box-shadow:none!important}
+ .oem-form input::placeholder{color:#A5A5A5!important;opacity:1!important}
+ .oem-form input:focus,.oem-form input:hover{background:#BFF803!important;color:#080808!important;caret-color:#080808!important;border-color:#BFF803!important}
+ .oem-form input:focus::placeholder,.oem-form input:hover::placeholder{color:#080808!important}
+ .oem-form button{position:relative!important;inset:auto!important;left:auto!important;top:auto!important;width:104px!important;min-width:104px;height:48px!important;flex:0 0 104px;background:#131514!important;border:1px solid #A5A5A5!important;color:white!important;display:flex!important;gap:4px!important;align-items:center;justify-content:center;font:700 16px/1.2 Manrope,Arial,sans-serif!important;border-radius:6px!important;padding:0 6px!important}
+ .oem-form button .search-icon{display:block!important;width:20px!important;height:20px!important;flex:0 0 20px;fill:none;stroke:#BFF803;stroke-width:3;stroke-linecap:round}
+ .oem-form button:hover,.oem-form button:focus-visible{background:#BFF803!important;color:#080808!important;border-color:#BFF803!important}
+ .oem-form button:hover .search-icon,.oem-form button:focus-visible .search-icon{stroke:#080808!important}
+ .oem-form button:disabled{color:#A5A5A5!important;background:#1d1f1e!important;border-color:#444!important}
+ #state{position:relative!important;inset:auto!important;top:auto!important;left:auto!important;max-width:100%;margin-top:8px;font:14px/1.4 Manrope,Arial,sans-serif!important}
+ .card-hotspots{display:none!important}
+ .mobile-practice{order:3;display:block!important;margin:0;padding:16px 16px 22px}
+ .mobile-practice h2{margin:0 0 12px;border-bottom:1px solid #555;padding-bottom:11px;color:white;font:700 22px/1.2 Manrope,Arial,sans-serif}
+ .mobile-practice .practice-label{color:#BFF803;text-transform:uppercase;font:700 14px/1.2 Manrope,Arial,sans-serif;margin:18px 0 12px}
+ .mobile-practice .practice-tile{display:flex;align-items:center;gap:12px;min-height:84px;border:1px solid #363a36;border-radius:7px;margin:8px 0;padding:13px 14px;color:#fff}
+ .mobile-practice .practice-number{align-self:flex-start;color:#BFF803;font:700 19px/1.2 Manrope,Arial,sans-serif}
+ .mobile-practice .practice-title{font:700 16px/1.2 Manrope,Arial,sans-serif;margin:0 0 5px}
+ .mobile-practice .practice-description{color:#A5A5A5;font:400 12px/1.3 Manrope,Arial,sans-serif}
+ .mobile-practice .practice-note{margin-top:12px;padding-top:12px;border-top:1px solid #333;color:#A5A5A5;font:400 12px/1.4 Manrope,Arial,sans-serif}
+ .mobile-disclaimer{display:none!important}
+ #product{margin:12px 12px 26px!important}
+ #cartPanel{width:100vw!important;max-width:100vw!important;height:100dvh!important}
+ #cartClose,#continueSearchButton{min-height:44px}
+}
