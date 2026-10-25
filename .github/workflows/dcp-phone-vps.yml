@@ -1,0 +1,36 @@
+name: PHONE-FIRST native VPS
+on:
+  push:
+    branches: [fix/dcp-phone-first-ultravds-20261025]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-owner-ui:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Exact source and scope
+        run: |
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          git diff --check c5ddfd7ab5b13d172aca5b5416999e608d7d4384 HEAD
+          python - <<'PY'
+          import subprocess
+          allowed={'dcp_cloud_browser_host.py','dcp_phone_staging_app.py','dcp_phone_recovery.js','dcp_phone_vps_app.py','dcp_phone_vps_runtime.py','test_dcp_phone_vps.py','requirements.phone-vps.txt','deploy/phone-first/chromium-snap.sh','.github/workflows/dcp-phone-vps.yml'}
+          changed=set(subprocess.check_output(['git','diff','--name-only','c5ddfd7ab5b13d172aca5b5416999e608d7d4384','HEAD'],text=True).splitlines())
+          assert changed==allowed, changed
+          PY
+      - run: python -m pip install -r requirements.phone-vps.txt httpx beautifulsoup4
+      - name: Owner authorization, sandbox preservation and existing recovery regressions
+        run: >-
+          python -B -m unittest -v test_dcp_phone_vps test_dcp_phone_recovery
+          test_dcp_phone_recovery_notice test_dcp_phone_staging_identity
+          test_dcp_phone_staging_notice_once test_dcp_linux_live_isolated
+          test_dcp_linux_live_p0 test_dcp_linux_admission
