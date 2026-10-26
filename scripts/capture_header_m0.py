@@ -127,17 +127,19 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                         probe.goto(f"http://127.0.0.1:{port}/web2",wait_until="networkidle")
                         probe.locator(selector).focus()
                         assert probe.evaluate("s => document.activeElement === document.querySelector(s)",selector)
-                        probe.keyboard.press(key)
                         if selector==".gh-cart":
+                            probe.keyboard.press(key)
                             passed=probe.locator("#cartPanel").get_attribute("aria-hidden")=="false"
                         elif selector==".gh-search":
-                            passed=probe.evaluate("location.hash === '#oemInput'")
-                        elif selector==".brand-slot":
-                            passed=probe.evaluate("location.pathname === '/web2'")
+                            probe.keyboard.press(key)
+                            probe.wait_for_url("**/web2#oemInput",timeout=5000)
+                            passed=probe.url.split("#",1)[-1]=="oemInput"
                         else:
-                            target={".gh-life":"/web2/life",".gh-hub":"/web2/hub",".gh-private":"/web2/messages"}[selector]
-                            probe.wait_for_url(f"**{target}",timeout=5000)
-                            passed=probe.evaluate("p => location.pathname === p",target)
+                            target={".brand-slot":"/web2",".gh-life":"/web2/life",
+                                    ".gh-hub":"/web2/hub",".gh-private":"/web2/messages"}[selector]
+                            with probe.expect_navigation(url=f"**{target}",wait_until="domcontentloaded",timeout=5000):
+                                probe.keyboard.press(key)
+                            passed=probe.url.split("?",1)[0].split("#",1)[0].endswith(target)
                         assert passed, f"keyboard activation FAIL {width}px {selector} {key}"
                         activation_results.append({"element":selector,"key":key,"activated":True})
                         probe.close()
