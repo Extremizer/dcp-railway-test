@@ -126,3 +126,25 @@ jobs:
           name: m0-header-original-4of4-manrope
           path: m0-final-capture/
           if-no-files-found: error
+
+  combined-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install isolated test dependencies
+        run: |
+          python -m pip install fastapi uvicorn httpx playwright
+          python -m playwright install --with-deps chromium
+      - name: Static contract, routes and UI component regressions
+        run: |
+          python -m unittest -v test_web2_contract test_web2_ui_routes test_web2_search_ux_m1 test_web2_product_card_m2 test_web2_cart_m3
+      - name: Browser navigation, search, cart and security regressions
+        run: |
+          python -m unittest -v test_web2_browser test_web2_functional_hardening test_web2_mobile_m4
+      - name: Synthetic host integration and pricing regression
+        run: |
+          python -m unittest -v test_web2_host_integration
