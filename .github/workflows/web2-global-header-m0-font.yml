@@ -1,0 +1,127 @@
+name: WEB2 Global Header M0 Font Gate
+on:
+  push:
+    branches:
+      - web2-global-header-v11-m0-20261024
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manrope-m0:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install focused dependencies
+        run: |
+          python -m pip install fastapi playwright
+          python -m playwright install --with-deps chromium
+      - name: Targeted M0 structural and asset tests
+        run: python -m unittest -v test_web2_global_header_m0
+      - name: Browser check local Manrope file and rendered font
+        run: |
+          python - <<'PY'
+          import threading, http.server, socketserver, pathlib, json
+          from playwright.sync_api import sync_playwright
+          root = pathlib.Path.cwd()
+          alias = root / 'web2-static'
+          if not alias.exists():
+              alias.symlink_to(root / 'web2', target_is_directory=True)
+          class Quiet(http.server.SimpleHTTPRequestHandler):
+              def log_message(self, *args): pass
+          with socketserver.TCPServer(('127.0.0.1',0),Quiet) as server:
+              threading.Thread(target=server.serve_forever,daemon=True).start()
+              port=server.server_address[1]
+              with sync_playwright() as pw:
+                  browser=pw.chromium.launch(headless=True)
+                  page=browser.new_page(viewport={'width':1280,'height':800})
+                  page.goto(f'http://127.0.0.1:{port}/web2/index.html')
+                  page.evaluate('document.fonts.ready')
+                  actual=page.evaluate("""() => ({
+                    status: document.fonts.check('500 24px Manrope'),
+                    family: getComputedStyle(document.querySelector('.gh-life')).fontFamily,
+                    size: getComputedStyle(document.querySelector('.gh-life')).fontSize,
+                    faces: [...document.fonts].filter(f=>f.family==='Manrope').map(f=>({status:f.status,weight:f.weight}))
+                  })""")
+                  print(json.dumps(actual,ensure_ascii=False))
+                  assert actual['status'], 'Manrope not rendered'
+                  assert 'Manrope' in actual['family']
+                  assert any(f['status']=='loaded' for f in actual['faces'])
+                  browser.close()
+          PY
+
+      - name: Capture header viewport diagnostics (assets fail closed)
+        run: |
+          python - <<'PY'
+          import threading, http.server, socketserver, pathlib, json
+          from playwright.sync_api import sync_playwright
+          root=pathlib.Path.cwd()
+          out=root/'m0-browser-evidence'
+          out.mkdir(exist_ok=True)
+          class Quiet(http.server.SimpleHTTPRequestHandler):
+              def log_message(self,*args): pass
+          with socketserver.TCPServer(('127.0.0.1',0),Quiet) as server:
+              threading.Thread(target=server.serve_forever,daemon=True).start()
+              with sync_playwright() as p:
+                  browser=p.chromium.launch(headless=True)
+                  for width in [1280,360,390,430]:
+                      page=browser.new_page(viewport={'width':width,'height':820},device_scale_factor=1)
+                      page.goto(f'http://127.0.0.1:{server.server_address[1]}/web2/index.html')
+                      page.evaluate('document.fonts.ready')
+                      metrics=page.evaluate("""() => {
+                        const nav=document.querySelector('.global-header-nav');
+                        const elements=[...nav.children];
+                        const data=elements.map(el=>{
+                          const r=el.getBoundingClientRect();
+                          const img=el.querySelector('img');
+                          return {className:el.className, x:r.x, right:r.right,width:r.width,height:r.height,
+                            imageLoaded:img ? (img.complete && img.naturalWidth>0):null,
+                            imageNaturalWidth:img ? img.naturalWidth:null};
+                        });
+                        return {viewport:innerWidth,overflow:document.documentElement.scrollWidth>innerWidth,
+                          manropeLoaded:document.fonts.check('500 24px Manrope'),
+                          fontFamily:getComputedStyle(document.querySelector('.gh-life')).fontFamily,
+                          elements:data};
+                      }""")
+                      metrics['assets_4_of_4_verified_in_browser']=False
+                      (out/f'header_{width}_metrics.json').write_text(json.dumps(metrics,ensure_ascii=False,indent=2))
+                      page.locator('header.global-header-v11').screenshot(path=str(out/f'header_{width}_DIAGNOSTIC_ASSETS_UNAVAILABLE.png'))
+                      assert metrics['manropeLoaded']
+                      page.close()
+                  browser.close()
+          PY
+      - name: Upload M0 diagnostics (not owner-acceptance screenshots)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m0-header-diagnostic-font-only
+          path: m0-browser-evidence/
+          if-no-files-found: warn
+
+      - name: Check canonical asset bundle admission
+        id: asset_gate
+        shell: bash
+        run: |
+          if [ -f ci-assets/EXTREMIZER_M0_CANONICAL_ASSETS_4OF4.zip ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::VISUAL HOLD — canonical asset bundle unavailable in CI; full screenshots NOT verified"
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Capture original header 4/4 and Manrope (only with archive)
+        if: steps.asset_gate.outputs.available == 'true'
+        run: |
+          python -m pip install uvicorn
+          python scripts/capture_header_m0.py ci-assets/EXTREMIZER_M0_CANONICAL_ASSETS_4OF4.zip --out m0-final-capture
+      - name: Upload 4/4 owner visual evidence
+        if: steps.asset_gate.outputs.available == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: m0-header-original-4of4-manrope
+          path: m0-final-capture/
+          if-no-files-found: error
