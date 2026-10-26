@@ -34,7 +34,7 @@ def fake_getme(username):
 class StagingBotIdentityTests(unittest.TestCase):
     def test_exact_expected_bot_identity(self):
         opener = Mock(return_value=fake_getme("ExtremizerDCPBot"))
-        result = staging._telegram_getme_readonly("test:fake", opener=opener)
+        result = staging._telegram_getme_readonly("123:fake", opener=opener)
         self.assertEqual(result, "OK")
         request = opener.call_args.args[0]
         self.assertEqual(request.get_method(), "GET")
@@ -45,7 +45,7 @@ class StagingBotIdentityTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(
                     staging._telegram_getme_readonly(
-                        "test:fake",
+                        "123:fake",
                         opener=lambda *_a, **_kw: fake_getme(name),
                     ),
                     "UNCONFIRMED_RESPONSE",
@@ -56,7 +56,7 @@ class StagingBotIdentityTests(unittest.TestCase):
             b'{"ok":true,"result":{"is_bot":false,"username":"ExtremizerDCPBot"}}'
         )
         self.assertEqual(
-            staging._telegram_getme_readonly("test:fake", opener=opener),
+            staging._telegram_getme_readonly("123:fake", opener=opener),
             "UNCONFIRMED_RESPONSE",
         )
 
@@ -81,9 +81,9 @@ class StagingBotIdentityTests(unittest.TestCase):
         opener = Mock()
         cases = (
             ("123:ab cd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
-            ("123:ab\\ncd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
-            ("123:ab\\rcd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
-            ("123:ab\\x00cd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
+            ("123:ab\ncd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
+            ("123:ab\rcd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
+            ("123:ab\x00cd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
             ("nonnumeric:abc", "INVALID_TOKEN_STRUCTURE"),
             ("123:abc:extra", "INVALID_TOKEN_STRUCTURE"),
         )
@@ -103,7 +103,7 @@ class StagingBotIdentityTests(unittest.TestCase):
     def test_wrong_bot_blocks_mock_notice_before_send(self):
         with patch.dict(os.environ, {
                 "DCP_PHONE_STAGING_MOCK_ONLY": "1",
-                "DCP_RECOVERY_TELEGRAM_BOT_TOKEN": "test:fake",
+                "DCP_RECOVERY_TELEGRAM_BOT_TOKEN": "123:fake",
                 "DCP_RECOVERY_OWNER_ID": "12345",
                 "DCP_RECOVERY_PUBLIC_URL": "https://example.com",
                 "DCP_STAGING_TEST_NOTICE_ID": "",
@@ -115,13 +115,13 @@ class StagingBotIdentityTests(unittest.TestCase):
             with self.assertRaises(RecoveryNoticeError) as raised:
                 staging.app.state.coordinator.notify("AUTH_REQUIRED", now=100)
             self.assertEqual(str(raised.exception), "telegram_identity_unverified")
-            getme.assert_called_once_with("test:fake")
+            getme.assert_called_once_with("123:fake")
             send.assert_not_called()
 
     def test_correct_bot_builds_one_time_mock_only_webapp(self):
         with patch.dict(os.environ, {
                 "DCP_PHONE_STAGING_MOCK_ONLY": "1",
-                "DCP_RECOVERY_TELEGRAM_BOT_TOKEN": "test:fake",
+                "DCP_RECOVERY_TELEGRAM_BOT_TOKEN": "123:fake",
                 "DCP_RECOVERY_OWNER_ID": "12345",
                 "DCP_RECOVERY_PUBLIC_URL": "https://example.com",
                 "DCP_STAGING_TEST_NOTICE_ID": "",
@@ -138,7 +138,7 @@ class StagingBotIdentityTests(unittest.TestCase):
             self.assertEqual(button["text"], "Открыть тестовый Chromium")
             url = button["web_app"]["url"]
             self.assertTrue(url.startswith("https://example.com/recovery#"))
-            self.assertNotIn("test:fake", url)
+            self.assertNotIn("123:fake", url)
             self.assertNotIn("12345", url)
 
 
