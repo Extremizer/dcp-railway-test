@@ -58,8 +58,34 @@ app=FastAPI(docs_url=None,redoc_url=None,openapi_url=None)
 app.state.grants=None
 app.state.browser=None
 app.state.coordinator=None
+app.state.invite_refs={}
 app.state.dry_run_db=None
 app.state.dry_run_key=None
+
+def _staging_webapp_reference(url: str, references: dict[str, str]) -> str:
+    """Use a non-reversible selector in the URL; the ticket stays server-side.
+
+    Telegram owns the Mini App fragment, so a ticket placed after '#' is
+    lost when Telegram injects tgWebAppData. Never put the ticket itself
+    in a query string, browser history, request path or server logs.
+    """
+    import hashlib
+    import re
+    from urllib.parse import urlsplit, urlunsplit
+    from dcp_phone_recovery_notice import RecoveryNoticeError
+
+    parsed = urlsplit(url)
+    ticket = parsed.fragment
+    if (parsed.scheme != "https" or not parsed.hostname
+            or parsed.username or parsed.password or parsed.port not in (None, 443)
+            or parsed.path != "/recovery" or parsed.query
+            or not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", ticket)):
+        raise RecoveryNoticeError("invalid_staging_webapp_reference")
+    selector = hashlib.sha256(ticket.encode("ascii")).hexdigest()
+    references[selector] = ticket
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path,
+                       "ref=" + selector, ""))
+
 
 def _telegram_getme_readonly(token: str, *, opener=None) -> str:
     """GET /getMe without sending messages; returns only whitelisted diagnostic codes.
@@ -130,6 +156,7 @@ def configure():
     owner=os.getenv("DCP_RECOVERY_OWNER_ID","")
     if not bot or not owner.isdigit():return
     app.state.grants=RecoveryGrants(bot,int(owner))
+    app.state.invite_refs={}
     app.state.browser=MockBrowser()
     if os.getenv("DCP_PHONE_STAGING_DRY_RUN") == "1":
         token = os.getenv("DP_SYNC_TOKEN", "")
@@ -154,7 +181,8 @@ def configure():
                        "тестовым Chromium с телефона.",
                 "reply_markup":{"inline_keyboard":[[{
                     "text":"Открыть тестовый Chromium",
-                    "web_app":{"url":button["web_app"]["url"]}
+                    "web_app":{"url":_staging_webapp_reference(
+                        button["web_app"]["url"], app.state.invite_refs)}
                 }]]}
             }
             # Fail closed if Railway's token is not for the exact staging bot.
@@ -236,13 +264,27 @@ def css():
     return Response(Path(__file__).with_name("dcp_phone_recovery.css").read_text(),media_type="text/css")
 
 class Exchange(BaseModel):
-    ticket:str
+    ticket:str = ""
+    ticket_ref:str = ""
     init_data:str
 
 @app.post("/recovery/exchange")
 def exchange(p:Exchange):
     if not app.state.grants:raise HTTPException(503,detail="not_configured")
-    try:return {"bearer":app.state.grants.exchange(p.ticket,p.init_data),"expires_in_seconds":720}
+    try:
+        if p.ticket_ref:
+            # A selector is never an invitation. Resolve to the original
+            # server-side ticket, then run the UNCHANGED signature/TTL/one-use check.
+            import re
+            if p.ticket or not re.fullmatch(r"[0-9a-f]{64}", p.ticket_ref):
+                raise RecoveryDenied("invalid_invitation", diagnostic_code="INVITATION_FORMAT")
+            ticket = app.state.invite_refs.get(p.ticket_ref)
+            if ticket is None:
+                raise RecoveryDenied("invalid_invitation", diagnostic_code="INVITATION_MISSING_OR_USED")
+        else:
+            ticket = p.ticket
+        bearer = app.state.grants.exchange(ticket, p.init_data)
+        return {"bearer":bearer,"expires_in_seconds":720}
     except RecoveryDenied as exc:
         # Fixed server-side code only. Never log identity, token, invitation or initData.
         allowed = frozenset({

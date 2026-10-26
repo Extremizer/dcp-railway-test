@@ -137,7 +137,16 @@ class StagingBotIdentityTests(unittest.TestCase):
             button = payload["reply_markup"]["inline_keyboard"][0][0]
             self.assertEqual(button["text"], "Открыть тестовый Chromium")
             url = button["web_app"]["url"]
-            self.assertTrue(url.startswith("https://example.com/recovery#"))
+            from urllib.parse import urlsplit, parse_qs
+            parsed = urlsplit(url)
+            self.assertEqual(parsed.scheme, "https")
+            self.assertEqual(parsed.netloc, "example.com")
+            self.assertEqual(parsed.path, "/recovery")
+            self.assertEqual(parsed.fragment, "")
+            selector = parse_qs(parsed.query)["ref"][0]
+            self.assertEqual(len(selector), 64)
+            self.assertIn(selector, staging.app.state.invite_refs)
+            self.assertNotIn(staging.app.state.invite_refs[selector], url)
             self.assertNotIn("123:fake", url)
             self.assertNotIn("12345", url)
 
