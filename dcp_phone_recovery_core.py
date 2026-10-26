@@ -49,7 +49,7 @@ def validate_telegram_init_data(data: str, bot_token: str, owner_id: int,
         if len(pairs) != len(fields) or not fields.get("hash") or len(fields["hash"]) != 64:
             raise RecoveryDenied("invalid_authentication", diagnostic="initdata_fields_invalid")
         received_hash = fields.pop("hash")
-        check = "\\n".join(f"{key}={fields[key]}" for key in sorted(fields))
+        check = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))
         secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
         expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(received_hash.lower(), expected):
