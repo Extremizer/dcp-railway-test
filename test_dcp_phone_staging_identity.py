@@ -60,6 +60,23 @@ class StagingBotIdentityTests(unittest.TestCase):
             "UNCONFIRMED_RESPONSE",
         )
 
+    def test_http_client_exception_diagnostics_are_sanitized(self):
+        from http.client import HTTPException, RemoteDisconnected, BadStatusLine
+        from unittest.mock import patch
+        cases = (
+            (HTTPException("private-url-with-token"), "HTTP_CLIENT_HTTPException"),
+            (RemoteDisconnected("private-url-with-token"), "HTTP_CLIENT_RemoteDisconnected"),
+            (BadStatusLine("private-url-with-token"), "HTTP_CLIENT_BadStatusLine"),
+        )
+        for error, expected in cases:
+            with self.subTest(expected=expected), patch(
+                "urllib.request.urlopen", side_effect=error
+            ):
+                result = staging._telegram_getme_readonly("123:PRIVATE")
+                self.assertEqual(result, expected)
+                self.assertNotIn("PRIVATE", result)
+                self.assertNotIn("private-url", result)
+
     def test_invalid_token_never_uses_network(self):
         opener = Mock()
         self.assertEqual(

@@ -102,8 +102,17 @@ def _telegram_getme_readonly(token: str, *, opener=None) -> str:
     except ssl.SSLError:
         return "TLS"
     except HTTPException as exc:
+        # Whitelisted stdlib exception types only; never log the exception message.
+        # The latter can contain a URL with the bot token.
         name = type(exc).__name__
-        return "HTTP_CLIENT_" + name if name in ("RemoteDisconnected", "BadStatusLine", "IncompleteRead", "ResponseNotReady") else "HTTP_CLIENT_OTHER"
+        safe_names = (
+            "HTTPException", "InvalidURL", "UnknownProtocol",
+            "UnknownTransferEncoding", "UnimplementedFileMode", "IncompleteRead",
+            "ImproperConnectionState", "CannotSendRequest", "CannotSendHeader",
+            "ResponseNotReady", "BadStatusLine", "LineTooLong",
+            "RemoteDisconnected",
+        )
+        return "HTTP_CLIENT_" + name if type(exc).__module__ == "http.client" and name in safe_names else "HTTP_CLIENT_OTHER"
     except Exception as exc:
         name = type(exc).__name__
         return "EXCEPTION_" + name if name in ("TypeError", "ValueError", "JSONDecodeError", "UnicodeDecodeError", "ConnectionResetError", "ConnectionRefusedError", "ConnectionAbortedError", "BrokenPipeError", "OSError", "RuntimeError") else "EXCEPTION_OTHER"
