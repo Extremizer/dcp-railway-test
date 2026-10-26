@@ -1,3 +1,11 @@
+/* Local Manrope / official Google Fonts OFL 1.1, M0 font gate. */
+@font-face {
+  font-family: "Manrope";
+  src: url("/web2-static/fonts/Manrope-variable.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+}
 :root {
   --bg: #050606;
   --panel: #0d0f0f;
@@ -364,4 +372,133 @@ main {max-width:none;margin:0;padding:0;}
     background: #BFF803;
     color: #080808;
   }
+}
+
+/* Global Header v1.1 — independent from POWERSPORTS body styling. */
+.global-header-v11 { --gh-gray:#A5A5A5; --gh-lime:#BFF803; --gh-l1:clamp(8px,1.1vw,18px); height:100px; min-height:100px; padding-inline:clamp(16px,3.5vw,55px); display:flex; flex-wrap:nowrap; align-items:center; gap:12px; border-bottom:1px solid #343434; }
+.global-header-v11 .brand-slot { flex:0 1 clamp(175px,24vw,360px); width:auto; height:65px; min-width:0; }
+.global-header-v11 .brand-logo { width:100%; max-height:65px; height:100%; object-fit:contain; object-position:left center; }
+.global-header-nav { --gh-ink-gap:var(--gh-l1); margin-left:auto; display:flex; flex-wrap:nowrap; gap:0; align-items:center; justify-content:flex-end; min-width:0; }
+/* L1 is measured from visible icon ink, not the 44px touch-box. */
+.global-header-nav .gh-separator { flex:0 0 1px; width:1px; height:26px; background:var(--gh-gray); opacity:1; margin-inline:var(--gh-l1); }
+/* Search/cart/private PNGs have transparent padding inside their 44px targets.
+   Compensate only the icon-facing separator sides; label-facing sides stay L1. */
+.global-header-nav .gh-separator:nth-child(2) { margin-left:max(0px,calc(var(--gh-l1) - 9px)); }
+.global-header-nav .gh-separator:nth-child(4) { margin-right:max(0px,calc(var(--gh-l1) - 9px)); }
+.global-header-nav .gh-separator:nth-child(6) { margin-left:max(0px,calc(var(--gh-l1) - 9px)); }
+.global-header-nav .gh-separator:nth-child(8) { margin-right:max(0px,calc(var(--gh-l1) - 10px)); }
+.global-header-nav .gh-label { font-family:Manrope,Arial,sans-serif; font-size:24px; font-weight:500; font-style:normal; letter-spacing:0; text-transform:uppercase; color:var(--gh-gray); text-decoration:none; line-height:1.3; white-space:nowrap; display:inline-flex; align-items:center; justify-content:center; min-height:44px; }
+.global-header-nav .gh-action { display:inline-flex; position:relative; align-items:center; justify-content:center; width:44px; height:44px; min-width:44px; min-height:44px; padding:0; border:0; border-radius:0; background:transparent; color:var(--gh-gray); box-shadow:none; text-decoration:none; }
+.global-header-nav .gh-action img { display:block; width:30px; height:30px; object-fit:contain; }
+.global-header-nav .gh-cart img { width:40px; height:40px; }
+.global-header-nav .gh-private img { width:36px; height:36px; }
+.global-header-nav .gh-action:hover,.global-header-nav .gh-action:focus-visible,.global-header-nav .gh-label:hover,.global-header-nav .gh-label:focus-visible { outline:2px solid var(--gh-lime); outline-offset:2px; }
+.global-header-nav .gh-cart .cart-count { position:absolute; top:-1px; right:-2px; width:auto; min-width:17px; height:17px; padding:0 3px; font-size:10px; }
+.global-header-nav .gh-cart .cart-button-total { display:none; }
+@media(max-width:900px) {
+ .global-header-v11 { height:auto; min-height:80px; padding:12px 16px; flex-wrap:wrap; }
+ .global-header-v11 .brand-slot { flex:0 0 min(66vw,280px); height:48px; }
+ .global-header-nav { width:100%; margin-left:0; justify-content:flex-end; }
+ .global-header-nav .gh-label { font-size:24px; }
+ .global-header-nav .gh-separator { margin-inline:var(--gh-l1); }
+}
+@media(max-width:430px) {
+ .global-header-nav { justify-content:space-between; }
+ .global-header-v11 { --gh-l1:clamp(3px,1vw,5px); }
+ .global-header-nav .gh-label { font-size:clamp(14px,4.2vw,18px); }
+ .global-header-nav .gh-separator { height:20px; }
+ .global-header-nav .gh-action { width:44px; min-width:44px; }
+ /* Compensate the ~9px visual PNG side padding, preserving 44px touch boxes. */
+ .global-header-nav .gh-separator:nth-child(2),
+ .global-header-nav .gh-separator:nth-child(6) { margin-left:-5px; }
+ .global-header-nav .gh-separator:nth-child(4),
+ .global-header-nav .gh-separator:nth-child(8) { margin-right:-5px; }
+}
+
+/* M0 owner-approved TWO-ROW mobile layout (2026-10-26).
+   Row 1: original wordmark | original private message icon.
+   Row 2: original search | LIFE | original cart | МОЙ ХАБ.
+   Original approved assets and desktop rules untouched. */
+@media (max-width:430px) {
+  .global-header-v11 {
+    position:relative;
+    display:block;
+    height:120px;
+    min-height:120px;
+    padding:0 12px;
+    box-sizing:border-box;
+  }
+  .global-header-v11::after { content:none; }
+  .global-header-v11 .brand-slot {
+    position:absolute;
+    top:12px;
+    left:12px;
+    right:auto;
+    transform:none;
+    width:clamp(208px,65vw,280px);
+    max-width:calc(100% - 84px);
+    height:44px;
+    min-width:0;
+    margin:0;
+    display:flex;
+    align-items:center;
+    justify-content:flex-start;
+  }
+  .global-header-v11 .brand-logo {
+    display:block;
+    width:100%;
+    height:auto;
+    max-height:44px;
+    object-fit:contain;
+    object-position:left center;
+  }
+  .global-header-nav {
+    position:absolute;
+    top:68px;
+    left:12px;
+    right:12px;
+    width:auto;
+    height:44px;
+    margin:0;
+    display:grid;
+    grid-template-columns:max-content 44px 44px max-content;
+    grid-template-rows:44px;
+    justify-content:space-between;
+    align-items:center;
+    justify-items:center;
+    gap:0;
+  }
+  .global-header-nav::before,
+  .global-header-nav::after { content:none; }
+  .global-header-nav .gh-separator { display:none; }
+  .global-header-nav .gh-label {
+    font-family:Manrope,Arial,sans-serif;
+    font-size:24px;
+    font-weight:500;
+    font-style:normal;
+    letter-spacing:0;
+    color:#A5A5A5;
+    line-height:1.2;
+    min-height:44px;
+    padding:0;
+    white-space:nowrap;
+  }
+  .global-header-nav .gh-search { grid-row:1; grid-column:1; }
+  .global-header-nav .gh-life { grid-row:1; grid-column:2; }
+  .global-header-nav .gh-cart { grid-row:1; grid-column:3; }
+  .global-header-nav .gh-hub { grid-row:1; grid-column:4; }
+  .global-header-nav .gh-private {
+    position:absolute;
+    top:-56px;
+    right:0;
+  }
+  .global-header-nav .gh-action {
+    width:44px;
+    min-width:44px;
+    height:44px;
+    min-height:44px;
+  }
+  .global-header-nav .gh-search img { width:30px; height:30px; }
+  .global-header-nav .gh-cart img { width:40px; height:40px; }
+  .global-header-nav .gh-private img { width:36px; height:36px; }
 }
