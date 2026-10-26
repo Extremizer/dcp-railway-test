@@ -120,6 +120,29 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                     assert matches, f"Tab focus mismatch at {width}px: expected {selector}"
                     actual_focus.append(selector)
                 data["focus_order"] = actual_focus
+                activation_results=[]
+                for selector in expected_focus:
+                    for key in (("Enter","Space") if selector==".gh-cart" else ("Enter",)):
+                        probe=browser.new_page(viewport={"width":width,"height":820})
+                        probe.goto(f"http://127.0.0.1:{port}/web2",wait_until="networkidle")
+                        probe.locator(selector).focus()
+                        assert probe.evaluate("s => document.activeElement === document.querySelector(s)",selector)
+                        probe.keyboard.press(key)
+                        if selector==".gh-cart":
+                            passed=probe.locator("#cartPanel").get_attribute("aria-hidden")=="false"
+                        elif selector==".gh-search":
+                            passed=probe.evaluate("location.hash === '#oemInput'")
+                        elif selector==".brand-slot":
+                            passed=probe.evaluate("location.pathname === '/web2'")
+                        else:
+                            target={".gh-life":"/web2/life",".gh-hub":"/web2/hub",".gh-private":"/web2/messages"}[selector]
+                            probe.wait_for_url(f"**{target}",timeout=5000)
+                            passed=probe.evaluate("p => location.pathname === p",target)
+                        assert passed, f"keyboard activation FAIL {width}px {selector} {key}"
+                        activation_results.append({"element":selector,"key":key,"activated":True})
+                        probe.close()
+                data["keyboard_activation"]=activation_results
+
                 page.locator("header.global-header-v11").screenshot(path=str(out/f"header_{width}.png"))
                 (out/f"header_{width}_metrics.json").write_text(json.dumps(data,ensure_ascii=False,indent=2))
                 page.close()
