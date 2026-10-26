@@ -1,3 +1,23 @@
+// M0 mobile two-row layout: DOM focus order follows visual order.
+// Restore the exact canonical desktop child order above 430px.
+const headerNav = document.querySelector(".global-header-nav");
+if (headerNav) {
+  const originalChildren = [...headerNav.children];
+  const privateLink = headerNav.querySelector(".gh-private");
+  const mobileHeader = window.matchMedia("(max-width: 430px)");
+  const syncHeaderFocusOrder = () => {
+    if (mobileHeader.matches) {
+      if (privateLink && headerNav.firstElementChild !== privateLink) {
+        headerNav.insertBefore(privateLink, headerNav.firstElementChild);
+      }
+    } else {
+      for (const child of originalChildren) headerNav.appendChild(child);
+    }
+  };
+  syncHeaderFocusOrder();
+  mobileHeader.addEventListener("change", syncHeaderFocusOrder);
+}
+
 const brandLogo = document.querySelector(".brand-logo");
 if (brandLogo) {
   const showBrandLogo = () => { brandLogo.hidden = false; };
