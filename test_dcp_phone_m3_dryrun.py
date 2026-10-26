@@ -151,6 +151,32 @@ class PhoneM3DryRunTests(unittest.TestCase):
         self.assertFalse(payload["result"]["dcp_enabled"])
         self.assertFalse(payload["result"]["admission"])
 
+    def test_signed_queue_safe_without_telegram_and_duplicate_guard(self):
+        producer = self.producer()
+        path = "/internal/dp-cloud/dry-run/queue-safe"
+        payload = {"manufacturer": "SAFE-MFR", "oem": "SAFE-OEM-000"}
+        denied = self.client.post(path, json=payload)
+        self.assertEqual(denied.status_code, 401)
+        first = producer.request("POST", path, payload)
+        self.assertEqual(first["status"], "QUEUED")
+        self.assertTrue(first["created"])
+        second = producer.request("POST", path, payload)
+        self.assertEqual(second["status"], "PENDING")
+        self.assertFalse(second["created"])
+        acquired = producer.acquire()
+        self.assertEqual(acquired["status"], "ACQUIRED")
+        claim = producer.next()
+        self.assertEqual(claim["manufacturer"], "SAFE-MFR")
+        self.assertEqual(claim["oem"], "SAFE-OEM-000")
+        ack = producer.complete(claim, {
+            "status": "DRY_RUN_OK", "manufacturer": "SAFE-MFR", "oem": "SAFE-OEM-000",
+        })
+        self.assertFalse(ack["server_cache_committed"])
+        self.assertEqual(producer.release()["status"], "RELEASED")
+        after = producer.request("POST", path, payload)
+        self.assertEqual(after["status"], "FINISHED")
+        self.assertFalse(after["created"])
+
     def test_safe_fixture_and_owner_fences_fail_closed(self):
         bearer = self.bearer()
         bad = self.client.post(

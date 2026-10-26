@@ -78,6 +78,35 @@ def enqueue(db_file: str | Path, manufacturer: str, oem: str) -> dict:
     return {"request_id": request_id, "status": "QUEUED"}
 
 
+
+def enqueue_signed_once(db_file: str | Path, manufacturer: str, oem: str) -> dict:
+    """One HMAC-authorized SAFE fixture, never requeue a finished run.
+
+    This is for isolated staging when Telegram delivery is unavailable.
+    The API handler verifies signed-v2 before calling this function.
+    """
+    if manufacturer != SAFE_MANUFACTURER or oem != SAFE_OEM:
+        raise DryRunError(400, "safe_fixture_required")
+    init(db_file)
+    request_id = "dryrun-safe-mfr-safe-oem-000"
+    with sqlite3.connect(str(db_file), timeout=10) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        inserted = conn.execute("""INSERT OR IGNORE INTO dcp_phone_dry_run_requests(
+            request_id,manufacturer,oem,status,requested_at
+        ) VALUES(?,?,?,'pending',?)""",
+            (request_id, SAFE_MANUFACTURER, SAFE_OEM, _now())).rowcount
+        row = conn.execute(
+            "SELECT status FROM dcp_phone_dry_run_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        conn.commit()
+    return {
+        "request_id": request_id,
+        "status": "QUEUED" if inserted == 1 else row[0].upper(),
+        "created": inserted == 1,
+    }
+
+
 def get_result(db_file: str | Path, request_id: str) -> dict:
     init(db_file)
     with sqlite3.connect(str(db_file), timeout=10) as conn:

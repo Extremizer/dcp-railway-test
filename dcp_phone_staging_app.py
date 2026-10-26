@@ -73,6 +73,12 @@ def _telegram_getme_readonly(token: str, *, opener=None) -> str:
     import socket
     if not isinstance(token, str) or ":" not in token:
         return "NOT_CONFIGURED"
+    # Avoid constructing a URL from malformed secrets. Do not strip or log it.
+    # Preserve the original value so staging never silently changes credentials.
+    if any(c.isspace() for c in token) or any(ord(c) < 32 or ord(c) == 127 for c in token):
+        return "INVALID_TOKEN_WHITESPACE_OR_CONTROL"
+    if not token.isascii() or token.count(":") != 1 or not token.split(":", 1)[0].isdigit():
+        return "INVALID_TOKEN_STRUCTURE"
     request = urllib.request.Request(
         "https://api.telegram.org/bot" + token + "/getMe", method="GET"
     )
@@ -262,6 +268,30 @@ def recovery_dry_run_result(request_id:str, authorization:str|None=Header(None))
         return dryrun.get_result(app.state.dry_run_db,request_id)
     except dryrun.DryRunError as exc:
         raise HTTPException(exc.status_code,detail={"code":exc.code}) from None
+
+@app.post("/internal/dp-cloud/dry-run/queue-safe")
+async def dry_run_queue_safe(request: Request,
+    x_dp_sync_ts: str | None = Header(default=None),
+    x_dp_sync_sig: str | None = Header(default=None),
+    x_dp_protocol: str | None = Header(default=None),
+    x_dp_producer_id: str | None = Header(default=None)):
+    """Signed-v2 only, isolated MOCK_ONLY fixture; no Telegram or live agent."""
+    path = "/internal/dp-cloud/dry-run/queue-safe"
+    body = await signed_producer(
+        request, path, "POST", x_dp_sync_ts, x_dp_sync_sig,
+        x_dp_protocol, x_dp_producer_id,
+    )
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        raise HTTPException(400, detail={"code": "invalid_dry_run_payload"}) from None
+    if not isinstance(payload, dict) or payload != {
+        "manufacturer": "SAFE-MFR", "oem": "SAFE-OEM-000",
+    }:
+        raise HTTPException(400, detail={"code": "safe_fixture_required"})
+    return dryrun.enqueue_signed_once(
+        app.state.dry_run_db, payload["manufacturer"], payload["oem"],
+    )
 
 @app.post("/internal/dp-cloud/owner/{operation}")
 async def dry_run_owner(operation: str, request: Request,
