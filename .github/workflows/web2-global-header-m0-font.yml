@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - web2-global-header-v11-m0-20261024
+      - web2-m0-selective-integration-20261026
   workflow_dispatch:
 
 permissions:
