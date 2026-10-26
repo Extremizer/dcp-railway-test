@@ -415,37 +415,34 @@ main {max-width:none;margin:0;padding:0;}
  .global-header-nav .gh-separator:nth-child(8) { margin-right:-5px; }
 }
 
-/* M0 OWNER-APPROVED MOBILE VARIANT 7 (2026-10-25).
-   Two rows, same DOM and native navigation/keyboard semantics:
-   LIFE | approved wordmark | МОЙ ХАБ
-   approved SEARCH | CART | PRIVATE.
-   Desktop and canonical original assets are untouched.
-   Original TPE 24/26/24 icon geometry is historical; owner's later
-   approvals are search 30/cart 40/private 36 CSS px. */
+/* M0 owner-approved TWO-ROW mobile layout (2026-10-26).
+   Row 1: original wordmark | original private message icon.
+   Row 2: LIFE | original search | original cart | МОЙ ХАБ.
+   Original approved assets and desktop rules untouched. */
 @media (max-width:430px) {
   .global-header-v11 {
     position:relative;
     display:block;
     height:120px;
     min-height:120px;
-    padding:12px 4px;
+    padding:0 12px;
     box-sizing:border-box;
-    --gh-l1:clamp(3px,1vw,5px);
   }
+  .global-header-v11::after { content:none; }
   .global-header-v11 .brand-slot {
     position:absolute;
-    z-index:1;
-    left:50%;
     top:12px;
-    transform:translateX(-50%);
-    display:flex;
-    justify-content:center;
-    align-items:center;
-    width:clamp(130px,36.5vw,156px);
-    max-width:calc(100% - 224px);
+    left:12px;
+    right:auto;
+    transform:none;
+    width:clamp(208px,65vw,280px);
+    max-width:calc(100% - 84px);
     height:44px;
     min-width:0;
     margin:0;
+    display:flex;
+    align-items:center;
+    justify-content:flex-start;
   }
   .global-header-v11 .brand-logo {
     display:block;
@@ -453,42 +450,26 @@ main {max-width:none;margin:0;padding:0;}
     height:auto;
     max-height:44px;
     object-fit:contain;
-    object-position:center;
+    object-position:left center;
   }
   .global-header-nav {
-    display:grid;
-    grid-template-columns:repeat(3,minmax(0,1fr));
-    grid-template-rows:44px 44px;
-    align-items:center;
-    justify-items:center;
-    width:100%;
-    margin:0;
-    gap:8px 0;
-  }
-  /* Approved source: one horizontal rule and two row-2 dividers. */
-  .global-header-v11::after {
-    content:"";
     position:absolute;
-    top:64px;
+    top:68px;
     left:12px;
     right:12px;
-    height:1px;
-    background:#434343;
-    pointer-events:none;
+    width:auto;
+    height:44px;
+    margin:0;
+    display:grid;
+    grid-template-columns:max-content 44px 44px max-content;
+    grid-template-rows:44px;
+    justify-content:space-between;
+    align-items:center;
+    justify-items:center;
+    gap:0;
   }
-  .global-header-nav { position:relative; }
   .global-header-nav::before,
-  .global-header-nav::after {
-    content:"";
-    position:absolute;
-    top:60px;
-    height:30px;
-    width:1px;
-    background:#555;
-    pointer-events:none;
-  }
-  .global-header-nav::before { left:33.333333%; }
-  .global-header-nav::after { left:66.666667%; }
+  .global-header-nav::after { content:none; }
   .global-header-nav .gh-separator { display:none; }
   .global-header-nav .gh-label {
     font-family:Manrope,Arial,sans-serif;
@@ -500,12 +481,17 @@ main {max-width:none;margin:0;padding:0;}
     line-height:1.2;
     min-height:44px;
     padding:0;
+    white-space:nowrap;
   }
-  .global-header-nav .gh-life { grid-row:1; grid-column:1; justify-self:center; }
-  .global-header-nav .gh-hub { grid-row:1; grid-column:3; justify-self:center; }
-  .global-header-nav .gh-search { grid-row:2; grid-column:1; }
-  .global-header-nav .gh-cart { grid-row:2; grid-column:2; }
-  .global-header-nav .gh-private { grid-row:2; grid-column:3; }
+  .global-header-nav .gh-life { grid-row:1; grid-column:1; }
+  .global-header-nav .gh-search { grid-row:1; grid-column:2; }
+  .global-header-nav .gh-cart { grid-row:1; grid-column:3; }
+  .global-header-nav .gh-hub { grid-row:1; grid-column:4; }
+  .global-header-nav .gh-private {
+    position:absolute;
+    top:-56px;
+    right:0;
+  }
   .global-header-nav .gh-action {
     width:44px;
     min-width:44px;
