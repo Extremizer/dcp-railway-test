@@ -77,6 +77,21 @@ class StagingBotIdentityTests(unittest.TestCase):
                 self.assertNotIn("PRIVATE", result)
                 self.assertNotIn("private-url", result)
 
+    def test_malformed_token_fails_before_network_without_secret_leak(self):
+        opener = Mock()
+        cases = (
+            ("123:ab cd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
+            ("123:ab\\ncd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
+            ("123:ab\\rcd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
+            ("123:ab\\x00cd", "INVALID_TOKEN_WHITESPACE_OR_CONTROL"),
+            ("nonnumeric:abc", "INVALID_TOKEN_STRUCTURE"),
+            ("123:abc:extra", "INVALID_TOKEN_STRUCTURE"),
+        )
+        for value, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(staging._telegram_getme_readonly(value, opener=opener), expected)
+        opener.assert_not_called()
+
     def test_invalid_token_never_uses_network(self):
         opener = Mock()
         self.assertEqual(
