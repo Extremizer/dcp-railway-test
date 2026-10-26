@@ -25,9 +25,9 @@ CDP_DISCOVERY = "http://127.0.0.1:9222/json"
 
 class RecoveryDenied(Exception):
     """Fixed diagnostic category; never attach credentials or request contents."""
-    def __init__(self, message="invalid_authentication", *, diagnostic="auth_invalid"):
+    def __init__(self, message="invalid_authentication", *, diagnostic_code="INITDATA_FORMAT"):
         super().__init__(message)
-        self.diagnostic = diagnostic
+        self.diagnostic_code = diagnostic_code
 
 
 class BrowserUnavailable(Exception):
@@ -42,32 +42,32 @@ def validate_telegram_init_data(data: str, bot_token: str, owner_id: int,
     Never trust a frontend-provided Telegram user ID.
     """
     if not isinstance(data, str) or len(data) > 8192 or not bot_token or type(owner_id) is not int:
-        raise RecoveryDenied("invalid_authentication", diagnostic="initdata_invalid_shape")
+        raise RecoveryDenied("invalid_authentication", diagnostic_code="INITDATA_FORMAT")
     try:
         pairs = urllib.parse.parse_qsl(data, keep_blank_values=True, strict_parsing=True)
         fields = dict(pairs)
         if len(pairs) != len(fields) or not fields.get("hash") or len(fields["hash"]) != 64:
-            raise RecoveryDenied("invalid_authentication", diagnostic="initdata_fields_invalid")
+            raise RecoveryDenied("invalid_authentication", diagnostic_code="INITDATA_FORMAT")
         received_hash = fields.pop("hash")
         check = "\n".join(f"{key}={fields[key]}" for key in sorted(fields))
         secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
         expected = hmac.new(secret, check.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(received_hash.lower(), expected):
-            raise RecoveryDenied("invalid_authentication", diagnostic="initdata_signature_invalid")
+            raise RecoveryDenied("invalid_authentication", diagnostic_code="INITDATA_SIGNATURE")
         t = int(fields["auth_date"])
         current = int(time.time()) if now is None else now
         if t > current + 30:
-            raise RecoveryDenied("invalid_authentication", diagnostic="initdata_future")
+            raise RecoveryDenied("invalid_authentication", diagnostic_code="INITDATA_FUTURE")
         if t < current - max_age:
-            raise RecoveryDenied("invalid_authentication", diagnostic="initdata_stale")
+            raise RecoveryDenied("invalid_authentication", diagnostic_code="INITDATA_EXPIRED")
         user = json.loads(fields["user"])
         if not isinstance(user, dict) or type(user.get("id")) is not int or user["id"] != owner_id:
-            raise RecoveryDenied("invalid_authentication", diagnostic="initdata_owner_mismatch")
+            raise RecoveryDenied("invalid_authentication", diagnostic_code="INITDATA_OWNER")
         return {"user_id":owner_id, "auth_date":t}
     except RecoveryDenied:
         raise
     except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
-        raise RecoveryDenied("invalid_authentication", diagnostic="initdata_malformed") from exc
+        raise RecoveryDenied("invalid_authentication", diagnostic_code="INITDATA_FORMAT") from exc
 
 class RecoveryGrants:
     """Process-local one-use invitations and short-lived bearer sessions.
@@ -100,14 +100,16 @@ class RecoveryGrants:
     def exchange(self, ticket: str, init_data: str, *, now: float | None = None) -> str:
         current = time.time() if now is None else now
         if not isinstance(ticket,str) or len(ticket) > 128 or len(ticket) < 32:
-            raise RecoveryDenied("invalid_invitation", diagnostic="invitation_invalid_shape")
+            raise RecoveryDenied("invalid_invitation", diagnostic_code="INVITATION_FORMAT")
         # Telegram identity is verified before consuming the ticket.
         validate_telegram_init_data(init_data,self.bot_token,self.owner_id,now=int(current))
         ticket_hash = self._fingerprint(ticket)
         with self._lock:
             expiry = self._tickets.pop(ticket_hash,None)
-            if expiry is None or expiry <= current:
-                raise RecoveryDenied("invalid_invitation", diagnostic="invitation_missing_or_expired")
+            if expiry is None:
+                raise RecoveryDenied("invalid_invitation", diagnostic_code="INVITATION_MISSING_OR_USED")
+            if expiry <= current:
+                raise RecoveryDenied("invalid_invitation", diagnostic_code="INVITATION_EXPIRED")
             session = secrets.token_urlsafe(32)
             self._sessions[self._fingerprint(session)] = current + 12*60
             return session
