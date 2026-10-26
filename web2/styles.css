@@ -417,7 +417,7 @@ main {max-width:none;margin:0;padding:0;}
 
 /* M0 owner-approved TWO-ROW mobile layout (2026-10-26).
    Row 1: original wordmark | original private message icon.
-   Row 2: LIFE | original search | original cart | МОЙ ХАБ.
+   Row 2: original search | LIFE | original cart | МОЙ ХАБ.
    Original approved assets and desktop rules untouched. */
 @media (max-width:430px) {
   .global-header-v11 {
@@ -483,8 +483,8 @@ main {max-width:none;margin:0;padding:0;}
     padding:0;
     white-space:nowrap;
   }
-  .global-header-nav .gh-life { grid-row:1; grid-column:1; }
-  .global-header-nav .gh-search { grid-row:1; grid-column:2; }
+  .global-header-nav .gh-search { grid-row:1; grid-column:1; }
+  .global-header-nav .gh-life { grid-row:1; grid-column:2; }
   .global-header-nav .gh-cart { grid-row:1; grid-column:3; }
   .global-header-nav .gh-hub { grid-row:1; grid-column:4; }
   .global-header-nav .gh-private {
