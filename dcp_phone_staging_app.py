@@ -73,6 +73,12 @@ def _telegram_getme_readonly(token: str, *, opener=None) -> str:
     import socket
     if not isinstance(token, str) or ":" not in token:
         return "NOT_CONFIGURED"
+    # Avoid constructing a URL from malformed secrets. Do not strip or log it.
+    # Preserve the original value so staging never silently changes credentials.
+    if any(c.isspace() for c in token) or any(ord(c) < 32 or ord(c) == 127 for c in token):
+        return "INVALID_TOKEN_WHITESPACE_OR_CONTROL"
+    if not token.isascii() or token.count(":") != 1 or not token.split(":", 1)[0].isdigit():
+        return "INVALID_TOKEN_STRUCTURE"
     request = urllib.request.Request(
         "https://api.telegram.org/bot" + token + "/getMe", method="GET"
     )
