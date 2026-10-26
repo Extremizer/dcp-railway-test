@@ -36,13 +36,15 @@ async function dryrun(){
 async function start(){
  try{
   const tg=window.Telegram?.WebApp;
-  const hash=new URL(location.href).hash.slice(1);
-  // Ticket lives in fragment, never request URL or Referer.
+  const launch=new URL(location.href);
+  const ticketRef=launch.searchParams.get("ref")||"";
+  // Telegram owns the fragment. Only a non-secret selector is accepted.
   history.replaceState(null,"",location.pathname);
-  if(!tg?.initData||!hash)throw new Error("Откройте одноразовую ссылку внутри Telegram");
+  if(!tg?.initData||!/^[0-9a-f]{64}$/.test(ticketRef))
+    throw new Error("Откройте новое приглашение внутри Telegram");
   tg.ready();tg.expand();
   const response=await fetch("/recovery/exchange",{method:"POST",headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({ticket:hash,init_data:tg.initData}),cache:"no-store"});
+    body:JSON.stringify({ticket_ref:ticketRef,init_data:tg.initData}),cache:"no-store"});
   if(!response.ok)throw new Error("Авторизация владельца не подтверждена");
   bearer=(await response.json()).bearer;
   $("app").style.display="block";
