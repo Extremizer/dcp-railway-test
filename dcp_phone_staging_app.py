@@ -243,7 +243,16 @@ class Exchange(BaseModel):
 def exchange(p:Exchange):
     if not app.state.grants:raise HTTPException(503,detail="not_configured")
     try:return {"bearer":app.state.grants.exchange(p.ticket,p.init_data),"expires_in_seconds":720}
-    except RecoveryDenied:raise HTTPException(401,detail="unauthorized")
+    except RecoveryDenied as exc:
+        # Fixed server-side code only. Never log identity, token, invitation or initData.
+        allowed = frozenset({
+            "INITDATA_FORMAT", "INITDATA_SIGNATURE", "INITDATA_EXPIRED",
+            "INITDATA_FUTURE", "INITDATA_OWNER", "INVITATION_FORMAT",
+            "INVITATION_EXPIRED", "INVITATION_MISSING_OR_USED",
+        })
+        code = exc.diagnostic_code if exc.diagnostic_code in allowed else "AUTH_DENIED"
+        print("DCP_STAGING_EXCHANGE_DENIED", code, flush=True)
+        raise HTTPException(401, detail="unauthorized") from None
 
 class DryRunRequest(BaseModel):
     manufacturer:str
