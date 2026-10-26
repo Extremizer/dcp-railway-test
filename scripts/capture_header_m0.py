@@ -109,6 +109,17 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                 assert sum(x["imgLoaded"] is True for x in data["elements"])==3, "all three navigation icons must render"
                 logo=page.locator("header.global-header-v11 .brand-logo")
                 assert logo.evaluate("(el) => el.complete && el.naturalWidth > 0 && !el.hidden"), "approved PNG wordmark must render"
+                expected_focus = ([".brand-slot",".gh-private",".gh-search",".gh-life",".gh-cart",".gh-hub"]
+                                  if width <= 430 else
+                                  [".brand-slot",".gh-search",".gh-life",".gh-cart",".gh-hub",".gh-private"])
+                actual_focus=[]
+                page.locator("body").click(position={"x":1,"y":1})
+                for selector in expected_focus:
+                    page.keyboard.press("Tab")
+                    matches=page.evaluate("""selector => document.activeElement === document.querySelector(selector)""",selector)
+                    assert matches, f"Tab focus mismatch at {width}px: expected {selector}"
+                    actual_focus.append(selector)
+                data["focus_order"] = actual_focus
                 page.locator("header.global-header-v11").screenshot(path=str(out/f"header_{width}.png"))
                 (out/f"header_{width}_metrics.json").write_text(json.dumps(data,ensure_ascii=False,indent=2))
                 page.close()
