@@ -1,0 +1,21 @@
+name: WEB2 Page Template v1 Isolated
+on:
+  push:
+    branches:
+      - web2-page-template-v1-isolated-20261027
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  template-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Template and immutable M0 structure
+        run: python -m unittest -v test_web2_page_template_v1 test_web2_global_header_m0 test_web2_contract
+      - name: Confirm approved source files untouched
+        run: |
+          git diff --exit-code 34afd7605cbd66f43f7ff951f74ce79c34d12832 -- web2/index.html web2/styles.css web2/app.js web2_ui_routes.py
