@@ -1,0 +1,24 @@
+/* Isolated proposal only. M0 CSS/geometry unchanged. */
+:root{--pt-accent:#BFF803;--pt-gray:#A5A5A5;--pt-unit:8px;--pt-gutter:4%;--pt-section:96px}
+.pt-page{font-family:Manrope,system-ui,sans-serif;background:#080909;color:#f1f1f1;min-height:100vh}
+.pt-page *{box-sizing:border-box}
+.pt-header-reference{padding:16px var(--pt-gutter);border-bottom:1px solid #333}
+.pt-page a{color:inherit}
+.pt-hero,.pt-search,.pt-section{margin:0;padding:var(--pt-section) var(--pt-gutter)}
+.pt-hero{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:var(--pt-unit);min-height:420px;align-items:center}
+.pt-hero-copy{grid-column:1/7}
+.pt-placeholder,.pt-hero-photo{grid-column:7/-1;min-height:250px;width:100%;object-fit:cover}
+.pt-placeholder{display:grid;place-items:center;border:1px dashed #777;color:var(--pt-gray)}
+.pt-hero--full-image .pt-hero-copy{grid-column:1/-1}
+.pt-hero--full-image .pt-placeholder,.pt-hero--full-image .pt-hero-photo{grid-column:1/-1}
+.pt-hero--photo-above .pt-placeholder,.pt-hero--photo-above .pt-hero-photo{grid-column:1/-1;grid-row:1}
+.pt-hero--photo-above .pt-hero-copy{grid-column:1/-1;grid-row:2}
+.pt-title{font-family:"Space Grotesk",Manrope,sans-serif;font-weight:700;font-size:clamp(34px,5vw,72px)}
+.pt-eyebrow{color:var(--pt-gray)}
+.pt-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:16px}
+.pt-card{grid-column:span 4;padding:32px;border:1px solid #4a4a4a;min-height:150px}
+.pt-card h3{font-weight:700}
+.pt-button{display:inline-flex;align-items:center;min-height:44px;padding:12px 24px;border:1px solid var(--pt-accent);text-decoration:none}
+.pt-footer{display:flex;justify-content:space-between;gap:24px;padding:48px var(--pt-gutter);border-top:1px solid #555}
+@media(max-width:900px){.pt-grid{grid-template-columns:repeat(8,minmax(0,1fr))}.pt-card{grid-column:span 4}.pt-hero{grid-template-columns:repeat(8,minmax(0,1fr))}.pt-hero-copy{grid-column:1/5}.pt-placeholder,.pt-hero-photo{grid-column:5/-1}}
+@media(max-width:600px){:root{--pt-gutter:16px;--pt-section:48px}.pt-grid,.pt-hero{grid-template-columns:repeat(4,minmax(0,1fr))}.pt-card,.pt-hero-copy,.pt-placeholder,.pt-hero-photo{grid-column:1/-1}.pt-footer{flex-direction:column}}
