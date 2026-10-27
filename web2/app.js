@@ -18,6 +18,17 @@ if (headerNav) {
   mobileHeader.addEventListener("change", syncHeaderFocusOrder);
 }
 
+// M5: unavailable destinations are explicitly gated in isolated WEB2.
+// Do not invent LIFE, Hub or messages pages or change approved header geometry.
+for (const selector of [".gh-life", ".gh-hub", ".gh-private"]) {
+  const link = document.querySelector(selector);
+  if (!link) continue;
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    window.alert("Раздел пока недоступен. Вы остались на странице EXTREMIZER.");
+  });
+}
+
 const brandLogo = document.querySelector(".brand-logo");
 if (brandLogo) {
   const showBrandLogo = () => { brandLogo.hidden = false; };
