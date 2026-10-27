@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - theme4-dcp-phone-first-cloud-producer-20261020
+      - theme4-m47-session-ux-20261027
   pull_request:
     paths:
       - dcp_phone_recovery_*
@@ -35,3 +36,10 @@ jobs:
         run: python -m py_compile dcp_phone_recovery_core.py dcp_phone_recovery_app.py dcp_cloud_browser_host.py dp_cloud_producer_ownership.py dp_cloud_producer_client.py dp_cloud_owner_http.py dp_cloud_broker_runtime.py test_dp_cloud_producer_ownership.py test_dp_cloud_client_contract.py test_dp_cloud_broker_http.py test_dcp_phone_recovery.py dcp_phone_recovery_notice.py test_dcp_phone_recovery_notice.py dcp_cloud_worker.py test_dcp_cloud_worker.py dcp_phone_staging_notice_once.py test_dcp_phone_staging_notice_once.py test_dcp_phone_staging_identity.py
       - name: Security and recovery tests (no network)
         run: python -B -m pytest -q test_dcp_phone_recovery.py test_dp_cloud_producer_ownership.py test_dp_cloud_client_contract.py test_dp_cloud_broker_http.py test_dcp_producer_v2.py test_dp_result_completion.py test_dcp_phone_recovery_notice.py test_dcp_cloud_worker.py test_dcp_phone_staging_notice_once.py test_dcp_phone_staging_identity.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Session UI regression tests (no network)
+        run: |
+          node --check dcp_phone_recovery.js
+          node --test test_dcp_phone_recovery_ui.cjs
