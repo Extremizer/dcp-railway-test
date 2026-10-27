@@ -150,10 +150,44 @@ class PhoneDryRunWorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(worker.WorkerBlocked, "unsafe_claim_rejected"):
             worker.run_once(producer)
 
+    def test_release_failure_prevents_success(self):
+        self.enqueue_safe()
+        producer = self.producer()
+        with patch.object(producer, "release", side_effect=TimeoutError("redacted")):
+            with self.assertRaisesRegex(worker.WorkerBlocked, "owner_release_unconfirmed"):
+                worker.run_once(producer)
+
+    def test_release_failure_also_blocks_no_work(self):
+        producer = self.producer()
+        with patch.object(producer, "release", side_effect=TimeoutError("redacted")):
+            with self.assertRaisesRegex(worker.WorkerBlocked, "owner_release_unconfirmed"):
+                worker.run_once(producer)
+
+    def test_success_requires_server_release_and_no_cache_commit(self):
+        import sqlite3
+        self.enqueue_safe()
+        producer = self.producer()
+        outcome = worker.run_once(producer)
+        self.assertIs(outcome["server_cache_committed"], False)
+        self.assertIs(outcome["lease_released"], True)
+        self.assertIsNone(producer.owner_epoch)
+        with sqlite3.connect(staging.app.state.dry_run_db) as conn:
+            self.assertEqual(conn.execute(
+                "SELECT state FROM dp_cloud_owner WHERE singleton_id=1"
+            ).fetchone()[0], "RELEASED")
+
+    def test_fake_release_ack_without_epoch_clear_is_blocked(self):
+        self.enqueue_safe()
+        producer = self.producer()
+        with patch.object(producer, "release", return_value={"status": "RELEASED"}):
+            with self.assertRaisesRegex(worker.WorkerBlocked, "owner_release_unconfirmed"):
+                worker.run_once(producer)
+
     def test_secret_file_loader_rejects_short_or_missing_secret(self):
         token_path = os.path.join(self.tmp.name, "dp_sync_token")
         with open(token_path, "w", encoding="utf-8") as stream:
             stream.write("short")
+        os.chmod(token_path, 0o600)
         with self.assertRaisesRegex(worker.WorkerBlocked, "dedicated_dp_signing_token_required"):
             worker.load_token_file(token_path)
 

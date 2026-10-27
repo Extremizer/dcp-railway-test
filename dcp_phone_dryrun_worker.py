@@ -130,23 +130,31 @@ def run_once(producer: CloudV2Producer) -> dict:
         if result is None:
             return {"status": "NO_WORK"}
         ack = producer.complete(claim, result)
+        if ack.get("server_cache_committed") is not False:
+            raise WorkerBlocked("cache_commit_ack_unproven")
         return {
             "status": ack["status"],
             "request_id": claim["request_id"],
             "source": "vps-dry-run-no-dcp",
+            "server_cache_committed": False,
+            "lease_released": True,
         }
     except (ProducerContractError, WorkerBlocked, OSError, TimeoutError, ValueError) as exc:
         code = exc.code if isinstance(exc, WorkerBlocked) else "producer_fail_closed"
         raise WorkerBlocked(code) from exc
     finally:
-        if acquired and producer.owner_epoch:
+        if acquired:
             try:
-                producer.release()
+                released = producer.release()
+                if released.get("status") != "RELEASED" or producer.owner_epoch is not None:
+                    raise WorkerBlocked("owner_release_unconfirmed")
             except Exception:
-                pass
+                # An acknowledged result alone cannot prove lease cleanup.
+                # Suppress transport details, never the cleanup failure itself.
+                raise WorkerBlocked("owner_release_unconfirmed") from None
 
 
-def _event(status: str, **extra: str) -> None:
+def _event(status: str, **extra: object) -> None:
     print(json.dumps({"status": status, **extra}, separators=(",", ":")), flush=True)
 
 
@@ -170,7 +178,9 @@ def main(argv: list[str] | None = None) -> int:
         while True:
             producer = CloudV2Producer(args.producer_id, key, send)
             outcome = run_once(producer)
-            _event(outcome["status"], request_id=str(outcome.get("request_id", "")))
+            _event(outcome["status"], request_id=str(outcome.get("request_id", "")),
+                   **{name: outcome[name] for name in
+                      ("server_cache_committed", "lease_released") if name in outcome})
             if args.once:
                 return 0
             time.sleep(max(1.0, args.interval_seconds))

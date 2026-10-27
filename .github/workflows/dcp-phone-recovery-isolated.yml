@@ -4,9 +4,13 @@ on:
     branches:
       - theme4-dcp-phone-first-cloud-producer-20261020
       - theme4-m47-session-ux-20261027
+      - theme4-m47-dryrun-release-20261027
   pull_request:
     paths:
       - dcp_phone_recovery_*
+      - dcp_phone_dryrun_worker.py
+      - test_dcp_phone_dryrun_worker.py
+      - test_dcp_phone_m3_dryrun.py
       - dp_cloud_producer_ownership.py
       - test_dp_cloud_producer_ownership.py
       - dcp_cloud_browser_host.py
@@ -43,3 +47,5 @@ jobs:
         run: |
           node --check dcp_phone_recovery.js
           node --test test_dcp_phone_recovery_ui.cjs
+      - name: DRY-RUN lease and staging integration regressions (no network)
+        run: python -B -m pytest -q test_dcp_phone_dryrun_worker.py test_dcp_phone_m3_dryrun.py
