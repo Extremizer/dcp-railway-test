@@ -223,7 +223,7 @@ async def secure(request,call_next):
     r=await call_next(request)
     r.headers.update({"Cache-Control":"no-store","Referrer-Policy":"no-referrer",
        "X-Content-Type-Options":"nosniff","X-Frame-Options":"DENY",
-       "Content-Security-Policy":"default-src 'none';script-src 'self' https://telegram.org;style-src 'self';img-src 'self' data:;connect-src 'self';frame-ancestors 'none'"})
+       "Content-Security-Policy":"default-src 'none';script-src 'self' https://telegram.org;style-src 'self';img-src 'self' data: blob:;connect-src 'self';frame-ancestors 'none'"})
     return r
 
 @app.get("/health")
