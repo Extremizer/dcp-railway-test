@@ -134,9 +134,15 @@ def run(bundle:pathlib.Path,out:pathlib.Path):
                             probe.keyboard.press(key)
                             probe.wait_for_url("**/web2#oemInput",timeout=5000)
                             passed=probe.url.split("#",1)[-1]=="oemInput"
+                        elif selector in (".gh-life",".gh-hub",".gh-private"):
+                            dialogs=[]
+                            probe.on("dialog", lambda dialog: (dialogs.append(dialog.message),dialog.accept()))
+                            original_url=probe.url
+                            probe.keyboard.press(key)
+                            passed=(len(dialogs)==1 and "Раздел пока недоступен" in dialogs[0]
+                                    and probe.url==original_url)
                         else:
-                            target={".brand-slot":"/web2",".gh-life":"/web2/life",
-                                    ".gh-hub":"/web2/hub",".gh-private":"/web2/messages"}[selector]
+                            target="/web2"
                             with probe.expect_navigation(url=f"**{target}",wait_until="domcontentloaded",timeout=5000):
                                 probe.keyboard.press(key)
                             passed=probe.url.split("?",1)[0].split("#",1)[0].endswith(target)
