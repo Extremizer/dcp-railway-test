@@ -4,6 +4,7 @@ on:
     branches:
       - web2-global-header-v11-m0-20261024
       - web2-m0-selective-integration-20261026
+      - web2-m5-ux-hardening-isolated-20261027
   workflow_dispatch:
 
 permissions:
