@@ -75,7 +75,7 @@ export function createOemSearch(oemSearch={}) {
   }
   form.addEventListener("submit",(event)=>{
     event.preventDefault();
-    if(!action) return;
+    if(!action||!buttonVisible) return;
     const oem=field?field.value.trim():null;
     if(fieldVisible&&!oem) {
       field.setCustomValidity("Введите OEM");
@@ -86,7 +86,7 @@ export function createOemSearch(oemSearch={}) {
     action({oem,source:"hero"});
   });
   if(field) field.addEventListener("input",()=>field.setCustomValidity(""));
-  // Field-only mode must not submit via Enter; preventDefault covers this.
+  // Field-only mode: Enter never triggers the configured action.
   section.append(form);
   return section;
 }
