@@ -22,3 +22,11 @@
 .pt-footer{display:flex;justify-content:space-between;gap:24px;padding:48px var(--pt-gutter);border-top:1px solid #555}
 @media(max-width:900px){.pt-grid{grid-template-columns:repeat(8,minmax(0,1fr))}.pt-card{grid-column:span 4}.pt-hero{grid-template-columns:repeat(8,minmax(0,1fr))}.pt-hero-copy{grid-column:1/5}.pt-placeholder,.pt-hero-photo{grid-column:5/-1}}
 @media(max-width:600px){:root{--pt-gutter:16px;--pt-section:48px}.pt-grid,.pt-hero{grid-template-columns:repeat(4,minmax(0,1fr))}.pt-card,.pt-hero-copy,.pt-placeholder,.pt-hero-photo{grid-column:1/-1}.pt-footer{flex-direction:column}}
+
+/* Builder OEM controls: hidden children are not mounted, hence no dead gaps. */
+.pt-oem-controls{display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+.pt-oem-input{box-sizing:border-box;flex:1 1 260px;min-width:0;min-height:48px;padding:12px 16px;background:#1c1e20;color:#fff;border:1px solid #a5a5a5;border-radius:0;font:500 16px Manrope,system-ui,sans-serif}
+.pt-oem-controls .pt-button{cursor:pointer;background:transparent;color:inherit;font:500 16px Manrope,system-ui,sans-serif}
+.pt-oem-controls .pt-button:disabled{cursor:not-allowed;opacity:.55}
+.pt-oem-controls :focus-visible{outline:3px solid #bff803;outline-offset:3px}
+@media(max-width:430px){.pt-oem-controls{gap:12px}.pt-oem-input{flex-basis:100%}.pt-oem-controls .pt-button{min-height:44px}}
