@@ -30,3 +30,10 @@
 .pt-oem-controls .pt-button:disabled{cursor:not-allowed;opacity:.55}
 .pt-oem-controls :focus-visible{outline:3px solid #bff803;outline-offset:3px}
 @media(max-width:430px){.pt-oem-controls{gap:12px}.pt-oem-input{flex-basis:100%}.pt-oem-controls .pt-button{min-height:44px}}
+
+/* Preview-only control surface; not mounted in live WEB2. */
+.pt-builder-controls{display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:12px 4%;background:#1c1e20;color:#fff;font:500 15px Manrope,system-ui,sans-serif}
+.pt-builder-controls label{display:inline-flex;align-items:center;gap:7px;min-height:44px;cursor:pointer}
+.pt-builder-controls input{accent-color:#bff803;width:20px;height:20px}
+.pt-builder-controls :focus-visible{outline:3px solid #bff803;outline-offset:3px}
+.pt-builder-controls output{color:#bff803}
