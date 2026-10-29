@@ -1,7 +1,31 @@
-<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>EXTREMIZER — PAGE TEMPLATE v1 / isolated preview</title><link rel="stylesheet" href="/web2-static/styles.css"><link rel="stylesheet" href="/web2-static/page-template-v1/template.css"></head><body><main id="page-template-preview"></main><script type="module">
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EXTREMIZER — PAGE TEMPLATE v1 / isolated preview</title>
+<link rel="stylesheet" href="/web2-static/styles.css">
+<link rel="stylesheet" href="/web2-static/page-template-v1/template.css">
+</head><body>
+<aside class="pt-builder-controls" aria-label="OEM builder visibility settings">
+  <strong>OEM Search / независимые переключатели (только preview)</strong>
+  <label><input id="pt-field-toggle" type="checkbox" checked> Поле OEM Search</label>
+  <label><input id="pt-button-toggle" type="checkbox" checked> Кнопка «Нажми»</label>
+  <output id="pt-toggle-state" aria-live="polite">ON / ON</output>
+</aside>
+<main id="page-template-preview"></main>
+<script type="module">
 import {renderPage,DIRECTIONS} from "/web2-static/page-template-v1/template.js";
-renderPage(document.getElementById("page-template-preview"),{
-hero:{variant:"split",title:"EXTREMIZER",eyebrow:"PAGE TEMPLATE v1 — НЕ ДЛЯ ПУБЛИКАЦИИ",subtitle:"Универсальный макет. Изображение не утверждено."},
-categories:DIRECTIONS,editorial:{items:[]}
-});
+const field=document.getElementById("pt-field-toggle");
+const button=document.getElementById("pt-button-toggle");
+function render() {
+  const fieldVisible=field.checked,buttonVisible=button.checked;
+  document.getElementById("pt-toggle-state").textContent=(fieldVisible?"ON":"OFF")+" / "+(buttonVisible?"ON":"OFF");
+  renderPage(document.getElementById("page-template-preview"),{
+    hero:{variant:"split",title:"EXTREMIZER",eyebrow:"PAGE TEMPLATE v1 — НЕ ДЛЯ ПУБЛИКАЦИИ",
+      subtitle:"Универсальный макет. Изображение не утверждено.",
+      oemSearch:{fieldVisible,buttonVisible}},
+    categories:DIRECTIONS,editorial:{items:[]}
+  });
+}
+field.addEventListener("change",render);
+button.addEventListener("change",render);
+render();
 </script></body></html>
