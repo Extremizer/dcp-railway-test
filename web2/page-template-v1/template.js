@@ -37,13 +37,57 @@ export function createHero(config={}) {
   } else section.append(el("div","pt-placeholder","Фотография не утверждена"));
   return section;
 }
-export function createOemSearch() {
+// Legacy MASTER v1.1: hero.oemSearch.visible remains a combined switch.
+// New pages opt into independent fieldVisible/buttonVisible without migration.
+export function resolveOemVisibility(oemSearch={}) {
+  const hasOwn=(key)=>Object.prototype.hasOwnProperty.call(oemSearch,key);
+  const combined=hasOwn("visible")?oemSearch.visible!==false:true;
+  return Object.freeze({
+    fieldVisible:hasOwn("fieldVisible")?oemSearch.fieldVisible===true:combined,
+    buttonVisible:hasOwn("buttonVisible")?oemSearch.buttonVisible===true:combined
+  });
+}
+export function createOemSearch(oemSearch={}) {
+  const {fieldVisible,buttonVisible}=resolveOemVisibility(oemSearch);
+  if(!fieldVisible&&!buttonVisible) return null;
   const section=el("section","pt-search");
-  section.append(el("h2","","OEM SEARCH"));
-  const message=el("p","","Поиск и оформление доступны в существующем WEB2.");
-  const link=el("a","pt-button","Перейти к OEM-поиску");
-  link.href="/web2#oemInput";
-  section.append(message,link);
+  const form=el("form","pt-oem-controls");
+  form.noValidate=true;
+  const action=typeof oemSearch.onSubmit==="function"?oemSearch.onSubmit:null;
+  let field=null;
+  if(fieldVisible) {
+    field=el("input","pt-oem-input");
+    field.type="search";field.name="oem";field.placeholder="OEM Search";
+    field.setAttribute("aria-label","OEM Search");
+    field.autocomplete="off";form.append(field);
+  }
+  if(buttonVisible) {
+    const button=el("button","pt-button","Нажми");
+    button.type="submit";
+    // An isolated button must never submit an undefined OEM.
+    // Even with a visible field, an unconfigured handler is not a real action.
+    button.disabled=!action;
+    if(!action) {
+      button.title="Действие кнопки не настроено";
+      button.setAttribute("aria-label","Нажми — действие не настроено");
+    }
+    form.append(button);
+  }
+  form.addEventListener("submit",(event)=>{
+    event.preventDefault();
+    if(!action) return;
+    const oem=field?field.value.trim():null;
+    if(fieldVisible&&!oem) {
+      field.setCustomValidity("Введите OEM");
+      field.reportValidity();
+      return;
+    }
+    if(field) field.setCustomValidity("");
+    action({oem,source:"hero"});
+  });
+  if(field) field.addEventListener("input",()=>field.setCustomValidity(""));
+  // Field-only mode must not submit via Enter; preventDefault covers this.
+  section.append(form);
   return section;
 }
 export function createCategoryGrid(cards=[]) {
@@ -80,7 +124,10 @@ export function renderPage(root,config={}) {
   const header=el("div","pt-header-reference");
   const link=el("a","","Глобальная шапка M0 / действующий WEB2");
   link.href="/web2";header.append(link);page.append(header);
-  page.append(createHero(config.hero),createOemSearch(),createCategoryGrid(config.categories||[]));
+  page.append(createHero(config.hero));
+  const oemSearch=createOemSearch(config.hero?.oemSearch||{});
+  if(oemSearch) page.append(oemSearch);
+  page.append(createCategoryGrid(config.categories||[]));
   const feature=createEditorialFeature(config.editorial||EMPTY_EDITORIAL);
   if(feature) page.append(feature);
   page.append(createGlobalFooter());root.append(page);
