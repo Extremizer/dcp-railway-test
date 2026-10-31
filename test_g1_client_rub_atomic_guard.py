@@ -123,11 +123,23 @@ class G1ClientRUBGuardTests(unittest.TestCase):
                 buyer_type="client", buyer_id=buyer, currency="RUB",
                 amount="11", adjustment_id="g1-adjust", actor="qa", reason="test",
             )
+        # Disposable prerequisite: delivery_charge reads dealer_arrivals before
+        # reaching FinanceEngine.post_event's client/RUB capacity guard.
+        with sqlite3.connect(self.db) as conn:
+            conn.execute(
+                "CREATE TABLE dealer_arrivals ("
+                "id INTEGER PRIMARY KEY, dealer_id TEXT NOT NULL)"
+            )
+            conn.execute(
+                "INSERT INTO dealer_arrivals(id,dealer_id) VALUES (?,?)",
+                (100, "dealer-qa"),
+            )
         with self.assertRaisesRegex(ValueError, "INSUFFICIENT_AVAILABLE"):
             self.engine.delivery_charge(
                 buyer_type="client", buyer_id=buyer, currency="RUB",
                 amount="11", arrival_id=100, actor="qa", description="test",
             )
+        self.assertEqual(self.balance(buyer), Decimal("10.00"))
         self.assertEqual(self.debits(buyer), [])
 
     def test_invalid_nonfinite_missing_zero_and_wrong_sign_amounts(self):
