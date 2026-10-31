@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from contextlib import nullcontext
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 
 from _client_checkout_callback_adapter_regression import (
@@ -61,6 +62,15 @@ class PartnerRoutesCheckoutPoint10Tests(unittest.TestCase):
         exec(code,namespace)
         self.save_order=namespace["save_order_to_history"]
         self.adapter=ClientFinanceAdapter(FinanceEngine(str(self.db)))
+        # Disposable funding permits eligible wallet routes; direct_partner
+        # remains exempt and the original item snapshots stay unchanged.
+        self.adapter.engine.payment(
+            buyer_type="client", buyer_id=str(User.id), currency="RUB",
+            amount=10000, payment_id="G1-POINT10-FUND", actor="qa-fixture",
+            reason="isolated G1 route fixture", payment_method="test",
+            source_amount=10000, source_currency="RUB",
+            fx_code="RUB_RUB", fx_rate="1",
+        )
 
     def persist(self,order_id,cart):
         return persist_client_checkout_atomic(
@@ -194,6 +204,34 @@ class PartnerRoutesCheckoutPoint10Tests(unittest.TestCase):
         ledger=self.ledger("P10-MIXED")
         self.assertEqual(len(ledger),1)
         self.assertEqual(ledger[0]["amount"],"-5000.00")
+
+    def test_insufficient_wallet_funds_roll_back_order_and_charge(self):
+        # setUp funded 10,000 RUB; this new order needs 10,001 RUB.
+        # Existing approved price snapshots in other scenarios stay unchanged.
+        with self.assertRaisesRegex(ValueError, "INSUFFICIENT_AVAILABLE"):
+            self.persist(
+                "P10-G1-INSUFFICIENT",
+                {"x": self.warehouse_item(
+                    oem="P10-G1-NO-CREDIT", price=10001,
+                    payment_route="extremizer_balance",
+                    fulfillment_route="through_extremizer",
+                )},
+            )
+        with sqlite3.connect(self.db) as c:
+            order_count = c.execute(
+                "SELECT COUNT(*) FROM orders WHERE order_id='P10-G1-INSUFFICIENT'"
+            ).fetchone()[0]
+            item_count = c.execute(
+                "SELECT COUNT(*) FROM order_items WHERE order_id='P10-G1-INSUFFICIENT'"
+            ).fetchone()[0]
+            charge_count = c.execute(
+                "SELECT COUNT(*) FROM finance_ledger WHERE order_id='P10-G1-INSUFFICIENT'"
+            ).fetchone()[0]
+        self.assertEqual((order_count, item_count, charge_count), (0, 0, 0))
+        self.assertEqual(
+            self.adapter.balance(str(User.id)),
+            Decimal("10000.00"),
+        )
 
     def test_invalid_fulfillment_route_rolls_back_atomic_checkout(self):
         cart={

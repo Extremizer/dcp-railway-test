@@ -163,7 +163,7 @@ class FinanceEngine:
                     'SELECT amount FROM finance_ledger WHERE buyer_type=? AND buyer_id=? AND wallet_currency=? ORDER BY id',
                     (buyer_type,buyer_id,currency)
                 ).fetchall()
-                balance=money(sum((Decimal(str(row['amount'])) for row in rows),Decimal('0')))
+                balance=money(sum((Decimal(str(row[0])) for row in rows),Decimal('0')))
                 if not balance.is_finite(): raise ValueError('client RUB balance must be finite')
                 required=-value
                 if required>balance:

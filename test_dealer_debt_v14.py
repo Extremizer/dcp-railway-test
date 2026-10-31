@@ -1,11 +1,46 @@
 """CONTRACT v1.4 dealer USD debt regression on disposable SQLite."""
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
+import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from oemixibot_finance import FinanceEngine
 from oemixibot_store import OemixiStore
+
+
+@contextmanager
+def close_disposable_sqlite_connections(db_path):
+    """Close connections to this disposable DB before TemporaryDirectory exits."""
+    original_connect = sqlite3.connect
+    active_connections = set()
+
+    class DisposableConnection(sqlite3.Connection):
+        def close(self):
+            super().close()
+            active_connections.discard(self)
+
+    def tracked_connect(database, *args, **kwargs):
+        if str(database) != str(db_path):
+            return original_connect(database, *args, **kwargs)
+        if "factory" in kwargs:
+            raise AssertionError("unexpected disposable SQLite connection factory")
+        connection = original_connect(
+            database, *args, factory=DisposableConnection, **kwargs
+        )
+        active_connections.add(connection)
+        return connection
+
+    with patch.object(sqlite3, "connect", tracked_connect):
+        try:
+            yield
+        finally:
+            for connection in tuple(active_connections):
+                connection.close()
+            if active_connections:
+                raise AssertionError("disposable SQLite connections remain open")
 
 
 class DealerDebtV14Tests(unittest.TestCase):
@@ -13,6 +48,9 @@ class DealerDebtV14Tests(unittest.TestCase):
         self.tmp=tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.db=str(Path(self.tmp.name)/"dealer.db")
+        sqlite_scope = close_disposable_sqlite_connections(self.db)
+        sqlite_scope.__enter__()
+        self.addCleanup(sqlite_scope.__exit__, None, None, None)
         self.store=OemixiStore(self.db)
         self.store.init()
         self.store.add_dealer("d",101,"Dealer",coefficient=1)
