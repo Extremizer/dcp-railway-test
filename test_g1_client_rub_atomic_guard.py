@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 import threading
 import unittest
+from unittest.mock import patch
 
 from client_finance_adapter import ClientFinanceAdapter
 from client_finance_schema import ensure_client_finance_schema
@@ -18,7 +19,7 @@ from common_finance_contract import LineFinanceSnapshot, PaymentRoute
 from oemixibot_finance import FinanceEngine
 
 ENGINE_FILE = Path(__file__).with_name("oemixibot_finance.py")
-PROVEN_ENGINE_SHA256 = "a95a8918afbd7f4be7893ee65919061c09b3ae4c5c8cfffcaf34a37f4b795499"
+PROVEN_ENGINE_SHA256 = "5a4bab41201b5ebbe2bd215646147ed18ee8d1660af3f6efc4275432d6f4d174"
 
 
 class G1ClientRUBGuardTests(unittest.TestCase):
@@ -37,6 +38,46 @@ class G1ClientRUBGuardTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory(prefix="ext-g1-qa-only-")
         self.addCleanup(self.tmp.cleanup)
         self.db = str(Path(self.tmp.name) / "wallet.db")
+
+        # Track only this test's disposable SQLite connections, including those
+        # opened by FinanceEngine and schema helpers. A connection context manager
+        # commits/rolls back but does not call close() on Windows.
+        active_connections = set()
+        connection_lock = threading.Lock()
+        original_connect = sqlite3.connect
+
+        class TrackedSQLiteConnection(sqlite3.Connection):
+            def close(connection):
+                super().close()
+                with connection_lock:
+                    active_connections.discard(connection)
+
+        def tracked_connect(database, *args, **kwargs):
+            if str(database) != self.db:
+                return original_connect(database, *args, **kwargs)
+            if "factory" in kwargs:
+                raise AssertionError("G1 disposable SQLite connection factory mismatch")
+            connection = original_connect(
+                database, *args, factory=TrackedSQLiteConnection, **kwargs
+            )
+            with connection_lock:
+                active_connections.add(connection)
+            return connection
+
+        def close_remaining_test_connections():
+            with connection_lock:
+                remaining = tuple(active_connections)
+            for connection in remaining:
+                connection.close()
+            with connection_lock:
+                if active_connections:
+                    raise AssertionError("G1 disposable SQLite connections remain open")
+
+        connection_patch = patch.object(sqlite3, "connect", tracked_connect)
+        connection_patch.start()
+        # unittest cleanup is LIFO: close connections, restore connect, remove temp.
+        self.addCleanup(connection_patch.stop)
+        self.addCleanup(close_remaining_test_connections)
         ensure_client_finance_schema(self.db)
         with sqlite3.connect(self.db) as conn:
             conn.execute("CREATE TABLE dealers(id TEXT PRIMARY KEY, active INTEGER NOT NULL)")

@@ -26,7 +26,7 @@ from oemixibot_finance import FinanceEngine
 ROOT = Path(__file__).resolve().parent
 BOT_SOURCE = ROOT / "extremizer_bot.py"
 ENGINE_SOURCE = ROOT / "oemixibot_finance.py"
-PROVEN_ENGINE_SHA256 = "a95a8918afbd7f4be7893ee65919061c09b3ae4c5c8cfffcaf34a37f4b795499"
+PROVEN_ENGINE_SHA256 = "5a4bab41201b5ebbe2bd215646147ed18ee8d1660af3f6efc4275432d6f4d174"
 
 
 def require(value, message):

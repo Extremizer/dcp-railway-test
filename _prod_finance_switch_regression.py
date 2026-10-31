@@ -28,7 +28,7 @@ PROD_PROBNIK_OUTSIDE_COMPOSE_BLOB = "b4b2dd134c45619ccb13168eedca61cf278f69be"
 
 # PR #28 guards: exact reviewed WEB ADMIN candidate and proven FinanceEngine.
 POINT10_WEB_APP_BLOB = "c6c7ae46b313220c44e4ee726948f65543c287c7"
-PROVEN_ENGINE_SHA256 = "a95a8918afbd7f4be7893ee65919061c09b3ae4c5c8cfffcaf34a37f4b795499"
+PROVEN_ENGINE_SHA256 = "5a4bab41201b5ebbe2bd215646147ed18ee8d1660af3f6efc4275432d6f4d174"
 
 SWITCH_PREFIX = """    if data == "checkout_confirm":
         return await _shadow_checkout_confirm(
