@@ -6,12 +6,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime
 import hashlib
 from pathlib import Path
 import sqlite3
 import tempfile
+from unittest.mock import patch
 
 from client_checkout_callback_adapter import (
     CHECKOUT_PHASES,
@@ -32,6 +33,37 @@ PROVEN_ENGINE_SHA256 = "5a4bab41201b5ebbe2bd215646147ed18ee8d1660af3f6efc4275432
 def require(value, message):
     if not value:
         raise AssertionError(message)
+
+
+@contextmanager
+def close_disposable_sqlite_connections(db_path):
+    """Close connections to this disposable DB before TemporaryDirectory exits."""
+    original_connect = sqlite3.connect
+    active_connections = set()
+
+    class DisposableConnection(sqlite3.Connection):
+        def close(self):
+            super().close()
+            active_connections.discard(self)
+
+    def tracked_connect(database, *args, **kwargs):
+        if str(database) != str(db_path):
+            return original_connect(database, *args, **kwargs)
+        if "factory" in kwargs:
+            raise AssertionError("unexpected disposable SQLite connection factory")
+        connection = original_connect(
+            database, *args, factory=DisposableConnection, **kwargs
+        )
+        active_connections.add(connection)
+        return connection
+
+    with patch.object(sqlite3, "connect", tracked_connect):
+        try:
+            yield
+        finally:
+            for connection in tuple(active_connections):
+                connection.close()
+            require(not active_connections, "disposable SQLite connections remain open")
 
 
 def compile_save_order_to_history():
@@ -185,7 +217,10 @@ async def run_async():
 
     save_code = compile_save_order_to_history()
 
-    with tempfile.TemporaryDirectory(prefix="callback-adapter-") as td:
+    with (
+        tempfile.TemporaryDirectory(prefix="callback-adapter-") as td,
+        close_disposable_sqlite_connections(Path(td) / "orders.db"),
+    ):
         db_path = Path(td) / "orders.db"
 
         def init_orders_db():
