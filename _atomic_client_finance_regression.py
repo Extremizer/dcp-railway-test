@@ -24,7 +24,7 @@ from oemixibot_finance import FinanceEngine
 ROOT = Path(__file__).resolve().parent
 BOT_SOURCE = ROOT / "extremizer_bot.py"
 ENGINE_SOURCE = ROOT / "oemixibot_finance.py"
-PROVEN_ENGINE_SHA256 = "0e4a6a28a0117709edf85d30076a6fea3b90c508115826ffa840488feffbd3a8"
+PROVEN_ENGINE_SHA256 = "a95a8918afbd7f4be7893ee65919061c09b3ae4c5c8cfffcaf34a37f4b795499"
 
 
 def require(value, message):
@@ -227,6 +227,15 @@ def run():
         engine = FinanceEngine(str(db_path))
         adapter = ClientFinanceAdapter(engine)
         client_id = str(User.id)
+
+        # Test-only PAYMENT funds two 15,000 RUB charge attempts (the second rolls back).
+        engine.payment(
+            buyer_type="client", buyer_id=client_id, currency="RUB",
+            amount=30000, payment_id="G1-ATOMIC-FUND", actor="qa-fixture",
+            reason="isolated G1 checkout fixture", payment_method="test",
+            source_amount=30000, source_currency="RUB",
+            fx_code="RUB_RUB", fx_rate="1",
+        )
 
         # COMMIT: order + line snapshots + finance event persist together.
         conn = sqlite3.connect(db_path)

@@ -26,7 +26,7 @@ from oemixibot_finance import FinanceEngine
 ROOT = Path(__file__).resolve().parent
 BOT_SOURCE = ROOT / "extremizer_bot.py"
 ENGINE_SOURCE = ROOT / "oemixibot_finance.py"
-PROVEN_ENGINE_SHA256 = "0e4a6a28a0117709edf85d30076a6fea3b90c508115826ffa840488feffbd3a8"
+PROVEN_ENGINE_SHA256 = "a95a8918afbd7f4be7893ee65919061c09b3ae4c5c8cfffcaf34a37f4b795499"
 
 
 def require(value, message):
@@ -247,6 +247,16 @@ async def run_async():
 
         create_schema(db_path)
         adapter = ClientFinanceAdapter(FinanceEngine(str(db_path)))
+
+        # Five successful core commits, each charging 15,000 RUB; later hooks
+        # fail separately and must not undo committed Finance events.
+        adapter.engine.payment(
+            buyer_type="client", buyer_id=str(User.id), currency="RUB",
+            amount=75000, payment_id="G1-CALLBACK-FUND", actor="qa-fixture",
+            reason="isolated G1 callback fixture", payment_method="test",
+            source_amount=75000, source_currency="RUB",
+            fx_code="RUB_RUB", fx_rate="1",
+        )
 
         # Success: every side effect observes already committed order+finance.
         events = []

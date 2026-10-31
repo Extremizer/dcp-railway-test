@@ -21,7 +21,7 @@ from oemixibot_finance import FinanceEngine
 ROOT = Path(__file__).resolve().parent
 BOT_SOURCE = ROOT / "extremizer_bot.py"
 ENGINE_SOURCE = ROOT / "oemixibot_finance.py"
-PROVEN_ENGINE_SHA256 = "0e4a6a28a0117709edf85d30076a6fea3b90c508115826ffa840488feffbd3a8"
+PROVEN_ENGINE_SHA256 = "a95a8918afbd7f4be7893ee65919061c09b3ae4c5c8cfffcaf34a37f4b795499"
 
 
 def require(value, message):
@@ -244,6 +244,15 @@ def run():
 
         create_schema(db_path)
         adapter = ClientFinanceAdapter(FinanceEngine(str(db_path)))
+
+        # Test-only PAYMENT: cover the unchanged 15,000 RUB chargeable snapshot.
+        adapter.engine.payment(
+            buyer_type="client", buyer_id=str(User.id), currency="RUB",
+            amount=15000, payment_id="G1-ORCH-FUND", actor="qa-fixture",
+            reason="isolated G1 checkout fixture", payment_method="test",
+            source_amount=15000, source_currency="RUB",
+            fx_code="RUB_RUB", fx_rate="1",
+        )
 
         # 1. Successful orchestration commits order and one finance event.
         result = persist_client_checkout_atomic(
