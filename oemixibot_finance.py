@@ -1,4 +1,4 @@
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 import sqlite3
 
 CENT=Decimal('0.01')
@@ -132,8 +132,13 @@ class FinanceEngine:
         if event_type not in allowed: raise ValueError('invalid event_type')
         for value,name in [(buyer_id,'buyer_id'),(description,'description'),(reference_type,'reference_type'),(reference_id,'reference_id'),(actor,'actor'),(idempotency_key,'idempotency_key')]:
             if not value or not str(value).strip(): raise ValueError(name+' required')
-        value=money(amount)
-        if buyer_type=='dealer' and not value.is_finite(): raise ValueError('dealer amount must be finite')
+        try:
+            raw_amount=Decimal(str(amount))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ValueError('invalid amount') from exc
+        if not raw_amount.is_finite(): raise ValueError('amount must be finite')
+        value=money(raw_amount)
+        if not value.is_finite(): raise ValueError('amount must be finite')
         if value==Decimal('0.00'): raise ValueError('amount must be non-zero')
         if event_type in {'PAYMENT','REFUND','AUTO_REFUND','ADJUSTMENT_PLUS'} and value<=0: raise ValueError('event requires positive amount')
         if event_type in {'ORDER_CHARGE','ADJUSTMENT_MINUS','DELIVERY_CHARGE'} and value>=0: raise ValueError('event requires negative amount')
@@ -141,6 +146,28 @@ class FinanceEngine:
         own_conn = conn is None
         c = self._db() if own_conn else conn
         try:
+            if buyer_type=='client' and currency=='RUB' and value<0:
+                if own_conn:
+                    c.execute('BEGIN IMMEDIATE')
+                else:
+                    if not c.in_transaction:
+                        raise ValueError('client RUB debit requires a caller-owned transaction')
+                    # A transaction flag alone does not prove a write lock. This
+                    # zero-row UPDATE acquires SQLite writer serialization on the
+                    # caller's existing transaction, without changing ledger data.
+                    # A failed upgrade (including stale WAL snapshots) fails closed.
+                    c.execute('UPDATE finance_ledger SET id=id WHERE 0')
+                if c.execute('SELECT 1 FROM finance_ledger WHERE idempotency_key=?',(idempotency_key,)).fetchone():
+                    raise ValueError('duplicate idempotency_key')
+                rows=c.execute(
+                    'SELECT amount FROM finance_ledger WHERE buyer_type=? AND buyer_id=? AND wallet_currency=? ORDER BY id',
+                    (buyer_type,buyer_id,currency)
+                ).fetchall()
+                balance=money(sum((Decimal(str(row['amount'])) for row in rows),Decimal('0')))
+                if not balance.is_finite(): raise ValueError('client RUB balance must be finite')
+                required=-value
+                if required>balance:
+                    raise ValueError(f'INSUFFICIENT_AVAILABLE:{balance}:{required}')
             if buyer_type=='dealer':
                 # Serialize capacity check and debit in the caller's transaction.
                 # Never commit/rollback a transaction supplied by ORDER CORE.
