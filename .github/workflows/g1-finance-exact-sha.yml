@@ -1,0 +1,223 @@
+name: G1 Finance Exact SHA (manual)
+run-name: G1 Finance exact SHA ${{ inputs.target_sha }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: "OWNER-approved full 40-character commit SHA"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  g1_finance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONNOUSERSITE: "1"
+    steps:
+      - name: Reject unauthorized dispatch
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]] || exit 1
+          [[ "$GITHUB_REF" == "refs/heads/main" ]] || exit 1
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          [[ "$TARGET_SHA" == "662756ee0b029004e1abf2ad4225238ae6e1b72c" ]] || exit 1
+
+      - name: Checkout authorized source SHA
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.target_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify checkout, FinanceEngine and five guards
+        shell: bash
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          [[ "$actual" == "$TARGET_SHA" ]] || exit 1
+          python3 - <<'PY'
+          import ast
+          import hashlib
+          import sys
+          from pathlib import Path
+
+          assert sys.version_info[:2] == (3, 12), "Python 3.12 required"
+          expected = "5a4bab41201b5ebbe2bd215646147ed18ee8d1660af3f6efc4275432d6f4d174"
+          actual = hashlib.sha256(Path("oemixibot_finance.py").read_bytes()).hexdigest()
+          assert actual == expected, f"FinanceEngine SHA256 mismatch: {actual}"
+          print(f"PASS FinanceEngine SHA256 {actual}", flush=True)
+
+          guards = (
+              "test_g1_client_rub_atomic_guard.py",
+              "_atomic_client_finance_regression.py",
+              "_client_checkout_orchestrator_regression.py",
+              "_client_checkout_callback_adapter_regression.py",
+              "_prod_finance_switch_regression.py",
+          )
+          required = guards + (
+              "test_client_wallet_info_v14.py",
+              "test_dealer_debt_v14.py",
+              "_save_order_shared_tx_regression.py",
+              "test_partner_routes_checkout_point10.py",
+          )
+          for name in required:
+              assert Path(name).is_file(), f"Missing mandatory test: {name}"
+          for name in guards:
+              tree = ast.parse(Path(name).read_text(encoding="utf-8"), filename=name)
+              values = [
+                  node.value.value
+                  for node in tree.body
+                  if isinstance(node, ast.Assign)
+                  and any(isinstance(target, ast.Name)
+                          and target.id == "PROVEN_ENGINE_SHA256"
+                          for target in node.targets)
+                  and isinstance(node.value, ast.Constant)
+              ]
+              assert values == [expected], f"Guard mismatch: {name}: {values}"
+              print(f"PASS guard {name}", flush=True)
+          PY
+
+      - name: Run ten mandatory groups (fail closed)
+        env:
+          OEMIXIBOT_DB_PATH: ${{ runner.temp }}/g1-disposable.sqlite
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+
+          unit_probe = r'''
+          import sys
+          import unittest
+          module, expected = sys.argv[1], int(sys.argv[2])
+          suite = unittest.defaultTestLoader.loadTestsFromName(module)
+          found = suite.countTestCases()
+          if found != expected:
+              raise SystemExit(f"FAIL {module}: discovered {found}, expected {expected}")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          if (result.testsRun != expected or not result.wasSuccessful()
+                  or result.skipped or result.expectedFailures
+                  or result.unexpectedSuccesses):
+              raise SystemExit(f"FAIL {module}: incomplete or failed suite")
+          print(f"PASS {module}: {expected}/{expected}")
+          '''
+
+          syntax_probe = r'''
+          import importlib
+          import inspect
+          from pathlib import Path
+          sources = (
+              "oemixibot_finance.py", "client_finance_adapter.py",
+              "client_finance_schema.py", "common_finance_contract.py",
+              "client_order_finance_bridge.py", "client_checkout_orchestrator.py",
+              "client_checkout_callback_adapter.py", "client_wallet_info_v14.py",
+              "warehouse_partner_settlements.py", "oemixibot_store.py",
+              "extremizer_bot.py", "probnik_app.py", "web_app.py",
+              "test_g1_client_rub_atomic_guard.py",
+              "test_client_wallet_info_v14.py", "test_dealer_debt_v14.py",
+              "_atomic_client_finance_regression.py",
+              "_save_order_shared_tx_regression.py",
+              "_client_checkout_orchestrator_regression.py",
+              "_client_checkout_callback_adapter_regression.py",
+              "_prod_finance_switch_regression.py",
+              "test_partner_routes_checkout_point10.py",
+          )
+          for name in sources:
+              source = Path(name).read_bytes()
+              compile(source, name, "exec", dont_inherit=True)
+          for name in (
+              "oemixibot_finance", "client_finance_adapter",
+              "client_finance_schema", "common_finance_contract",
+              "client_order_finance_bridge", "client_checkout_orchestrator",
+              "client_checkout_callback_adapter", "client_wallet_info_v14",
+              "warehouse_partner_settlements", "oemixibot_store",
+          ):
+              importlib.import_module(name)
+          from oemixibot_finance import FinanceEngine
+          for name in ("balance", "order_capacity", "post_event",
+                       "event", "payment", "refund", "adjustment_minus",
+                       "delivery_charge", "dcp_procurement_ready"):
+              assert callable(getattr(FinanceEngine, name, None)), name
+          assert "conn" in inspect.signature(FinanceEngine.post_event).parameters
+          print("PASS syntax/import/FinanceEngine compatibility")
+          '''
+
+          py = [sys.executable, "-B"]
+          def unit(name, count):
+              return py + ["-c", unit_probe, name, str(count)]
+          def script(name):
+              return py + [name]
+          groups = (
+              ("01 G1 Safety 15/15", unit("test_g1_client_rub_atomic_guard", 15)),
+              ("02 Client Wallet 4/4", unit("test_client_wallet_info_v14", 4)),
+              ("03 Dealer Debt 6/6", unit("test_dealer_debt_v14", 6)),
+              ("04 Atomic", script("_atomic_client_finance_regression.py")),
+              ("05 Shared TX", script("_save_order_shared_tx_regression.py")),
+              ("06 Orchestrator", script("_client_checkout_orchestrator_regression.py")),
+              ("07 Callback", script("_client_checkout_callback_adapter_regression.py")),
+              ("08 Production Switch", script("_prod_finance_switch_regression.py")),
+              ("09 Partner Routes 5/5", unit("test_partner_routes_checkout_point10", 5)),
+              ("10 Syntax/Import", py + ["-c", syntax_probe]),
+          )
+          assert len(groups) == 10
+          statuses = ["NOT_RUN"] * len(groups)
+          for index, (label, command) in enumerate(groups):
+              print(f"\nSTART {label}", flush=True)
+              try:
+                  result = subprocess.run(command, check=False)
+                  statuses[index] = "PASS" if result.returncode == 0 else "FAIL"
+              except Exception as exc:
+                  statuses[index] = "FAIL"
+                  print(f"FAIL {label}: {type(exc).__name__}", flush=True)
+              print(f"{statuses[index]} {label}", flush=True)
+              if statuses[index] != "PASS":
+                  break
+
+          report = ["## G1 exact-SHA mandatory test groups", "",
+                    "| Group | Result |", "|---|---|"]
+          report += [f"| {label} | {status} |"
+                     for (label, _), status in zip(groups, statuses)]
+          report += ["", "PASS only if all ten groups PASS."]
+          print("\n".join(report), flush=True)
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as f:
+              f.write("\n".join(report) + "\n")
+          if any(status != "PASS" for status in statuses):
+              raise SystemExit("FINANCE HOLD: incomplete mandatory matrix")
+          PY
+
+      - name: Postflight immutable-source check
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          from pathlib import Path
+          expected = "5a4bab41201b5ebbe2bd215646147ed18ee8d1660af3f6efc4275432d6f4d174"
+          actual = hashlib.sha256(Path("oemixibot_finance.py").read_bytes()).hexdigest()
+          assert actual == expected, "FinanceEngine changed during CI"
+          print(f"PASS postflight FinanceEngine SHA256 {actual}")
+          PY
+          [[ "$(git rev-parse HEAD)" == "662756ee0b029004e1abf2ad4225238ae6e1b72c" ]] || exit 1
+          git diff --exit-code
+          [[ -z "$(git status --porcelain)" ]] || exit 1
+          echo "PASS tracked/untracked checkout clean"
+          {
+            echo "Trigger event: $GITHUB_EVENT_NAME"
+            echo "Triggering ref: $GITHUB_REF"
+            echo "Triggering workflow SHA: $GITHUB_SHA"
+            echo "Checked-out source SHA: $(git rev-parse HEAD)"
+          } >> "$GITHUB_STEP_SUMMARY"
