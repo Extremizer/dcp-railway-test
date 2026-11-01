@@ -19,7 +19,6 @@ jobs:
     env:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONNOUSERSITE: "1"
-      OEMIXIBOT_DB_PATH: ${{ runner.temp }}/g1-disposable.sqlite
     steps:
       - name: Reject unauthorized dispatch
         shell: bash
@@ -90,6 +89,8 @@ jobs:
           PY
 
       - name: Run ten mandatory groups (fail closed)
+        env:
+          OEMIXIBOT_DB_PATH: ${{ runner.temp }}/g1-disposable.sqlite
         shell: bash
         run: |
           set -euo pipefail
