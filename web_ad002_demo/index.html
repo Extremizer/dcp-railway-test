@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <title>EXTREMIZER — Заказы / изолированная демо-страница AD-002</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./demo-orders.js" defer></script>
+  <script src="./demo.js" defer></script>
+</head>
+<body>
+  <header class="admin-header">
+    <div class="header-brand"><img src="./assets/Extremizer_vector(10).svg" alt="EXTREMIZER"></div>
+    <nav class="header-nav" aria-label="Разделы WEB ADMIN — демонстрация">
+      <span class="nav-item nav-active" aria-current="page">Заказы</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Позиции</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Клиенты</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Склады</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Отправки</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Админка</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Финансы</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Отчёты</span>
+      <span class="nav-item" title="DEMO / переход недоступен">Отзывы</span>
+      <span class="demo-private" title="DEMO / сообщения не подключены" aria-label="Демо-иконка сообщений, неактивна">▤</span>
+    </nav>
+    <span class="admin-user" title="DEMO / аккаунт не подключён">♟ admin ▾</span>
+  </header>
+
+  <main class="page">
+    <div class="page-heading"><h1>Заказы</h1><span>Управление заказами клиентов · Предварительные заказы</span></div>
+    <form id="demoFilters" class="filters" autocomplete="off" aria-label="Поиск по фиксированным демонстрационным заказам">
+      <label class="field"><span>КЛИЕНТ</span><select id="clientFilter"><option value="">Все</option></select></label>
+      <label class="field"><span>СТАТУС</span><select id="statusFilter"><option value="Предварительный">Предварительный</option></select></label>
+      <label class="field"><span>ТИП ДОСТАВКИ</span><select id="deliveryFilter"><option value="">Все</option><option value="USA">USA</option><option value="РФ">РФ</option></select></label>
+      <fieldset class="date-field"><legend>ДАТА ЗАКАЗА</legend><label>с <input type="date" id="startDate" value="2021-04-15"></label><span class="date-dash">—</span><label>по <input type="date" id="endDate" value="2025-10-29"></label></fieldset>
+      <label class="field"><span>НОМЕР ЗАКАЗА</span><select id="numberFilter"><option value="">Все</option></select></label>
+      <label class="field"><span>tracking number</span><select disabled aria-label="Tracking не подключён"><option>Все</option></select></label>
+      <button class="search-btn" type="submit">Поиск</button>
+      <button class="minor-btn" type="button" disabled title="DEMO / Excel export not connected"><span class="excel-mark">▦</span> Экспорт Excel</button>
+      <button class="minor-btn settings-btn" type="button" disabled title="DEMO / settings inactive">⚙ Настройка</button>
+    </form>
+
+    <section class="table-frame" aria-label="Девять демонстрационных заказов">
+      <table class="orders-table">
+        <colgroup><col class="w-order"><col class="w-track"><col class="w-client"><col class="w-price"><col class="w-status"><col class="w-place"></colgroup>
+        <thead><tr><th scope="col">заказ</th><th scope="col">отслеживание</th><th scope="col">клиент</th><th scope="col">стоимость</th><th scope="col">статус</th><th scope="col">размещение заказа</th></tr></thead>
+        <tbody id="ordersBody"></tbody>
+      </table>
+    </section>
+
+    <footer class="table-footer">
+      <div>Найдено заказов: <strong id="foundCount">9</strong> <span class="footer-divider">·</span> Показаны: <span id="shownLabel">предварительные заказы</span></div>
+      <div class="pagination"><span>Показывать по:</span> <span class="page-size">50⌄</span><button type="button" aria-label="Предыдущая страница" disabled>‹</button><span class="page-number" aria-current="page">1</span><button type="button" aria-label="Следующая страница" disabled>›</button></div>
+    </footer>
+    <p class="demo-notice" role="note">ISOLATED VISUAL DEMO — NOT CONNECTED TO REAL ORDERS · Нет API, БД, финансов, реальных сообщений, трекинга или экспорта.</p>
+  </main>
+</body>
+</html>
