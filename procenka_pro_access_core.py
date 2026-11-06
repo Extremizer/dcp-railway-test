@@ -62,9 +62,17 @@ class MembershipResult:
 
 @dataclass(frozen=True)
 class AccessDecision:
+    """An operation-scoped decision, never a payment or order-commit permit.
+
+    For checkout operations, membership_verified may be True while allowed
+    stays False until a separately authorized integration verifies cart,
+    ownership, Finance, and durable idempotency requirements.
+    """
     allowed: bool
     reason: str
     membership: Membership | None = None
+    membership_verified: bool = False
+    requires_external_authorization: bool = False
 
 
 class SubscriptionGate:
@@ -98,7 +106,12 @@ class SubscriptionGate:
 
 
 class AccessPolicy:
-    """Pure policy. No grant bypasses order ownership, Finance or cart checks."""
+    """Pure, operation-scoped policy; never authorizes an order or charge.
+
+    Checkout finalization is intentionally ungrantable in this isolated core.
+    Runtime integration must enforce cart, actor ownership, Finance and durable
+    checkout-intent idempotency before a separate checkout authorization step.
+    """
 
     @staticmethod
     def authorize(
@@ -115,8 +128,26 @@ class AccessPolicy:
             return AccessDecision(True, "public_navigation_only")
         if operation in _NEW_COMMERCE:
             if membership is Membership.MEMBER:
+                if operation in {
+                    Operation.NEW_CHECKOUT_PREFLIGHT,
+                    Operation.NEW_CHECKOUT_COMMIT,
+                }:
+                    # A valid subscription is necessary but insufficient.
+                    # This core has NO mechanism to certify cart ownership,
+                    # Finance preflight or durable checkout idempotency.
+                    return AccessDecision(
+                        False,
+                        "membership_verified_checkout_requires_external_gates",
+                        membership,
+                        membership_verified=True,
+                        requires_external_authorization=True,
+                    )
                 return AccessDecision(
-                    True, "membership_only_other_guards_required", membership
+                    True,
+                    "membership_only_other_guards_required",
+                    membership,
+                    membership_verified=True,
+                    requires_external_authorization=True,
                 )
             if membership is Membership.NOT_MEMBER:
                 return AccessDecision(False, "subscription_required", membership)
