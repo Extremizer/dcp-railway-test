@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import secrets
 import sqlite3
+from contextlib import closing
 import tempfile
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -55,7 +56,7 @@ class SyntheticSQLiteAtomicClaimBackend:
         # Cannot point this implementation at production or a caller's DB.
         self._directory = Path(tempfile.mkdtemp(prefix="extremizer-pro-synthetic-"))
         self._db_path = self._directory / "atomic_claim_synthetic.sqlite3"
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             conn.executescript(
                 """
                 CREATE TABLE synthetic_handoffs (
@@ -68,6 +69,14 @@ class SyntheticSQLiteAtomicClaimBackend:
                     telegram_user_id INTEGER,
                     used_epoch INTEGER,
                     CHECK (telegram_user_id IS NULL OR telegram_user_id > 0)
+                );
+                CREATE TABLE synthetic_cart_claims (
+                    cart_id TEXT PRIMARY KEY,
+                    cart_revision TEXT NOT NULL,
+                    telegram_user_id INTEGER NOT NULL,
+                    token_digest TEXT UNIQUE NOT NULL,
+                    FOREIGN KEY (token_digest)
+                        REFERENCES synthetic_handoffs(token_digest)
                 );
                 CREATE TABLE synthetic_claim_receipts (
                     claim_id TEXT PRIMARY KEY,
@@ -118,7 +127,7 @@ class SyntheticSQLiteAtomicClaimBackend:
             raise ValueError("invalid synthetic claim seed")
         token = secrets.token_urlsafe(32)
         digest = self._digest(token)
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             try:
                 conn.execute("BEGIN IMMEDIATE")
                 now = int(conn.execute("SELECT strftime('%s','now')").fetchone()[0])
@@ -157,7 +166,7 @@ class SyntheticSQLiteAtomicClaimBackend:
             intent_expires = int(intent.expires_at.timestamp())
         except (AttributeError, TypeError, ValueError, UnicodeError, OverflowError):
             return None
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             try:
                 conn.execute("BEGIN IMMEDIATE")
                 row = conn.execute(
@@ -193,17 +202,32 @@ class SyntheticSQLiteAtomicClaimBackend:
 
                 changed = conn.execute(
                     """UPDATE synthetic_handoffs
-                       SET telegram_user_id=?, used_epoch=?
+                       SET telegram_user_id=?,
+                           used_epoch=CAST(strftime('%s','now') AS INTEGER)
                        WHERE token_digest=? AND expected_actor_id=?
                          AND official_channel_id=? AND cart_id=?
-                         AND cart_revision=? AND expires_epoch>?
+                         AND cart_revision=?
+                         AND expires_epoch > CAST(strftime('%s','now') AS INTEGER)
                          AND expires_epoch=? AND telegram_user_id IS NULL
                          AND used_epoch IS NULL""",
-                    (intent.telegram_user_id, now, digest,
+                    (intent.telegram_user_id, digest,
                      intent.telegram_user_id, intent.channel_id, intent.cart_id,
-                     intent.cart_revision, now, intent_expires),
+                     intent.cart_revision, intent_expires),
                 ).rowcount
                 if changed != 1:
+                    conn.rollback()
+                    return None
+                # Cart ownership is unique across all tokens and revisions.
+                # Token CAS and cart ownership are committed or rolled back
+                # together. A second token for the same cart cannot reassign it.
+                cart_claimed = conn.execute(
+                    """INSERT OR IGNORE INTO synthetic_cart_claims
+                       (cart_id,cart_revision,telegram_user_id,token_digest)
+                       VALUES (?,?,?,?)""",
+                    (intent.cart_id, intent.cart_revision,
+                     intent.telegram_user_id, digest),
+                ).rowcount
+                if cart_claimed != 1:
                     conn.rollback()
                     return None
                 receipt = ClaimReceipt(
@@ -247,13 +271,20 @@ class SyntheticSQLiteAtomicClaimBackend:
             return False
         if not digest_matches:
             return False
-        with self._connect() as conn:
+        with closing(self._connect()) as conn:
             row = conn.execute(
                 """SELECT r.claim_id,r.transaction_id,r.telegram_user_id,
                           r.channel_id,r.cart_id,r.cart_revision,
-                          h.telegram_user_id,h.used_epoch,h.expires_epoch
+                          h.telegram_user_id,h.used_epoch,h.expires_epoch,
+                          h.expected_actor_id,h.official_channel_id,
+                          h.cart_id,h.cart_revision,
+                          c.telegram_user_id,c.cart_revision,c.token_digest
                    FROM synthetic_claim_receipts r
                    JOIN synthetic_handoffs h ON h.token_digest=r.token_digest
+                   JOIN synthetic_cart_claims c
+                     ON c.cart_id=h.cart_id
+                    AND c.cart_revision=h.cart_revision
+                    AND c.token_digest=h.token_digest
                    WHERE r.token_digest=?""",
                 (expected_digest,),
             ).fetchone()
@@ -268,4 +299,11 @@ class SyntheticSQLiteAtomicClaimBackend:
             and row[6] == intent.telegram_user_id
             and row[7] is not None
             and row[8] == int(intent.expires_at.timestamp())
+            and row[9] == receipt.telegram_user_id == intent.telegram_user_id
+            and row[10] == receipt.channel_id == intent.channel_id
+            and row[11] == receipt.cart_id == intent.cart_id
+            and row[12] == receipt.cart_revision == intent.cart_revision
+            and row[13] == receipt.telegram_user_id == intent.telegram_user_id
+            and row[14] == receipt.cart_revision == intent.cart_revision
+            and row[15] == expected_digest
         )
