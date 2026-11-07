@@ -223,21 +223,24 @@ class ServerOwnedWebCartAuthorization:
             grant = await self._issue_authorization(session, cart, actor)
         except Exception:
             return Result(Status.STOP_RECONCILE, "grant_outcome_uncertain")
-        if not (
-            isinstance(grant, HandoffAuthorization)
-            and isinstance(grant.authorization_id, str)
-            and bool(grant.authorization_id.strip())
-            and grant.customer_id == session.customer_id
-            and grant.cart_id == cart.cart_id
-            and grant.cart_revision == cart.revision
-            and grant.items_digest == cart.items_digest
-            and type(grant.telegram_user_id) is int
-            and grant.telegram_user_id == actor.telegram_user_id
-            and grant.consumed_at is None
-            and self._time(grant.expires_at)
-            and grant.expires_at > datetime.now(timezone.utc)
-        ):
-            return Result(Status.STOP_RECONCILE, "grant_record_mismatch")
+        try:
+            if not (
+                isinstance(grant, HandoffAuthorization)
+                and isinstance(grant.authorization_id, str)
+                and bool(grant.authorization_id.strip())
+                and grant.customer_id == session.customer_id
+                and grant.cart_id == cart.cart_id
+                and grant.cart_revision == cart.revision
+                and grant.items_digest == cart.items_digest
+                and type(grant.telegram_user_id) is int
+                and grant.telegram_user_id == actor.telegram_user_id
+                and grant.consumed_at is None
+                and self._time(grant.expires_at)
+                and grant.expires_at > datetime.now(timezone.utc)
+            ):
+                return Result(Status.STOP_RECONCILE, "grant_record_mismatch")
+        except Exception:
+            return Result(Status.STOP_RECONCILE, "grant_record_unverifiable")
         return Result(Status.VERIFIED_NEXT_GATE, "grant_issued", grant)
 
     async def claim_handoff(
@@ -263,22 +266,25 @@ class ServerOwnedWebCartAuthorization:
             return Result(Status.STOP_RECONCILE, "claim_outcome_uncertain")
         if evidence is None:
             return Result(Status.DENY, "claim_rejected")
-        if not (
-            isinstance(evidence, ClaimEvidence)
-            and evidence.authorization_id == authorization_id
-            and type(evidence.telegram_user_id) is int
-            and evidence.telegram_user_id == actor.telegram_user_id
-            and all(
-                isinstance(value, str) and bool(value.strip())
-                for value in (
-                    evidence.transaction_id, evidence.claim_id,
-                    evidence.customer_id, evidence.cart_id,
-                    evidence.cart_revision,
+        try:
+            if not (
+                isinstance(evidence, ClaimEvidence)
+                and evidence.authorization_id == authorization_id
+                and type(evidence.telegram_user_id) is int
+                and evidence.telegram_user_id == actor.telegram_user_id
+                and all(
+                    isinstance(value, str) and bool(value.strip())
+                    for value in (
+                        evidence.transaction_id, evidence.claim_id,
+                        evidence.customer_id, evidence.cart_id,
+                        evidence.cart_revision,
+                    )
                 )
-            )
-            and self._time(evidence.committed_at)
-        ):
-            return Result(Status.STOP_RECONCILE, "claim_receipt_mismatch")
+                and self._time(evidence.committed_at)
+            ):
+                return Result(Status.STOP_RECONCILE, "claim_receipt_mismatch")
+        except Exception:
+            return Result(Status.STOP_RECONCILE, "claim_receipt_unverifiable")
         try:
             verified = await self._verify_claim_evidence(
                 authorization_id, actor, evidence
