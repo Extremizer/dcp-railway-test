@@ -176,6 +176,18 @@ class WebTelegramClaimCoordinator:
             return ClaimOutcome(ClaimStatus.STOP_RECONCILE, "claim_outcome_uncertain")
         if receipt is None:
             return ClaimOutcome(ClaimStatus.DENIED, "claim_rejected")
+        try:
+            digest_matches = (
+                isinstance(receipt, ClaimReceipt)
+                and isinstance(receipt.token_digest, str)
+                and compare_digest(
+                    receipt.token_digest,
+                    sha256(intent.token.encode("utf-8")).hexdigest(),
+                )
+            )
+        except (UnicodeEncodeError, TypeError):
+            # Atomic claim may already be committed: never retry it.
+            return ClaimOutcome(ClaimStatus.STOP_RECONCILE, "receipt_digest_unverifiable")
         if (
             not isinstance(receipt, ClaimReceipt)
             or not isinstance(receipt.claim_id, str)
@@ -185,8 +197,7 @@ class WebTelegramClaimCoordinator:
             or receipt.cart_revision != intent.cart_revision
             or type(receipt.channel_id) is not int
             or receipt.channel_id != intent.channel_id
-            or not isinstance(receipt.token_digest, str)
-            or not compare_digest(receipt.token_digest, sha256(intent.token.encode("utf-8")).hexdigest())
+            or not digest_matches
             or not isinstance(receipt.transaction_id, str)
             or not receipt.transaction_id.strip()
         ):
