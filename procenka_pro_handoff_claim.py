@@ -15,9 +15,11 @@ Trust boundaries:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from hashlib import sha256
+from hmac import compare_digest
 from typing import Awaitable, Callable
 
 from procenka_pro_access_core import Membership, MembershipProvider, SubscriptionGate
@@ -25,8 +27,12 @@ from procenka_pro_access_core import Membership, MembershipProvider, Subscriptio
 
 @dataclass(frozen=True)
 class ClaimIntent:
-    """Opaque claim request; token is never included in the result."""
-    token: str
+    """Opaque claim request; token is redacted from standard repr.
+
+    Integrations must also redact token from dumps, exceptions and structured
+    logs. repr=False does NOT protect serializers such as dataclasses.asdict.
+    """
+    token: str = field(repr=False)
     telegram_user_id: int
     channel_id: int
     cart_id: str
@@ -36,11 +42,18 @@ class ClaimIntent:
 
 @dataclass(frozen=True)
 class ClaimReceipt:
-    """Receipt emitted ONLY after durable atomic claim, not a cart grant."""
+    """Backend-reported claim, not standalone proof of durable commit.
+
+    A trusted, independent receipt verifier must establish provenance against
+    authoritative storage before the coordinator reports CLAIMED.
+    """
     claim_id: str
     telegram_user_id: int
     cart_id: str
     cart_revision: str
+    channel_id: int
+    token_digest: str = field(repr=False)
+    transaction_id: str
 
 
 class ClaimStatus(str, Enum):
@@ -54,7 +67,7 @@ class ClaimStatus(str, Enum):
 class ClaimOutcome:
     status: ClaimStatus
     reason: str
-    receipt: ClaimReceipt | None = None
+    receipt: ClaimReceipt | None = field(default=None, repr=False)
 
     @property
     def final_commerce_authorized(self) -> bool:
@@ -71,11 +84,18 @@ WebOwnershipVerifier = Callable[[ClaimIntent], Awaitable[bool]]
 # - match token, authenticated actor, verified WEB owner, cart ID/revision;
 # - check not previously claimed, original TTL with storage-side current time;
 # - assign owner and used/claimed state atomically, never reassign owner;
-# - persist a unique claim receipt; return None on definite rejected claim;
+# - persist a unique claim receipt with token digest, channel, immutable actor,
+#   cart ID/revision and transaction ID; return None on definite rejection;
 # - on uncertain commit outcome, raise (coordinator returns STOP_RECONCILE).
 # Rechecking against authoritative records is mandatory; external preflight
 # booleans alone do NOT authorize the backend to consume a token.
 AtomicClaimBackend = Callable[[ClaimIntent], Awaitable[ClaimReceipt | None]]
+
+# Mandatory, separately trusted backend evidence verifier. It must compare
+# immutable authoritative transaction/claim records (including token binding,
+# channel, owner and cart revision); checking receipt fields alone is NOT proof.
+# No implementation is supplied or authorized by this isolated module.
+ReceiptVerifier = Callable[[ClaimIntent, ClaimReceipt], Awaitable[bool]]
 
 
 class WebTelegramClaimCoordinator:
@@ -89,10 +109,11 @@ class WebTelegramClaimCoordinator:
         verify_web_ownership: WebOwnershipVerifier,
         membership_provider: MembershipProvider,
         atomic_claim: AtomicClaimBackend,
+        verify_receipt: ReceiptVerifier,
     ) -> None:
         for fn in (
             verify_actor, verify_channel, verify_web_ownership,
-            membership_provider, atomic_claim,
+            membership_provider, atomic_claim, verify_receipt,
         ):
             if not callable(fn):
                 raise TypeError("trusted claim dependency must be callable")
@@ -101,6 +122,7 @@ class WebTelegramClaimCoordinator:
         self._verify_web_ownership = verify_web_ownership
         self._subscription = SubscriptionGate(membership_provider)
         self._atomic_claim = atomic_claim
+        self._verify_receipt = verify_receipt
 
     async def claim(self, intent: ClaimIntent) -> ClaimOutcome:
         if not isinstance(intent, ClaimIntent):
@@ -161,6 +183,19 @@ class WebTelegramClaimCoordinator:
             or receipt.telegram_user_id != intent.telegram_user_id
             or receipt.cart_id != intent.cart_id
             or receipt.cart_revision != intent.cart_revision
+            or type(receipt.channel_id) is not int
+            or receipt.channel_id != intent.channel_id
+            or not isinstance(receipt.token_digest, str)
+            or not compare_digest(receipt.token_digest, sha256(intent.token.encode("utf-8")).hexdigest())
+            or not isinstance(receipt.transaction_id, str)
+            or not receipt.transaction_id.strip()
         ):
             return ClaimOutcome(ClaimStatus.STOP_RECONCILE, "receipt_mismatch")
+        try:
+            # Only independent authoritative storage evidence can attest commit.
+            verified = await self._verify_receipt(intent, receipt)
+        except Exception:
+            return ClaimOutcome(ClaimStatus.STOP_RECONCILE, "receipt_verification_unavailable")
+        if verified is not True:
+            return ClaimOutcome(ClaimStatus.STOP_RECONCILE, "receipt_provenance_unverified")
         return ClaimOutcome(ClaimStatus.CLAIMED, "atomic_claim_committed", receipt)
