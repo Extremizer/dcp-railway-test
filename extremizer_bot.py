@@ -3131,6 +3131,34 @@ class FinderService:
             return result
 
 
+def _safe_oem_diag_category(value, allowlist):
+    if not isinstance(value, str) or not value:
+        return "UNKNOWN"
+    return value if value in allowlist else "OTHER"
+
+
+async def _search_with_safe_oem_diagnostic(manufacturer, oem):
+    result = await finder_service.search(manufacturer, oem)
+    diagnostic = result.get("_diagnostic") if isinstance(result, dict) else None
+    recovery = result.get("_telegram_session_recovery") if isinstance(result, dict) else None
+    log.info(
+        "OEM_SEARCH_DIAG status=%s match_rule=%s initial_reason=%s",
+        _safe_oem_diag_category(
+            result.get("status") if isinstance(result, dict) else None,
+            {"FOUND", "PARTIAL", "NOT_FOUND", "HUMAN_REVIEW", "CACHE_MISS", "CONFIG_ERROR", "ERROR"},
+        ),
+        _safe_oem_diag_category(
+            diagnostic.get("match_rule") if isinstance(diagnostic, dict) else None,
+            {"cache_only_miss", "exact_current_parts_row_v5_1", "exact_real_parts_result_row_v5_1"},
+        ),
+        _safe_oem_diag_category(
+            recovery.get("initial_reason") if isinstance(recovery, dict) else None,
+            {"cache_only", "finder_page_unavailable"},
+        ),
+    )
+    return result
+
+
 finder_service = FinderService()
 
 
@@ -11102,7 +11130,7 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode=ParseMode.HTML,
         )
         try:
-            result = await finder_service.search(manufacturer, last_oem)
+            result = await _search_with_safe_oem_diagnostic(manufacturer, last_oem)
             result = await enrich_found_result_with_dealer_price(result)
             if str(result.get("status") or "").upper() == "FOUND":
                 context.user_data.setdefault("found_items", {})[_cart_item_key(result)] = result
@@ -11170,10 +11198,12 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         explicit, raw_text = _group_text_is_explicit_request(update, context)
         print(f"group_gate_allowed={explicit!r}; cleaned_text={raw_text!r}")
         if not explicit:
+            log.info("OEM_ROUTE_EXIT category=GROUP_GATE")
             print("V2.7.2 GROUP GATE: IGNORED")
             return
         print("V2.7.2 GROUP GATE: ACCEPTED")
         if not raw_text:
+            log.info("OEM_ROUTE_EXIT category=EMPTY_GROUP_REQUEST")
             await safe_reply_text(message, 
                 "Отправь OEM-запрос или нажми /start."
             )
@@ -11181,6 +11211,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     recipient_field = context.user_data.get("warehouse_recipient_field")
     if recipient_field:
+        log.info("OEM_ROUTE_EXIT category=WAREHOUSE_RECIPIENT_FLOW")
         recipient = dict(context.user_data.get("warehouse_recipient") or {})
         value = raw_text.strip()
         if not value:
@@ -11224,9 +11255,11 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user and user.id == RATE_ADMIN_USER_ID and (context.user_data.get("supplier_tracking_order_id") or context.user_data.get("supplier_problem")):
         try:
             if await supplier_telegram_handlers.handle_tracking_text(update, context, supplier_order_service, raw_text):
+                log.info("OEM_ROUTE_EXIT category=SUPPLIER_TRACKING")
                 return
         except (ValueError, KeyError, PermissionError) as exc:
             await safe_reply_text(message, "⚠️ " + str(exc))
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
     if (
@@ -11235,6 +11268,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         and warehouse_admin.is_text_mode_active(context)
     ):
         await warehouse_admin.handle_text(update, context, raw_text)
+        log.info("OEM_ROUTE_EXIT category=WAREHOUSE_ADMIN")
         return
 
     if user and user.id == RATE_ADMIN_USER_ID and context.user_data.get(
@@ -11249,6 +11283,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "⚠️ Значение не сохранено. Отправь непустой текст до 120 символов.",
                 reply_markup=admin_delivery_terms_keyboard(),
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
         context.user_data.pop("admin_delivery_setting_edit", None)
         await safe_reply_text(
@@ -11258,6 +11293,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=admin_delivery_terms_keyboard(),
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if user and user.id == RATE_ADMIN_USER_ID and context.user_data.get(
@@ -11267,6 +11303,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_volume_weight_divisor(raw_text)
         except ValueError as exc:
             await safe_reply_text(message, "⚠️ " + str(exc))
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
         context.user_data.pop("admin_delivery_divisor_edit", None)
         await safe_reply_text(
@@ -11275,6 +11312,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=admin_delivery_keyboard(),
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     state = context.user_data.get("admin_delivery_group_flow")
@@ -11289,6 +11327,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             value = parse_positive_delivery_number(raw_text)
         except ValueError as exc:
             await safe_reply_text(message, "⚠️ " + str(exc))
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
         values = dict(state.get("measurement_values") or {})
         values[stage] = str(value)
@@ -11303,6 +11342,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "height": "Введи высоту груза в см.",
             }
             await safe_reply_text(message, prompts[stages[index + 1]])
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
         try:
             preview = preview_admin_delivery_group(
@@ -11310,6 +11350,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         except ValueError as exc:
             await safe_reply_text(message, "⚠️ " + str(exc))
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
         token = new_admin_delivery_group_token(
             context.user_data, state["order_id"],
@@ -11326,6 +11367,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=screen[1],
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if (
@@ -11367,6 +11409,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ]
                 ]),
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if amount_rub < 0:
@@ -11376,6 +11419,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Например: <code>2700</code>",
                 parse_mode=ParseMode.HTML,
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if not set_delivery_tariff_value(
@@ -11387,6 +11431,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Не удалось сохранить тариф доставки.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         context.user_data.pop("admin_delivery_edit", None)
@@ -11409,6 +11454,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             disable_web_page_preview=True,
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if (
@@ -11429,6 +11475,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Например: <code>1</code> или <code>1.5</code>",
                 parse_mode=ParseMode.HTML,
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if actual_weight < 0:
@@ -11436,6 +11483,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Вес не может быть отрицательным.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         row = get_admin_order_delivery(order_id)
@@ -11446,6 +11494,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Тариф доставки не выбран.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         tariff_code = row[1]
@@ -11460,6 +11509,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     message,
                     "⚠️ Не удалось рассчитать доставку.",
                 )
+                log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
                 return
 
             context.user_data.pop("admin_delivery_actual_order_id", None)
@@ -11476,6 +11526,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     else None
                 ),
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         context.user_data.pop("admin_delivery_actual_order_id", None)
@@ -11497,6 +11548,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ]
             ]),
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if (
@@ -11517,6 +11569,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Например: <code>3</code> или <code>3.5</code>",
                 parse_mode=ParseMode.HTML,
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if volume_weight < 0:
@@ -11524,6 +11577,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Вес не может быть отрицательным.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         actual_weight = context.user_data.get(
@@ -11536,6 +11590,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Фактический вес не найден. Начни расчёт заново.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if not save_admin_order_delivery_weights(
@@ -11547,6 +11602,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Не удалось рассчитать доставку.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         context.user_data.pop("admin_delivery_volume_order_id", None)
@@ -11564,6 +11620,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else None
             ),
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if (
@@ -11591,6 +11648,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Например: <code>3500</code>",
                 parse_mode=ParseMode.HTML,
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if amount_rub < 0:
@@ -11598,6 +11656,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Стоимость не может быть отрицательной.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if not set_admin_order_delivery_manual(
@@ -11608,6 +11667,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Не удалось сохранить стоимость доставки.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         context.user_data.pop("admin_delivery_manual_order_id", None)
@@ -11624,6 +11684,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 else None
             ),
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if (
@@ -11659,6 +11720,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ]
                 ]),
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if amount_rub < 0:
@@ -11668,6 +11730,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Например: <code>35000</code>",
                 parse_mode=ParseMode.HTML,
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         if not set_admin_customer_total(order_id, amount_rub):
@@ -11675,6 +11738,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 message,
                 "⚠️ Не удалось сохранить стоимость товаров.",
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         context.user_data.pop("admin_customer_total_order_id", None)
@@ -11692,6 +11756,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ),
             disable_web_page_preview=True,
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if (
@@ -11740,6 +11805,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ],
                 ]),
             )
+            log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
             return
 
         context.user_data["admin_search_payload"] = payload
@@ -11757,6 +11823,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode=ParseMode.HTML,
             reply_markup=admin_search_results_keyboard(payload, page=0),
         )
+        log.info("OEM_ROUTE_EXIT category=OTHER_EARLY_EXIT")
         return
 
     if user and user.id == RATE_ADMIN_USER_ID:
@@ -11799,10 +11866,12 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ),
                     disable_web_page_preview=True,
                 )
+                log.info("OEM_ROUTE_EXIT category=ADMIN_ORDER_MATCH")
                 return
 
     selected_manufacturer=mfgux.selected(context.user_data)
     if not selected_manufacturer:
+        log.info("OEM_ROUTE_EXIT category=MANUFACTURER_NOT_SELECTED")
         await safe_reply_text(
             message, "🏭 Сначала выбери производителя кнопкой.",
             reply_markup=manufacturer_keyboard(),
@@ -11810,6 +11879,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     oems=mfgux.oem_batch(raw_text,max_count=MAX_BATCH_OEMS)
     if not oems:
+        log.info("OEM_ROUTE_EXIT category=INVALID_OEM_FORMAT")
         await safe_reply_text(
             message, "Отправь только каталожные номера для выбранного производителя.",
             reply_markup=change_manufacturer_keyboard(),
@@ -11847,7 +11917,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            result = await finder_service.search(manufacturer, oem)
+            result = await _search_with_safe_oem_diagnostic(manufacturer, oem)
             result = await enrich_found_result_with_dealer_price(result)
             status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(
@@ -11953,7 +12023,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         try:
-            result = await finder_service.search(manufacturer, oem)
+            result = await _search_with_safe_oem_diagnostic(manufacturer, oem)
             result = await enrich_found_result_with_dealer_price(result)
             analytics_status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(
