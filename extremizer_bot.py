@@ -3131,6 +3131,34 @@ class FinderService:
             return result
 
 
+def _safe_oem_diag_category(value, allowlist):
+    if not isinstance(value, str) or not value:
+        return "UNKNOWN"
+    return value if value in allowlist else "OTHER"
+
+
+async def _search_with_safe_oem_diagnostic(manufacturer, oem):
+    result = await finder_service.search(manufacturer, oem)
+    diagnostic = result.get("_diagnostic") if isinstance(result, dict) else None
+    recovery = result.get("_telegram_session_recovery") if isinstance(result, dict) else None
+    log.info(
+        "OEM_SEARCH_DIAG status=%s match_rule=%s initial_reason=%s",
+        _safe_oem_diag_category(
+            result.get("status") if isinstance(result, dict) else None,
+            {"FOUND", "PARTIAL", "NOT_FOUND", "HUMAN_REVIEW", "CACHE_MISS", "CONFIG_ERROR", "ERROR"},
+        ),
+        _safe_oem_diag_category(
+            diagnostic.get("match_rule") if isinstance(diagnostic, dict) else None,
+            {"cache_only_miss", "exact_current_parts_row_v5_1", "exact_real_parts_result_row_v5_1"},
+        ),
+        _safe_oem_diag_category(
+            recovery.get("initial_reason") if isinstance(recovery, dict) else None,
+            {"cache_only", "finder_page_unavailable"},
+        ),
+    )
+    return result
+
+
 finder_service = FinderService()
 
 
@@ -11102,7 +11130,7 @@ async def manufacturer_callback(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode=ParseMode.HTML,
         )
         try:
-            result = await finder_service.search(manufacturer, last_oem)
+            result = await _search_with_safe_oem_diagnostic(manufacturer, last_oem)
             result = await enrich_found_result_with_dealer_price(result)
             if str(result.get("status") or "").upper() == "FOUND":
                 context.user_data.setdefault("found_items", {})[_cart_item_key(result)] = result
@@ -11847,7 +11875,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            result = await finder_service.search(manufacturer, oem)
+            result = await _search_with_safe_oem_diagnostic(manufacturer, oem)
             result = await enrich_found_result_with_dealer_price(result)
             status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(
@@ -11953,7 +11981,7 @@ async def text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
         try:
-            result = await finder_service.search(manufacturer, oem)
+            result = await _search_with_safe_oem_diagnostic(manufacturer, oem)
             result = await enrich_found_result_with_dealer_price(result)
             analytics_status = str(result.get("status") or "").upper()
             analytics_display_price = customer_rub_price_from_dp(
