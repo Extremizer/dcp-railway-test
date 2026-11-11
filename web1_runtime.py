@@ -58,16 +58,7 @@ def _spawn(name, args):
 def main():
     port = os.getenv("PORT", "8080").strip() or "8080"
 
-    if not os.getenv("EXTREMIZER_BOT_TOKEN", "").strip():
-        print("WEB1_RUNTIME: EXTREMIZER_BOT_TOKEN missing", flush=True)
-        return 2
-
-    _spawn("main_bot", [sys.executable, "-u", "extremizer_bot.py"])
-
-    if os.getenv("PROBNIK_BOT_TOKEN", "").strip():
-        _spawn("probnik", [sys.executable, "-u", "probnik_app.py"])
-    else:
-        print("WEB1_RUNTIME: PROBNIK_BOT_TOKEN absent; Probnik disabled", flush=True)
+    # Telegram polling runs only on its separately managed host, not Railway.
 
     if os.getenv("OEMIXIBOT_TOKEN", "").strip():
         print(
