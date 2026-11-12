@@ -837,7 +837,7 @@ def main() -> None:
     init_probnik_identity()
     pricing_analytics.init_analytics(ORDERS_DB)
     logging.info("PROBNIK polling runtime starting")
-    build_application().run_polling(drop_pending_updates=False)
+    build_application().run_polling(drop_pending_updates=False, bootstrap_retries=3)
 
 
 if __name__ == "__main__":
