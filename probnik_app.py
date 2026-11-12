@@ -544,13 +544,13 @@ def _compose(oem: str, info: dict, rows: list[dict]) -> str:
     customer_rub = info.get("customer_rub")
     rrp_rub = info.get("rrp_rub")
     if customer_rub is not None:
-        customer_price = _format_rub(customer_rub).replace(" ₽", "* ₽")
+        customer_price = _format_rub(customer_rub).replace(" ₽", " ₽*")
         lines.append(f"Ваша цена — <b>{customer_price}</b>")
         if rrp_rub is not None and rrp_rub > customer_rub:
             lines.append(f"РРЦ — <b>{_format_rub(rrp_rub)}</b>")
             benefit_pct = (rrp_rub - customer_rub) / rrp_rub * 100
             lines.append(f"Ваша выгода — <b>{benefit_pct:.1f}%</b>")
-        delivery_line = "<b>* -</b> в цену не входит стоимость доставки из штатов 🚚"
+        delivery_line = "* — без учета стоимости доставки в РФ"
     else:
         lines.append("Цена сейчас недоступна. Попробуйте повторить запрос позже.")
         delivery_line = None
