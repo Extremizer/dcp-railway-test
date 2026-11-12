@@ -58,7 +58,11 @@ def _spawn(name, args):
 def main():
     port = os.getenv("PORT", "8080").strip() or "8080"
 
-    # Telegram polling runs only on its separately managed host, not Railway.
+    # Main quotation bot remains on its separate host; only Probnik polls here.
+    if os.getenv("PROBNIK_BOT_TOKEN", "").strip():
+        _spawn("probnik", [sys.executable, "-u", "probnik_app.py"])
+    else:
+        print("WEB1_RUNTIME: PROBNIK_BOT_TOKEN absent; Probnik disabled", flush=True)
 
     if os.getenv("OEMIXIBOT_TOKEN", "").strip():
         print(
@@ -93,6 +97,10 @@ def main():
             for name, child in list(children):
                 code = child.poll()
                 if code is None:
+                    continue
+                if name == "probnik":
+                    children.remove((name, child))
+                    print(f"WEB1_RUNTIME: probnik exited code={code}; web and backup continue", flush=True)
                     continue
                 print(f"WEB1_RUNTIME: child exited name={name} code={code}", flush=True)
                 _terminate_children()
