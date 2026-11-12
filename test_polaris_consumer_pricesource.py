@@ -80,7 +80,7 @@ class PolarisConsumerPriceSourceTests(PolarisDealerPriceE2EIntegrationTests):
             "lookup_oem",
             return_value={},
         ), patch.object(catalog,"confirm_identity"):
-            offer=catalog.resolve_offer("2205250",price_gateway=adapter)
+            offer=catalog.resolve_offer("2205250",manufacturer="Polaris",price_gateway=adapter)
         self.assertEqual(offer["dl_usd"],184.07)
         self.assertEqual(offer["requested_oem"],"2205250")
         self.assertEqual(offer["oem"],"2206328")

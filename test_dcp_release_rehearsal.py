@@ -14,8 +14,7 @@ import dp_live_quiescence as quiescence
 import dp_live_health as health
 import test_dcp_producer_v2 as producer_tests
 import test_dcp_three_adapters as adapter_tests
-from test_dp_result_completion import KEY, RAW_SOURCE
-import dp_result_completion as completion
+from test_dp_result_completion import KEY
 
 
 class PairedReleaseRehearsalTests(unittest.TestCase):
@@ -37,7 +36,8 @@ class PairedReleaseRehearsalTests(unittest.TestCase):
         with sqlite3.connect(fx.db) as c:
             c.execute('CREATE TABLE dp_write_probe(marker TEXT)')
             c.execute("CREATE TRIGGER count_dp_writes AFTER UPDATE OF dealer_price_usd,source,last_verified_at ON dealer_price_cache BEGIN INSERT INTO dp_write_probe VALUES('dp_write'); END")
-        def browser(manufacturer,oem):
+        def browser(manufacturer,oem,**kwargs):
+            self.assertEqual(kwargs['category_evidence']['manufacturer'], manufacturer)
             approve_mode(fx.db,'CLOSED')
             self.assertEqual(bridge.request_live_dp(fx.db,'Honda','91303-PA9-004',wait_seconds=0)['status'],'ADMISSION_CLOSED')
             self.assertIsNone(bridge.claim_next(fx.db,producer_id='second-producer'))
@@ -61,7 +61,8 @@ class PairedReleaseRehearsalTests(unittest.TestCase):
 
     def test_three_real_adapters_preserve_fresh_cache_hits_when_closed(self):
         fx=self.fixture(adapter_tests.ThreeAdapterTests)
-        with sqlite3.connect(fx.db) as c:completion._write_cache(c,'Arctic Cat','2670-265',31.25,'verified_local_dcp:'+RAW_SOURCE,health._now())
+        fx.complete_verified_cache()
+        requests_before=fx.snapshot()['dp_live_requests']
         approve_mode(fx.db,'CLOSED')
         with sqlite3.connect(fx.db) as c:
             c.execute('CREATE TABLE dp_write_probe(marker TEXT)')
@@ -75,7 +76,7 @@ class PairedReleaseRehearsalTests(unittest.TestCase):
         self.assertEqual(values[1]['_dealer_price_usd'],31.25)
         self.assertEqual(values[2]['dl_usd'],31.25)
         forbidden.assert_not_called();fx.browser.get_dealer_price_dict.assert_not_called()
-        self.assertEqual(len(fx.snapshot()['dp_live_requests']),0)
+        self.assertEqual(fx.snapshot()['dp_live_requests'],requests_before)
         self.assertEqual(len(fx.snapshot()['dp_write_probe']),0)
 
     def test_three_real_adapters_reject_new_misses_while_closed(self):
@@ -90,7 +91,10 @@ class PairedReleaseRehearsalTests(unittest.TestCase):
 
     def test_uncertain_commit_keeps_closed_and_requires_manual_journal_evidence(self):
         fx=self.fixture();raw=fx.browser.get_dealer_price_dict.return_value.copy();fx.enqueue()
-        def lookup(*args):approve_mode(fx.db,'CLOSED');return raw
+        def lookup(*args,**kwargs):
+            self.assertEqual(kwargs['category_evidence']['manufacturer'], args[0])
+            approve_mode(fx.db,'CLOSED')
+            return raw
         fx.browser.get_dealer_price_dict.side_effect=lookup;fx.drop_after_commit=True
         with self.assertRaises(TimeoutError):fx.agent.run_once()
         self.assertFalse(fx.agent.run_once());fx.browser.get_dealer_price_dict.assert_called_once()
@@ -113,7 +117,10 @@ class PairedReleaseRehearsalTests(unittest.TestCase):
     def test_cloudflare_auth_stop_and_no_automatic_open(self):
         for status in ('CLOUDFLARE','AUTH_REQUIRED'):
             fx=self.fixture();fx.enqueue()
-            def blocked(*args):approve_mode(fx.db,'CLOSED');return {'status':status}
+            def blocked(*args,**kwargs):
+                self.assertEqual(kwargs['category_evidence']['manufacturer'], args[0])
+                approve_mode(fx.db,'CLOSED')
+                return {'status':status}
             fx.browser.get_dealer_price_dict.side_effect=blocked
             self.assertTrue(fx.agent.run_once());self.assertTrue(fx.agent._PRODUCER_STOP)
             self.assertFalse(fx.agent.run_once());fx.browser.get_dealer_price_dict.assert_called_once()

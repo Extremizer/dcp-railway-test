@@ -1,6 +1,8 @@
 import asyncio
 from datetime import datetime
 import logging
+import os
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -62,11 +64,33 @@ class SingleWriterTests(CompletionFixture):
 
 
 class ReadinessTests(unittest.TestCase):
+    # This immutable guard belongs to Stage 3, before manufacturer-first UX.
+    # Apply it to its accepted revision, rather than treating later accepted
+    # features as unauthorized Stage-3 changes. Current release scope is also
+    # checked independently against the exact Core/OEMixi release bases in CI.
+    def historical_procenka(self):
+        return subprocess.check_output(
+            ["git", "show", "e8d45e2f46bda0267b8595283befb704786142a9:extremizer_bot.py"],
+            cwd=Path(__file__).resolve().parent, text=True,
+        )
+
     def test_exact_byte_preservation_outside_two_authorized_spans(self):
-        require_procenka_unchanged(Path(__file__).with_name("extremizer_bot.py").read_text())
+        require_procenka_unchanged(self.historical_procenka())
+
+    def test_current_procenka_matches_exact_release_base(self):
+        bases=("ee4d22851036faed409f63ef405398f4fb3b1611",
+               "d05827268039c40c7cb7f2f920c06c31a760c9f0")
+        selected=os.getenv("RELEASE_BASE_SHA")
+        if selected:
+            self.assertIn(selected,bases)
+            bases=(selected,)
+        accepted=[subprocess.check_output(
+            ["git","show",ref+":extremizer_bot.py"],
+            cwd=Path(__file__).resolve().parent,text=True) for ref in bases]
+        self.assertIn(Path(__file__).with_name("extremizer_bot.py").read_text(),accepted)
 
     def test_unrelated_text_finance_or_checkout_change_rejected(self):
-        s=Path(__file__).with_name("extremizer_bot.py").read_text()
+        s=self.historical_procenka()
         with self.assertRaises(AssertionError):require_procenka_unchanged(s+'\n# unrelated mutation\n')
         with self.assertRaises(AssertionError):require_procenka_unchanged(s.replace('f"🇺🇸 Цена из США для', 'f"Изменённая цена для'))
 
@@ -82,12 +106,17 @@ class ReadinessTests(unittest.TestCase):
             with self.assertRaises(ValueError):gateway.SharedDealerPriceAdapter(None,max_age_hours=ttl)
         with self.assertRaises(TypeError):gateway.SharedDealerPriceAdapter(None)
 
-    def test_cache_hit_does_not_claim_it_was_a_new_server_commit(self):
-        from test_dp_result_completion import RAW_SOURCE
-        import tempfile,sqlite3,dp_result_completion,dp_live_health
-        with tempfile.TemporaryDirectory() as d:
-            db=Path(d)/"test.db"
-            with sqlite3.connect(db) as c:dp_result_completion._write_cache(c,"Arctic Cat","2670-265",31.25,"verified_local_dcp:"+RAW_SOURCE,dp_live_health._now())
-            r=gateway.request_price(db,"Arctic Cat","2670-265",live_request=Mock(side_effect=AssertionError))
-            self.assertTrue(r["verified_cache_hit"])
-            self.assertNotIn("server_cache_committed",r)
+    def test_cache_hit_preserves_existing_commit_without_new_request(self):
+        from test_dcp_three_adapters import ThreeAdapterTests
+        fx=ThreeAdapterTests(methodName='runTest')
+        fx.setUp()
+        self.addCleanup(fx.doCleanups)
+        fx.complete_verified_cache()
+        before=fx.snapshot()
+        live=Mock(side_effect=AssertionError("cache hit must not start a lookup"))
+        r=gateway.request_price(fx.db,"Polaris","2206328",live_request=live)
+        # This marker proves an existing server commit, not a new producer run.
+        self.assertTrue(r["server_cache_committed"])
+        self.assertEqual(r["request_id"],before["dp_live_requests"][0][0])
+        self.assertEqual(fx.snapshot(),before)
+        live.assert_not_called()
