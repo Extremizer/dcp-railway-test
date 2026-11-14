@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import asyncio
+from contextlib import closing
 import sqlite3
 from contextvars import ContextVar
 import threading
@@ -22,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request, Form
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request, Form, Response
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -1071,6 +1072,66 @@ def dp_sync_next(
     except dp_sync_protocol.ProtocolError as exc:
         raise HTTPException(status_code=401, detail={"code": str(exc)})
     return {"request": dp_live_bridge.claim_next(core.ORDERS_DB_FILE, producer_id=x_dp_producer_id)}
+
+
+@app.get("/internal/dp-sync/claim-state")
+def dp_sync_claim_state(
+    response: Response,
+    x_dp_sync_ts: str | None = Header(default=None),
+    x_dp_sync_sig: str | None = Header(default=None),
+    x_dp_protocol: str | None = Header(default=None),
+    x_dp_producer_id: str | None = Header(default=None),
+) -> dict[str, bool]:
+    """Producer-scoped signed snapshot. Never claim, revoke, or modify the database."""
+    path = "/internal/dp-sync/claim-state"
+    if x_dp_protocol != "2":
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+    try:
+        dp_sync_protocol.verify(
+            _dp_sync_key(), "GET", path, x_dp_sync_ts,
+            x_dp_producer_id, b"", x_dp_sync_sig,
+        )
+    except dp_sync_protocol.ProtocolError as exc:
+        raise HTTPException(status_code=401, detail={"code": str(exc)}) from None
+
+    try:
+        db_path = Path(core.ORDERS_DB_FILE).resolve(strict=True)
+        if not db_path.is_file():
+            raise FileNotFoundError("orders_database_missing")
+        with closing(sqlite3.connect(
+            db_path.as_uri() + "?mode=ro", uri=True, timeout=5,
+        )) as conn:
+            conn.execute("PRAGMA query_only=ON")
+            state = conn.execute(
+                """SELECT
+                    EXISTS(SELECT 1 FROM dp_live_requests WHERE claim_owner=?),
+                    EXISTS(SELECT 1 FROM dp_live_requests
+                           WHERE claim_owner=? AND status='claimed'),
+                    EXISTS(SELECT 1 FROM dp_live_requests
+                           WHERE claim_owner=? AND status='orphaned'),
+                    EXISTS(SELECT 1 FROM dp_live_requests
+                           WHERE claim_owner=? AND status='finished'),
+                    EXISTS(SELECT 1 FROM dp_live_requests
+                           WHERE status IN ('claimed','orphaned')),
+                    EXISTS(SELECT 1 FROM dp_live_coordination
+                           WHERE singleton_id=1 AND blocked_status IS NOT NULL)
+                """,
+                (x_dp_producer_id,) * 4,
+            ).fetchone()
+    except (OSError, ValueError, sqlite3.Error):
+        raise HTTPException(
+            status_code=503, detail={"code": "claim_state_unavailable"},
+        ) from None
+    if state is None:
+        raise HTTPException(
+            status_code=503, detail={"code": "claim_state_unavailable"},
+        )
+    response.headers["Cache-Control"] = "no-store"
+    return dict(zip((
+        "producer_ever_claimed", "producer_claimed_active",
+        "producer_claim_orphaned", "producer_claim_finished",
+        "any_unresolved_claim", "coordination_blocked",
+    ), (bool(value) for value in state)))
 
 
 @app.post("/internal/dp-sync/result")
