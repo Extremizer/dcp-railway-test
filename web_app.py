@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import asyncio
 import sqlite3
+from contextvars import ContextVar
 import threading
 import json
 import urllib.parse
@@ -22,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -66,6 +67,85 @@ _STOCK_REFRESH_LOCK = threading.Lock()
 _STOCK_REFRESH_SLOTS = threading.BoundedSemaphore(2)
 _STOCK_REFRESH_INFLIGHT: set[str] = set()
 _STOCK_REFRESH_MAX_PENDING = 8
+_WEB_ONLY_RELEASE = os.getenv("EXTREMIZER_WEB_ONLY_RELEASE", "").strip() == "1"
+
+# T1 / isolated WEB1 RAM handoff. One WEB1 worker only; restart loses tokens.
+# Bounded, in-process, no SQLite, Orders, DCP, separate service or background task.
+_WEB_HANDOFF_RAM_LOCK = threading.Lock()
+_WEB_HANDOFF_RAM: dict[str, tuple[float, dict[str, Any]]] = {}
+_WEB_HANDOFF_RAM_MAX = 512
+_WEB_HANDOFF_RAM_TTL = 60 * 60
+
+# Context-scoped, fail-closed DB policy only for the two existing cache-only GETs.
+_WEB_CACHE_ONLY = ContextVar("extremizer_web1_cache_only", default=False)
+_SQLITE_CONNECT_BASE = sqlite3.connect
+_INIT_ORDERS_DB_BASE = core.init_orders_db
+_INIT_WAREHOUSE_DB_BASE = warehouse_store.init_warehouse_db
+
+
+def _cache_only_connect(database, *args, **kwargs):
+    if not _WEB_CACHE_ONLY.get():
+        return _SQLITE_CONNECT_BASE(database, *args, **kwargs)
+    if args or set(kwargs) - {"timeout"}:
+        raise sqlite3.OperationalError("cache_only_connection_options_not_allowed")
+    try:
+        authorized = Path(core.ORDERS_DB_FILE).resolve(strict=True)
+        requested = Path(database).resolve(strict=True)
+    except (OSError, ValueError, TypeError):
+        raise sqlite3.OperationalError("cache_only_database_not_available") from None
+    if not authorized.is_file() or requested != authorized:
+        raise sqlite3.OperationalError("cache_only_database_path_not_allowed")
+    connection = _SQLITE_CONNECT_BASE(
+        authorized.as_uri() + "?mode=ro",
+        uri=True,
+        timeout=kwargs.get("timeout", 10),
+    )
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
+def _cache_only_init_orders(*args, **kwargs):
+    if _WEB_CACHE_ONLY.get():
+        return None
+    return _INIT_ORDERS_DB_BASE(*args, **kwargs)
+
+
+def _cache_only_init_warehouse(*args, **kwargs):
+    if _WEB_CACHE_ONLY.get():
+        return None
+    return _INIT_WAREHOUSE_DB_BASE(*args, **kwargs)
+
+
+sqlite3.connect = _cache_only_connect
+core.init_orders_db = _cache_only_init_orders
+warehouse_store.init_warehouse_db = _cache_only_init_warehouse
+
+
+def _cache_only_warehouse_rows(rows):
+    """Every active RF warehouse, with stale/unknown values withheld."""
+    result = []
+    for row in rows:
+        quantity = row.get("available_quantity")
+        price = row.get("price_rub")
+        fresh = bool(row.get("is_fresh")) and quantity is not None
+        price_confirmed = (
+            fresh and isinstance(price, (int, float)) and
+            not isinstance(price, bool) and 0 < float(price) < float("inf")
+        )
+        enabled = (
+            price_confirmed and isinstance(quantity, (int, float)) and
+            not isinstance(quantity, bool) and 0 < float(quantity) < float("inf")
+        )
+        result.append({
+            "warehouse_id": int(row.get("warehouse_id") or 0),
+            "warehouse": str(row.get("public_name") or ""),
+            "quantity": float(quantity) if enabled else None,
+            "price_rub": float(price) if enabled else None,
+            "available": bool(enabled),
+            "status": "available" if enabled else "unavailable",
+        })
+    return result
+
 
 app = FastAPI(
     title="Extremizer Pro WEB",
@@ -76,10 +156,14 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 # Supplier Orders uses the exact same persistent orders DB as Telegram.
-supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
-# Schema-only migration for the independent partner-settlement ledger.
-# No settlement rows or financial events are created automatically.
-warehouse_partner_settlements.init(core.ORDERS_DB_FILE)
+if _WEB_ONLY_RELEASE:
+    # SupplierOrderService.__init__ invokes three schema initializers.
+    # Keep existing admin-router binding without startup DDL/Orders WRITE.
+    supplier_order_service = object.__new__(supplier_runtime.SupplierOrderService)
+    supplier_order_service.db_file = core.ORDERS_DB_FILE
+else:
+    supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
+    warehouse_partner_settlements.init(core.ORDERS_DB_FILE)
 app.include_router(supplier_api.build_supplier_router(supplier_order_service))
 app.include_router(oem_import_maintenance.router)
 
@@ -670,6 +754,8 @@ def _require_oemixibot_identity_signature(
 
 
 def _init_web1() -> None:
+    if _WEB_ONLY_RELEASE:
+        return  # existing production DB is authoritative; no startup migrations
     core.init_orders_db()
     warehouse_store.init_warehouse_db(core.ORDERS_DB_FILE)
     web_handoff.init_web_handoff_db(core.ORDERS_DB_FILE)
@@ -1026,6 +1112,8 @@ async def dp_sync_result(
 
 def _weight_for_oem(oem: str) -> dict[str, Any] | None:
     """Return only client-safe OEM-BASA weight fields."""
+    if _WEB_CACHE_ONLY.get():
+        return None  # optional secondary database is not part of the cache-only path
     if oem_reference_service is not None:
         reference = oem_reference_service.lookup_oem(oem)
         if not reference:
@@ -1237,7 +1325,7 @@ def _warehouse_only_card(raw_oem: str) -> dict[str, Any] | None:
         "offers": warehouse_offers,
         "stock": {
             "known": stock_known,
-            "warehouses": positive_stock,
+            "warehouses": _cache_only_warehouse_rows(stock_rows) if _WEB_CACHE_ONLY.get() else positive_stock,
         },
         "weight": _weight_for_oem(oem),
         "delivery_notice": "Для позиции со склада РФ доставка из США не требуется.",
@@ -1344,7 +1432,7 @@ def build_oem_card(
         ),
         "stock": {
             "known": stock_known,
-            "warehouses": positive_stock,
+            "warehouses": _cache_only_warehouse_rows(stock_rows) if _WEB_CACHE_ONLY.get() else positive_stock,
         },
         "weight": _weight_for_oem(current_oem),
         "delivery_notice": (
@@ -1358,7 +1446,21 @@ def get_oem(
     oem: str,
     background_tasks: BackgroundTasks,
     manufacturer: str | None = None,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
+    if cache_only:
+        token = _WEB_CACHE_ONLY.set(True)
+        try:
+            card = build_oem_card(oem, manufacturer)
+            if not card.get("manufacturer"):
+                raise HTTPException(status_code=404, detail={"code": "manufacturer_unverified"})
+            card["stock"]["refreshing"] = False
+            card["stock"]["cache_only"] = True
+            return card
+        except (sqlite3.Error, OSError) as exc:
+            raise HTTPException(status_code=503, detail={"code": "cache_unavailable"}) from exc
+        finally:
+            _WEB_CACHE_ONLY.reset(token)
     card = build_oem_card(oem, manufacturer)
     current_oem = str(card["oem"])
     if _stock_refresh_needed(current_oem):
@@ -1372,7 +1474,27 @@ def get_oem_stock(
     oem: str,
     background_tasks: BackgroundTasks,
     manufacturer: str | None = None,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
+    if cache_only:
+        token = _WEB_CACHE_ONLY.set(True)
+        try:
+            card = build_oem_card(oem, manufacturer)
+            if not card.get("manufacturer"):
+                raise HTTPException(status_code=404, detail={"code": "manufacturer_unverified"})
+            stock = dict(card["stock"])
+            stock["refreshing"] = False
+            stock["cache_only"] = True
+            stock["offers"] = list(card.get("offers") or [])
+            stock["manufacturer"] = card["manufacturer"]
+            stock["oem"] = card["oem"]
+            stock["requested_oem"] = card["requested_oem"]
+            stock["price"] = dict(card["price"])
+            return stock
+        except (sqlite3.Error, OSError) as exc:
+            raise HTTPException(status_code=503, detail={"code": "cache_unavailable"}) from exc
+        finally:
+            _WEB_CACHE_ONLY.reset(token)
     card = build_oem_card(oem, manufacturer)
     current_oem = str(card["oem"])
     if _stock_refresh_needed(current_oem):
@@ -1383,63 +1505,171 @@ def get_oem_stock(
     return stock
 
 
+def _web_ram_prune(now: float) -> None:
+    """Called only with _WEB_HANDOFF_RAM_LOCK held."""
+    for token, (expires_at, _) in list(_WEB_HANDOFF_RAM.items()):
+        if expires_at <= now:
+            del _WEB_HANDOFF_RAM[token]
+
+
+def _web_handoff_price_rub(value: Any) -> int:
+    if type(value) not in (int, float):
+        raise HTTPException(status_code=409, detail={"code": "price_unverified"})
+    # No rounding or conversion from an uncertain/non-integer price.
+    try:
+        number = float(value)
+        if not (0 < number < 1_000_000_000 and number.is_integer()):
+            raise ValueError("price not positive integral RUB")
+    except (ValueError, OverflowError):
+        raise HTTPException(status_code=409, detail={"code": "price_unverified"}) from None
+    return int(number)
+
+
+def _web_public_rf_warehouse(selected_offer: dict[str, Any]) -> tuple[int, str]:
+    """Map verified DB warehouse identity to an approved *public* RF slot."""
+    internal_id = selected_offer.get("warehouse_id")
+    if type(internal_id) is not int or internal_id <= 0:
+        raise HTTPException(status_code=409, detail={"code": "warehouse_identity_unverified"})
+    warehouse = warehouse_store.get_warehouse(internal_id, core.ORDERS_DB_FILE)
+    if (not isinstance(warehouse, dict)
+        or warehouse.get("id") != internal_id
+        or warehouse.get("active") != 1
+        or warehouse.get("deleted_at") is not None
+        or str(warehouse.get("public_name") or "") != str(selected_offer.get("label") or "")):
+        raise HTTPException(status_code=409, detail={"code": "warehouse_identity_unverified"})
+    approved = {
+        "orangeatv": (1, "Основной склад", "МСК"),
+        "motoservice76": (2, "склад ЯРС", "ЯРС"),
+        "vladextremelife": (3, "склад КРС", "КРС"),
+    }
+    adapter = str(warehouse.get("adapter_type") or "").strip().lower()
+    mapping = approved.get(adapter)
+    if mapping is None or str(warehouse.get("code") or "") != mapping[2]:
+        raise HTTPException(status_code=409, detail={"code": "warehouse_identity_unverified"})
+    return mapping[0], mapping[1]
+
+
 @app.post("/api/v1/handoff")
 def create_telegram_handoff(payload: HandoffRequest) -> dict[str, Any]:
-    verified_items = []
-    for item in payload.items:
-        card = build_oem_card(item.oem, item.manufacturer)
-        source = str(item.offer_source or "usa").strip().lower()
-        if source not in {"usa", "warehouse"}:
-            raise HTTPException(status_code=400, detail={"code": "invalid_offer_source"})
-
-        selected_offer = None
-        if source == "usa":
-            selected_offer = next(
-                (x for x in card.get("offers", []) if x.get("source") == "usa"),
-                None,
-            )
-        else:
-            if item.warehouse_id is None:
+    """Cache-only verified offers -> bounded in-process V2 token. NO Orders WRITE."""
+    if not 1 <= len(payload.items) <= 20:
+        raise HTTPException(status_code=400, detail={"code": "invalid_cart_size"})
+    verified_items: list[dict[str, Any]] = []
+    context_token = _WEB_CACHE_ONLY.set(True)
+    try:
+        for item in payload.items:
+            if (not isinstance(item.manufacturer, str)
+                or not 1 <= len(item.manufacturer.strip()) <= 80
+                or not isinstance(item.oem, str)
+                or not 1 <= len(item.oem.strip()) <= 80
+                or type(item.qty) is not int or not 1 <= item.qty <= 99):
+                raise HTTPException(status_code=400, detail={"code": "invalid_cart_item"})
+            card = build_oem_card(item.oem, item.manufacturer)
+            manufacturer = str(card.get("manufacturer") or "").strip()
+            current_oem = str(card.get("oem") or "").strip()
+            requested_oem = str(item.requested_oem or card.get("requested_oem") or item.oem).strip()
+            if (not manufacturer or not current_oem or not requested_oem
+                or max(len(manufacturer), len(current_oem), len(requested_oem)) > 80):
+                raise HTTPException(status_code=409, detail={"code": "oem_not_verified"})
+            source = str(item.offer_source or "").strip().lower()
+            if source not in {"usa", "warehouse"}:
+                raise HTTPException(status_code=400, detail={"code": "invalid_offer_source"})
+            if source == "usa" and item.warehouse_id is not None:
+                raise HTTPException(status_code=400, detail={"code": "usa_warehouse_mismatch"})
+            if source == "warehouse" and (type(item.warehouse_id) is not int or item.warehouse_id <= 0):
                 raise HTTPException(status_code=400, detail={"code": "warehouse_required"})
-            selected_offer = next(
-                (
-                    x for x in card.get("offers", [])
-                    if x.get("source") == "warehouse"
-                    and int(x.get("warehouse_id") or 0) == int(item.warehouse_id)
-                ),
-                None,
-            )
+            matching = [
+                offer for offer in card.get("offers", [])
+                if isinstance(offer, dict)
+                and offer.get("source") == source
+                and offer.get("warehouse_id") == (None if source == "usa" else item.warehouse_id)
+            ]
+            if len(matching) != 1 or matching[0].get("can_add") is not True:
+                raise HTTPException(status_code=409, detail={"code": "offer_unavailable"})
+            offer = matching[0]
+            price = _web_handoff_price_rub(offer.get("price_rub"))
+            available = offer.get("available_quantity")
+            if source == "warehouse":
+                if (type(available) not in (int, float)
+                    or not (0 < float(available) < 1_000_000_000)
+                    or float(available) < item.qty):
+                    raise HTTPException(status_code=409, detail={"code": "stock_unverified"})
+                public_slot, supplier_internal = _web_public_rf_warehouse(offer)
+                public_name = f"Склад {public_slot}"
+            else:
+                if available is not None and (
+                    type(available) not in (int, float)
+                    or not (item.qty <= float(available) < 1_000_000_000)
+                ):
+                    raise HTTPException(status_code=409, detail={"code": "stock_unverified"})
+                public_slot, supplier_internal, public_name = None, None, None
+            verified_items.append({
+                "manufacturer": manufacturer, "oem": current_oem,
+                "requested_oem": requested_oem, "offer_source": source,
+                "warehouse_id": public_slot,
+                **({"supplier_internal_warehouse": supplier_internal} if source == "warehouse" else {}),
+                "warehouse_public_name": public_name,
+                "price_snapshot_rub": price, "available_snapshot": available,
+                "qty": item.qty,
+            })
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail={"code": "cache_unavailable"}) from None
+    finally:
+        _WEB_CACHE_ONLY.reset(context_token)
 
-        if not selected_offer or not selected_offer.get("can_add"):
-            raise HTTPException(status_code=409, detail={"code": "offer_unavailable"})
-        available = selected_offer.get("available_quantity")
-        if available is not None and float(available) < int(item.qty):
-            raise HTTPException(status_code=409, detail={"code": "insufficient_stock"})
-
-        verified_items.append({
-            "manufacturer": card["manufacturer"],
-            "oem": card["oem"],
-            "requested_oem": item.requested_oem or card["requested_oem"],
-            "offer_source": source,
-            "warehouse_id": selected_offer.get("warehouse_id"),
-            "warehouse_public_name": (
-                selected_offer.get("label") if source == "warehouse" else None
-            ),
-            "price_snapshot_rub": selected_offer.get("price_rub"),
-            "available_snapshot": available,
-            "qty": item.qty,
-        })
-
-    token = web_handoff.create_handoff(
-        verified_items,
-        db_file=core.ORDERS_DB_FILE,
-    )
+    result = {"version": 2, "items": verified_items}
+    if len(json.dumps(result, ensure_ascii=False)) > 65536:
+        raise HTTPException(status_code=413, detail={"code": "handoff_payload_too_large"})
+    with _WEB_HANDOFF_RAM_LOCK:
+        now = time.monotonic()
+        _web_ram_prune(now)
+        if len(_WEB_HANDOFF_RAM) >= _WEB_HANDOFF_RAM_MAX:
+            raise HTTPException(status_code=503, detail={"code": "handoff_capacity_full"})
+        token = secrets.token_urlsafe(24)
+        while token in _WEB_HANDOFF_RAM:
+            token = secrets.token_urlsafe(24)
+        _WEB_HANDOFF_RAM[token] = (now + _WEB_HANDOFF_RAM_TTL, result)
     return {
         "ok": True,
         "telegram_url": f"https://t.me/{BOT_USERNAME}?start=web_{token}",
-        "expires_in_minutes": web_handoff.DEFAULT_TTL_MINUTES,
+        "expires_in_minutes": 60,
     }
 
+
+class RemoteHandoffConsumeRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    telegram_user_id: int = Field(gt=0)
+
+
+def _require_web_handoff_bridge_key(request: Request) -> None:
+    key = os.getenv("EXTREMIZER_WEB_HANDOFF_BRIDGE_KEY", "").strip()
+    if len(key) < 32:
+        raise HTTPException(status_code=503, detail={"code": "bridge_disabled"})
+    if not hmac.compare_digest(request.headers.get("authorization", ""), "Bearer " + key):
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+
+
+@app.post("/api/v1/handoff/remote/consume", include_in_schema=False)
+def consume_remote_web_handoff(payload: RemoteHandoffConsumeRequest, request: Request):
+    _require_web_handoff_bridge_key(request)
+    with _WEB_HANDOFF_RAM_LOCK:
+        now = time.monotonic()
+        _web_ram_prune(now)
+        entry = _WEB_HANDOFF_RAM.pop(payload.token, None)
+        if entry is None or entry[0] <= now:
+            raise HTTPException(status_code=410, detail={"code": "handoff_unavailable"})
+        result = entry[1]
+    # Atomic single claim: after pop, no other user can consume this token.
+    return JSONResponse(
+        {"ok": True, "payload": result},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/v1/handoff/remote/link", include_in_schema=False)
+def link_remote_web_handoff_hold():
+    # Checkout/Orders HOLD. No SQLite writes and no external side effects.
+    raise HTTPException(status_code=423, detail={"code": "checkout_orders_hold"})
 
 
 @app.post("/vk-auth/exchange")
