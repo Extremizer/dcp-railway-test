@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import asyncio
 import sqlite3
+from contextvars import ContextVar
 import threading
 import json
 import urllib.parse
@@ -66,6 +67,78 @@ _STOCK_REFRESH_LOCK = threading.Lock()
 _STOCK_REFRESH_SLOTS = threading.BoundedSemaphore(2)
 _STOCK_REFRESH_INFLIGHT: set[str] = set()
 _STOCK_REFRESH_MAX_PENDING = 8
+_WEB_ONLY_RELEASE = os.getenv("EXTREMIZER_WEB_ONLY_RELEASE", "").strip() == "1"
+
+# Context-scoped, fail-closed DB policy only for the two existing cache-only GETs.
+_WEB_CACHE_ONLY = ContextVar("extremizer_web1_cache_only", default=False)
+_SQLITE_CONNECT_BASE = sqlite3.connect
+_INIT_ORDERS_DB_BASE = core.init_orders_db
+_INIT_WAREHOUSE_DB_BASE = warehouse_store.init_warehouse_db
+
+
+def _cache_only_connect(database, *args, **kwargs):
+    if not _WEB_CACHE_ONLY.get():
+        return _SQLITE_CONNECT_BASE(database, *args, **kwargs)
+    if args or set(kwargs) - {"timeout"}:
+        raise sqlite3.OperationalError("cache_only_connection_options_not_allowed")
+    try:
+        authorized = Path(core.ORDERS_DB_FILE).resolve(strict=True)
+        requested = Path(database).resolve(strict=True)
+    except (OSError, ValueError, TypeError):
+        raise sqlite3.OperationalError("cache_only_database_not_available") from None
+    if not authorized.is_file() or requested != authorized:
+        raise sqlite3.OperationalError("cache_only_database_path_not_allowed")
+    connection = _SQLITE_CONNECT_BASE(
+        authorized.as_uri() + "?mode=ro",
+        uri=True,
+        timeout=kwargs.get("timeout", 10),
+    )
+    connection.execute("PRAGMA query_only=ON")
+    return connection
+
+
+def _cache_only_init_orders(*args, **kwargs):
+    if _WEB_CACHE_ONLY.get():
+        return None
+    return _INIT_ORDERS_DB_BASE(*args, **kwargs)
+
+
+def _cache_only_init_warehouse(*args, **kwargs):
+    if _WEB_CACHE_ONLY.get():
+        return None
+    return _INIT_WAREHOUSE_DB_BASE(*args, **kwargs)
+
+
+sqlite3.connect = _cache_only_connect
+core.init_orders_db = _cache_only_init_orders
+warehouse_store.init_warehouse_db = _cache_only_init_warehouse
+
+
+def _cache_only_warehouse_rows(rows):
+    """Every active RF warehouse, with stale/unknown values withheld."""
+    result = []
+    for row in rows:
+        quantity = row.get("available_quantity")
+        price = row.get("price_rub")
+        fresh = bool(row.get("is_fresh")) and quantity is not None
+        price_confirmed = (
+            fresh and isinstance(price, (int, float)) and
+            not isinstance(price, bool) and 0 < float(price) < float("inf")
+        )
+        enabled = (
+            price_confirmed and isinstance(quantity, (int, float)) and
+            not isinstance(quantity, bool) and 0 < float(quantity) < float("inf")
+        )
+        result.append({
+            "warehouse_id": int(row.get("warehouse_id") or 0),
+            "warehouse": str(row.get("public_name") or ""),
+            "quantity": float(quantity) if enabled else None,
+            "price_rub": float(price) if enabled else None,
+            "available": bool(enabled),
+            "status": "available" if enabled else "unavailable",
+        })
+    return result
+
 
 app = FastAPI(
     title="Extremizer Pro WEB",
@@ -76,10 +149,14 @@ app = FastAPI(
 app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
 
 # Supplier Orders uses the exact same persistent orders DB as Telegram.
-supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
-# Schema-only migration for the independent partner-settlement ledger.
-# No settlement rows or financial events are created automatically.
-warehouse_partner_settlements.init(core.ORDERS_DB_FILE)
+if _WEB_ONLY_RELEASE:
+    # SupplierOrderService.__init__ invokes three schema initializers.
+    # Keep existing admin-router binding without startup DDL/Orders WRITE.
+    supplier_order_service = object.__new__(supplier_runtime.SupplierOrderService)
+    supplier_order_service.db_file = core.ORDERS_DB_FILE
+else:
+    supplier_order_service = supplier_runtime.get_supplier_order_service(core.ORDERS_DB_FILE)
+    warehouse_partner_settlements.init(core.ORDERS_DB_FILE)
 app.include_router(supplier_api.build_supplier_router(supplier_order_service))
 app.include_router(oem_import_maintenance.router)
 
@@ -670,6 +747,8 @@ def _require_oemixibot_identity_signature(
 
 
 def _init_web1() -> None:
+    if _WEB_ONLY_RELEASE:
+        return  # existing production DB is authoritative; no startup migrations
     core.init_orders_db()
     warehouse_store.init_warehouse_db(core.ORDERS_DB_FILE)
     web_handoff.init_web_handoff_db(core.ORDERS_DB_FILE)
@@ -1026,6 +1105,8 @@ async def dp_sync_result(
 
 def _weight_for_oem(oem: str) -> dict[str, Any] | None:
     """Return only client-safe OEM-BASA weight fields."""
+    if _WEB_CACHE_ONLY.get():
+        return None  # optional secondary database is not part of the cache-only path
     if oem_reference_service is not None:
         reference = oem_reference_service.lookup_oem(oem)
         if not reference:
@@ -1237,7 +1318,7 @@ def _warehouse_only_card(raw_oem: str) -> dict[str, Any] | None:
         "offers": warehouse_offers,
         "stock": {
             "known": stock_known,
-            "warehouses": positive_stock,
+            "warehouses": _cache_only_warehouse_rows(stock_rows) if _WEB_CACHE_ONLY.get() else positive_stock,
         },
         "weight": _weight_for_oem(oem),
         "delivery_notice": "Для позиции со склада РФ доставка из США не требуется.",
@@ -1344,7 +1425,7 @@ def build_oem_card(
         ),
         "stock": {
             "known": stock_known,
-            "warehouses": positive_stock,
+            "warehouses": _cache_only_warehouse_rows(stock_rows) if _WEB_CACHE_ONLY.get() else positive_stock,
         },
         "weight": _weight_for_oem(current_oem),
         "delivery_notice": (
@@ -1358,7 +1439,21 @@ def get_oem(
     oem: str,
     background_tasks: BackgroundTasks,
     manufacturer: str | None = None,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
+    if cache_only:
+        token = _WEB_CACHE_ONLY.set(True)
+        try:
+            card = build_oem_card(oem, manufacturer)
+            if not card.get("manufacturer"):
+                raise HTTPException(status_code=404, detail={"code": "manufacturer_unverified"})
+            card["stock"]["refreshing"] = False
+            card["stock"]["cache_only"] = True
+            return card
+        except (sqlite3.Error, OSError) as exc:
+            raise HTTPException(status_code=503, detail={"code": "cache_unavailable"}) from exc
+        finally:
+            _WEB_CACHE_ONLY.reset(token)
     card = build_oem_card(oem, manufacturer)
     current_oem = str(card["oem"])
     if _stock_refresh_needed(current_oem):
@@ -1372,7 +1467,27 @@ def get_oem_stock(
     oem: str,
     background_tasks: BackgroundTasks,
     manufacturer: str | None = None,
+    cache_only: bool = False,
 ) -> dict[str, Any]:
+    if cache_only:
+        token = _WEB_CACHE_ONLY.set(True)
+        try:
+            card = build_oem_card(oem, manufacturer)
+            if not card.get("manufacturer"):
+                raise HTTPException(status_code=404, detail={"code": "manufacturer_unverified"})
+            stock = dict(card["stock"])
+            stock["refreshing"] = False
+            stock["cache_only"] = True
+            stock["offers"] = list(card.get("offers") or [])
+            stock["manufacturer"] = card["manufacturer"]
+            stock["oem"] = card["oem"]
+            stock["requested_oem"] = card["requested_oem"]
+            stock["price"] = dict(card["price"])
+            return stock
+        except (sqlite3.Error, OSError) as exc:
+            raise HTTPException(status_code=503, detail={"code": "cache_unavailable"}) from exc
+        finally:
+            _WEB_CACHE_ONLY.reset(token)
     card = build_oem_card(oem, manufacturer)
     current_oem = str(card["oem"])
     if _stock_refresh_needed(current_oem):

@@ -1,15 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""Run Extremizer production components in one Railway service/container.
+"""Railway WEB1-only runtime: WEB1/WEB2 HTTP + existing backup process.
 
-Processes:
-- @Extremizer_bot -> extremizer_bot.py
-- @ExtremizerBOT -> probnik_app.py when PROBNIK_BOT_TOKEN exists
-- WEB1 -> uvicorn web_app:app (WEB2 host when EXTREMIZER_WEB2_ENABLED=1)
-
-@OEMixiBOT is intentionally not started here because its current dealer-price
-backend requires an authorized local Chrome CDP session on 127.0.0.1:9222.
+No Telegram polling here, even if bot tokens exist in the environment:
+main @Extremizer_bot, test @ExtremizerBOT (Probnik), and @OEMixiBOT
+are managed outside Railway WEB1. Probnik is owned by ASUS/T4.
 """
 
 from __future__ import annotations
@@ -58,11 +54,8 @@ def _spawn(name, args):
 def main():
     port = os.getenv("PORT", "8080").strip() or "8080"
 
-    # Only Probnik polls here; the main quotation bot remains on ASUS.
-    if os.getenv("PROBNIK_BOT_TOKEN", "").strip():
-        _spawn("probnik", [sys.executable, "-u", "probnik_app.py"])
-    else:
-        print("WEB1_RUNTIME: PROBNIK_BOT_TOKEN absent; Probnik disabled", flush=True)
+    # Telegram polling is forbidden in WEB1, regardless of token presence.
+    print("WEB1_RUNTIME: WEB_ONLY_RELEASE; Probnik delegated to ASUS", flush=True)
 
     if os.getenv("OEMIXIBOT_TOKEN", "").strip():
         print(
@@ -97,10 +90,6 @@ def main():
             for name, child in list(children):
                 code = child.poll()
                 if code is None:
-                    continue
-                if name == "probnik":
-                    children.remove((name, child))
-                    print(f"WEB1_RUNTIME: probnik exited code={code}; web and backup continue", flush=True)
                     continue
                 print(f"WEB1_RUNTIME: child exited name={name} code={code}", flush=True)
                 _terminate_children()
