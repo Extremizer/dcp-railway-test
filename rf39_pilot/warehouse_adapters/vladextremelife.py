@@ -14,37 +14,93 @@ from .base import WebsiteStockResult, extract_title, fetch_text, html_to_text
 SITEMAP_URL = "https://vladextremelife.ru/sitemap-iblock-138.xml"
 
 
-def _available_site_rows(page_html: str) -> list[tuple[int, str]]:
-    """Pair each site's in-stock marker with its own RUB price, not a page-wide price."""
+# The exact labels and site-level data-store IDs are tied to Krasnoyarsk,
+# not similarly named Moscow / St Petersburg / remote "SkladV" branches.
+_KRASNOYARSK_STORES = {
+    "\u0421\u043a\u043b\u0430\u04341 \u041a\u0440\u0430\u0441\u043d\u043e\u044f\u0440\u0441\u043a \u0412\u044b\u0441\u043e\u0442\u043d\u0430\u044f": "2",
+    "\u0421\u043a\u043b\u0430\u04343 \u041a\u0440\u0430\u0441\u043d\u043e\u044f\u0440\u0441\u043a \u0423\u0434\u0430\u043b\u0435\u043d\u043d\u044b\u0439": "1",
+}
+
+
+def _available_site_rows(page_html: str) -> list[tuple[int, int, str, str]]:
+    """Read current price and frontend data-max from SAME exact Krasnoyarsk row.
+
+    Never click plus / cart. A missing, ambiguous or changed row is not a
+    confirmed stock quantity. Product OEM itself is matched in lookup().
+    """
     soup = BeautifulSoup(page_html, "html.parser")
-    rows: list[tuple[int, str]] = []
+    rows: list[tuple[int, int, str, str]] = []
+    seen: set[str] = set()
     for title in soup.select("div.store_title"):
-        label = title.get_text(" ", strip=True)
-        # OWNER rule: only Vladextremelife's internal Склад1 and Склад3.
-        # A cheaper Склад6, Склад2 or unnumbered "Склад" is never eligible.
-        if not re.match(r"^Склад\s*[13](?=\s|$)", label, re.I):
+        label = " ".join(title.get_text(" ", strip=True).split())
+        normalized = label.replace("\u0451", "\u0435").replace("\u0401", "\u0415")
+        store_id = _KRASNOYARSK_STORES.get(normalized)
+        if store_id is None:
             continue
-        available = False
-        price = None
-        for element in title.next_elements:
-            if not isinstance(element, Tag):
+        if normalized in seen:
+            return []  # Same site warehouse twice: no authoritative selection.
+        seen.add(normalized)
+
+        # Only elements between THIS title and the NEXT store title are eligible.
+        siblings: list[Tag] = []
+        for node in title.next_siblings:
+            if not isinstance(node, Tag):
                 continue
-            if element is not title and "store_title" in element.get("class", []):
+            if "store_title" in node.get("class", []):
                 break
-            if "bxr-instock-wrap" in element.get("class", []):
-                available = bool(re.fullmatch(r"В\s+наличии", element.get_text(" ", strip=True), re.I))
-            if element.name == "meta" and element.get("itemprop") == "price":
-                match = re.fullmatch(
-                    r"\s*(\d[\d\s\u00a0\u202f]*)\s*руб\.?\s*",
-                    str(element.get("content") or ""), re.I,
-                )
-                if match:
-                    amount = int(re.sub(r"\s+", "", match.group(1)))
-                    if 0 < amount <= 100_000_000:
-                        price = amount
-                break
-        if available and price is not None and label:
-            rows.append((price, label))
+            siblings.append(node)
+
+        def within(selector: str) -> list[Tag]:
+            return [el for root in siblings for el in root.select(selector)]
+
+        available = within(".bxr-instock-wrap")
+        prices = within("meta[itemprop='price']")
+        plus = within("input.bxr-quantity-button-plus")
+        fields = within("input.bxr-quantity-text[name='quantity']")
+        buttons = within("button.product_basket_add")
+        item_fields = within("input.bxr-basket-item-id[name='item']")
+        if not all(len(items) == 1 for items in (
+            available, prices, plus, fields, buttons, item_fields
+        )):
+            continue
+        if not re.fullmatch(
+            r"\u0412\s+\u043d\u0430\u043b\u0438\u0447\u0438\u0438",
+            available[0].get_text(" ", strip=True), re.I
+        ):
+            continue
+
+        price_raw = str(prices[0].get("content") or "")
+        price_match = re.fullmatch(
+            r"\s*(\d[\d\s\u00a0\u202f]*)\s*\u0440\u0443\u0431\.?\s*",
+            price_raw, re.I
+        )
+        maximum_raw = str(plus[0].get("data-max") or "")
+        item_id = str(plus[0].get("data-item") or "")
+        if not price_match or not re.fullmatch(r"[1-9]\d{0,5}", maximum_raw):
+            continue
+        price = int(re.sub(r"\s+", "", price_match.group(1)))
+        maximum = int(maximum_raw)
+        if not (0 < price <= 100_000_000 and 0 < maximum <= 1_000_000):
+            continue
+        if not re.fullmatch(r"[1-9]\d*", item_id):
+            continue
+
+        button = buttons[0]
+        if (
+            plus[0].get("data-store") != store_id
+            or fields[0].get("data-store") != store_id
+            or button.get("data-store") != store_id
+            or plus[0].get("data-item") != item_id
+            or fields[0].get("data-item") != item_id
+            or button.get("data-item") != item_id
+            or item_fields[0].get("value") != item_id
+            or plus[0].get("data-ratio") != "1"
+            or button.get("data-ratio") != "1"
+            or button.get("data-currency") != "RUB"
+            or button.get("data-value") != str(price)
+        ):
+            continue
+        rows.append((price, maximum, label, store_id))
     return rows
 
 
@@ -123,10 +179,11 @@ class VladExtremeLifeAdapter:
         if rows:
             # Vendor's internal stock rows are NOT EXTREMIZER warehouses.
             # Select one priced, explicitly in-stock row; do not add quantities.
-            price, internal_label = min(rows, key=lambda row: (row[0], row[1]))
+            price, quantity, internal_label, store_id = min(
+                rows, key=lambda row: (row[0], row[2]))
             return WebsiteStockResult(
-                status="quantity_unknown",
-                quantity=None,
+                status="in_stock",
+                quantity=float(quantity),
                 url=final_url,
                 title=title,
                 price_rub=price,
@@ -136,6 +193,8 @@ class VladExtremeLifeAdapter:
                     "site_availability_confirmed": True,
                     "internal_warehouse_label_verified": True,
                     "selected_internal_warehouse": internal_label,
+                    "selected_site_data_store": store_id,
+                    "quantity_source": "same_row_plus_data_max",
                     "available_price_rows": len(rows),
                 },
             )
