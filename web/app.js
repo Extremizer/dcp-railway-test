@@ -60,9 +60,13 @@ function renderOffers(offers = []) {
     el.className = "offer-card";
     const sourceLabel = offer.source === "usa" ? "🇺🇸 склад США" : `🇷🇺 ${escapeHtml(offer.label)}`;
     const availability = offer.source === "usa"
-      ? "Заказ из США"
-      : `В наличии: ${qtyText(offer.available_quantity)} шт.`;
-    const price = offer.price_rub == null\n      ? "Цена уточняется"\n      : (offer.source === "usa" ? rub(offer.price_rub).replace(" ₽", "* ₽") : rub(offer.price_rub));
+      ? "????? ?? ???"
+      : (offer.site_in_stock_without_quantity === true
+          ? "???? ? ??????? ?? ?????, ?????????? ?? ???????"
+          : "? ??????? ?? ?????: " + qtyText(offer.available_quantity) + " ??.");
+    const price = offer.price_rub == null
+      ? "Цена уточняется"
+      : (offer.source === "usa" ? rub(offer.price_rub).replace(" ₽", "* ₽") : rub(offer.price_rub));
     const disabled = offer.can_add ? "" : " disabled";
     const cartKey = `${currentProduct?.manufacturer || ""}|${currentProduct?.oem || ""}|${offer.key}`;
     const existingQty = cart.find((x) => x.key === cartKey)?.qty || 0;
@@ -129,7 +133,9 @@ function renderProduct(card) {
   $("productOem").textContent = card.oem;
   const pricePanel = document.querySelector(".price-panel");
   pricePanel?.classList.toggle("hidden", Boolean(card.warehouse_only));
-  $("customerPrice").textContent = card.price.customer_rub == null\n    ? rub(null)\n    : rub(card.price.customer_rub).replace(" ₽", "* ₽");
+  $("customerPrice").textContent = card.price.customer_rub == null
+    ? rub(null)
+    : rub(card.price.customer_rub).replace(" ₽", "* ₽");
 
   const replacement = $("replacement");
   if (card.requested_oem && card.requested_oem !== card.oem) {
@@ -171,7 +177,9 @@ function renderProduct(card) {
     weight.textContent = "Вес неизвестен.";
   }
 
-  $("deliveryNotice").textContent = card.delivery_notice?.startsWith("* -")\n    ? card.delivery_notice\n    : "🚚 " + card.delivery_notice;
+  $("deliveryNotice").textContent = card.delivery_notice?.startsWith("* -")
+    ? card.delivery_notice
+    : "🚚 " + card.delivery_notice;
   product.classList.remove("hidden");
   product.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -184,19 +192,31 @@ function escapeHtml(value) {
 
 async function searchOem(oem) {
   product.classList.add("hidden");
-  showState("Ищем OEM в БАЗЕ…");
+  showState("\u0418\u0449\u0435\u043c OEM \u043d\u0430 \u0441\u0430\u0439\u0442\u0430\u0445 \u043f\u043e\u0441\u0442\u0430\u0432\u0449\u0438\u043a\u043e\u0432\u2026");
   try {
-    const response = await fetch(`/api/v1/oem/${encodeURIComponent(oem)}`);
-    if (!response.ok) {
-      throw new Error(response.status === 404
-        ? "Этот OEM пока не найден в проверенной БАЗЕ."
-        : "Не удалось выполнить поиск. Попробуй чуть позже.");
+    const path = "/api/v1/oem/" + encodeURIComponent(oem);
+    const [usaResult, siteResult] = await Promise.allSettled([
+      fetch(path + "?cache_only=true"), fetch(path + "?website_first=true")
+    ]);
+    const baseResponse = usaResult.status === "fulfilled" ? usaResult.value : null;
+    const siteResponse = siteResult.status === "fulfilled" ? siteResult.value : null;
+    const usa = baseResponse && baseResponse.ok ? await baseResponse.json() : null;
+    const rf = siteResponse && siteResponse.ok ? await siteResponse.json() : null;
+    if (!usa && !rf) throw new Error("OEM \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d \u043d\u0430 \u0441\u0430\u0439\u0442\u0430\u0445.");
+    let card = usa || rf;
+    if (rf && usa) {
+      card = {...usa, warehouse_only:false};
+      card.offers = [
+        ...(usa.offers || []).filter(x => x.source === "usa"),
+        ...(rf.offers || [])
+      ];
+      card.stock = {...usa.stock, warehouses:rf.stock.warehouses,
+                    refreshing:false, known:true};
     }
-    const card = await response.json();
     hideState();
     renderProduct(card);
   } catch (error) {
-    showState(error.message || "Ошибка поиска.", true);
+    showState(error.message || "\u041e\u0448\u0438\u0431\u043a\u0430 \u043f\u043e\u0438\u0441\u043a\u0430.", true);
   }
 }
 
@@ -224,15 +244,28 @@ $("offers").addEventListener("click", (event) => {
 
   const offer = (currentProduct.offers || []).find((x) => x.key === offerKey);
   if (!offer || !offer.can_add || offer.price_rub == null) return;
+  const rf39InternalBySlot = {
+    1: "Основной склад",
+    2: "склад ЯРС",
+    3: "склад КРС",
+  };
+  const rf39Slot = offer.rf39_preview_slot;
+  const rf39Internal = offer.supplier_internal_warehouse;
+  if (offer.source === "warehouse" &&
+      (!Number.isInteger(rf39Slot) ||
+       rf39InternalBySlot[rf39Slot] !== rf39Internal)) return;
 
   const key = `${currentProduct.manufacturer}|${currentProduct.oem}|${offer.key}`;
   const maxQty = offer.available_quantity == null
-    ? 99
+    ? (offer.source === "warehouse" ? 1 : 99)
     : Math.max(0, Math.floor(Number(offer.available_quantity)));
   if (maxQty < 1) return;
 
   const existing = cart.find((x) => x.key === key);
   if (existing) {
+    if (offer.source === "warehouse" &&
+        (existing.warehouse_id !== rf39Slot ||
+         existing.supplier_internal_warehouse !== rf39Internal)) return;
     existing.qty = Math.min(maxQty, existing.qty + currentQty);
   } else {
     cart.push({
@@ -242,7 +275,9 @@ $("offers").addEventListener("click", (event) => {
       requested_oem: currentProduct.requested_oem,
       name: currentProduct.name,
       offer_source: offer.source,
-      warehouse_id: offer.warehouse_id,
+      warehouse_id: offer.source === "warehouse" ? rf39Slot : null,
+      supplier_internal_warehouse: offer.source === "warehouse"
+        ? rf39Internal : null,
       source_label: offer.source === "usa" ? "склад США" : offer.label,
       unit_rub: offer.price_rub,
       available_quantity: offer.available_quantity,
@@ -269,9 +304,7 @@ function renderCart() {
   $("cartEmpty").classList.toggle("hidden", cart.length > 0);
   $("cartFooter").classList.toggle("hidden", cart.length === 0);
 
-  let total = 0;
   cart.forEach((item, index) => {
-    if (item.unit_rub) total += item.unit_rub * item.qty;
     const el = document.createElement("div");
     el.className = "cart-item";
     el.innerHTML = `
@@ -293,8 +326,10 @@ function renderCart() {
       </div>`;
     root.appendChild(el);
   });
-  $("cartTotal").textContent = total ? rub(total) : "уточняется";
-  $("cartButtonTotal").textContent = total ? rub(total) : "0 ₽";
+  const scopes = new Set(cart.map(x =>
+    x.offer_source === "warehouse" ? "rf:" + String(x.warehouse_id) : "usa"));
+  $("cartTotal").textContent = scopes.size + " ????????? ???????";
+  $("cartButtonTotal").textContent = scopes.size + " ???????";
 }
 
 function openCart() {
@@ -336,7 +371,7 @@ $("cartItems").addEventListener("click", (event) => {
     const item = cart[Number(plus)];
     if (item) {
       const maxQty = item.available_quantity == null
-        ? 99
+        ? (item.offer_source === "warehouse" ? 1 : 99)
         : Math.max(1, Math.floor(Number(item.available_quantity)));
       item.qty = Math.min(maxQty, item.qty + 1);
     }
@@ -346,6 +381,15 @@ $("cartItems").addEventListener("click", (event) => {
 
 $("telegramButton").addEventListener("click", async () => {
   if (!cart.length) return;
+  const rf39InternalBySlot = {
+    1: "Основной склад", 2: "склад ЯРС", 3: "склад КРС",
+  };
+  if (cart.some((item) => item.offer_source === "warehouse" &&
+        (!Number.isInteger(item.warehouse_id) ||
+         rf39InternalBySlot[item.warehouse_id] !== item.supplier_internal_warehouse))) {
+    alert("Склад РФ нужно выбрать повторно в существующей карточке товара.");
+    return;
+  }
   const button = $("telegramButton");
   const old = button.textContent;
   button.disabled = true;
@@ -360,7 +404,10 @@ $("telegramButton").addEventListener("click", async () => {
           oem: x.oem,
           requested_oem: x.requested_oem,
           offer_source: x.offer_source || "usa",
-          warehouse_id: x.warehouse_id ?? null,
+          warehouse_id: x.offer_source === "warehouse" ? x.warehouse_id : null,
+          supplier_internal_warehouse: x.offer_source === "warehouse"
+            ? x.supplier_internal_warehouse : null,
+          expected_price_rub: x.offer_source === "warehouse" ? x.unit_rub : null,
           qty: x.qty,
         })),
       }),

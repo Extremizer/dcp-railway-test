@@ -16,6 +16,7 @@ import urllib.request
 import hashlib
 import hmac
 import html
+import re
 import secrets
 import time
 from datetime import datetime, timezone
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Header, Request, Form
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -68,6 +69,13 @@ _STOCK_REFRESH_SLOTS = threading.BoundedSemaphore(2)
 _STOCK_REFRESH_INFLIGHT: set[str] = set()
 _STOCK_REFRESH_MAX_PENDING = 8
 _WEB_ONLY_RELEASE = os.getenv("EXTREMIZER_WEB_ONLY_RELEASE", "").strip() == "1"
+
+# T1 / isolated WEB1 RAM handoff. One WEB1 worker only; restart loses tokens.
+# Bounded, in-process, no SQLite, Orders, DCP, separate service or background task.
+_WEB_HANDOFF_RAM_LOCK = threading.Lock()
+_WEB_HANDOFF_RAM: dict[str, tuple[float, dict[str, Any]]] = {}
+_WEB_HANDOFF_RAM_MAX = 512
+_WEB_HANDOFF_RAM_TTL = 60 * 60
 
 # Context-scoped, fail-closed DB policy only for the two existing cache-only GETs.
 _WEB_CACHE_ONLY = ContextVar("extremizer_web1_cache_only", default=False)
@@ -586,6 +594,8 @@ class HandoffItem(BaseModel):
     requested_oem: str | None = None
     offer_source: str = "usa"
     warehouse_id: int | None = None
+    supplier_internal_warehouse: str | None = None
+    expected_price_rub: int | None = None
     qty: int = Field(default=1, ge=1, le=99)
 
 
@@ -1434,13 +1444,68 @@ def build_oem_card(
     }
 
 
+
+def _rf39_website_first_card(raw_oem: str, manufacturer: str | None) -> dict[str, Any]:
+    """RF39 sites only; explicit website_first route, no SQLite or cache_only side effects."""
+    from rf39_pilot.rf_supplier_data39 import preview_lookup, RF39Stop
+    from rf39_pilot.rf_offer_bot_handler22 import _SITE_CHOICES, _SITE_PREVIEW_KEYS
+    oem = str(raw_oem or "").strip().upper().replace(" ", "")
+    brand = str(manufacturer or "").strip()
+    if not re.fullmatch(r"[A-Z0-9._/-]{2,80}", oem) or len(brand) > 80:
+        raise HTTPException(status_code=400, detail={"code": "invalid_oem"})
+    offers, stocks = [], []
+    for key,(adapter,internal,_description) in _SITE_CHOICES.items():
+        slot=_SITE_PREVIEW_KEYS.get(adapter)
+        if type(slot) is not int or slot <= 0:
+            continue
+        try:
+            q=preview_lookup(adapter_type=adapter,manufacturer=brand,oem=oem,
+                             warehouse_id=slot,supplier_internal_warehouse=internal,
+                             verified_warehouse_map=_SITE_PREVIEW_KEYS)
+        except (RF39Stop,ValueError,OSError,TimeoutError,KeyError):
+            continue
+        qty=q.get("site_quantity_observed")
+        unknown=(qty is None and q.get("site_in_stock_without_quantity") is True)
+        if (q.get("can_add_to_cart_preview") is not True
+            or q.get("site_evidence_status") != "SITE_OFFER_OBSERVED"
+            or q.get("site_warehouse_row_matched") is not True
+            or type(q.get("price_rub_preliminary")) is not int
+            or q["price_rub_preliminary"] <= 0
+            or not (unknown or (type(qty) is int and qty>0))):
+            continue
+        label=f"\u0421\u043a\u043b\u0430\u0434 {slot}"
+        offer={"key":"warehouse:"+str(slot),"source":"warehouse","warehouse_id":slot,
+               "rf39_preview_slot":slot,"supplier_internal_warehouse":internal,
+               "label":label,"price_rub":q["price_rub_preliminary"],
+               "available_quantity":qty,"site_in_stock_without_quantity":unknown,
+               "price_status":"PARSED_UNVERIFIED","can_add":True,"checkout_allowed":False}
+        offers.append(offer)
+        if qty is not None:
+            stocks.append({"warehouse_id":slot,"warehouse":label,"quantity":qty,
+                           "price_rub":offer["price_rub"]})
+    if not offers:
+        raise HTTPException(status_code=404, detail={"code":"site_offer_unavailable"})
+    return {"manufacturer":brand,"oem":oem,"requested_oem":oem,
+            "name":(brand+" " if brand else "")+"OEM "+oem,
+            "catalog":None,"previous_oems":[],
+            "price":{"available":False,"customer_rub":None,"msrp_rub":None,"benefit_pct":None},
+            "offers":offers,"stock":{"known":True,"warehouses":stocks,"refreshing":False},
+            "weight":None,"delivery_notice":"\u0414\u043e\u0441\u0442\u0430\u0432\u043a\u0430 \u0441\u043e \u0441\u043a\u043b\u0430\u0434\u0430 \u0420\u0424.",
+            "warehouse_only":True,"price_status":"PRELIMINARY_WEBSITE"}
+
+
 @app.get("/api/v1/oem/{oem}")
 def get_oem(
     oem: str,
     background_tasks: BackgroundTasks,
     manufacturer: str | None = None,
     cache_only: bool = False,
+    website_first: bool = False,
 ) -> dict[str, Any]:
+    if website_first:
+        if cache_only:
+            raise HTTPException(status_code=400, detail={"code":"incompatible_modes"})
+        return _rf39_website_first_card(oem, manufacturer)
     if cache_only:
         token = _WEB_CACHE_ONLY.set(True)
         try:
@@ -1498,63 +1563,224 @@ def get_oem_stock(
     return stock
 
 
+def _web_ram_prune(now: float) -> None:
+    """Called only with _WEB_HANDOFF_RAM_LOCK held."""
+    for token, (expires_at, _) in list(_WEB_HANDOFF_RAM.items()):
+        if expires_at <= now:
+            del _WEB_HANDOFF_RAM[token]
+
+
+def _web_handoff_price_rub(value: Any) -> int:
+    if type(value) not in (int, float):
+        raise HTTPException(status_code=409, detail={"code": "price_unverified"})
+    # No rounding or conversion from an uncertain/non-integer price.
+    try:
+        number = float(value)
+        if not (0 < number < 1_000_000_000 and number.is_integer()):
+            raise ValueError("price not positive integral RUB")
+    except (ValueError, OverflowError):
+        raise HTTPException(status_code=409, detail={"code": "price_unverified"}) from None
+    return int(number)
+
+
+def _web_public_rf_warehouse(selected_offer: dict[str, Any]) -> tuple[int, str]:
+    """Map verified DB warehouse identity to an approved *public* RF slot."""
+    internal_id = selected_offer.get("warehouse_id")
+    if type(internal_id) is not int or internal_id <= 0:
+        raise HTTPException(status_code=409, detail={"code": "warehouse_identity_unverified"})
+    warehouse = warehouse_store.get_warehouse(internal_id, core.ORDERS_DB_FILE)
+    if (not isinstance(warehouse, dict)
+        or warehouse.get("id") != internal_id
+        or warehouse.get("active") != 1
+        or warehouse.get("deleted_at") is not None
+        or str(warehouse.get("public_name") or "") != str(selected_offer.get("label") or "")):
+        raise HTTPException(status_code=409, detail={"code": "warehouse_identity_unverified"})
+    approved = {
+        "orangeatv": (1, "Основной склад", "МСК"),
+        "motoservice76": (2, "склад ЯРС", "ЯРС"),
+        "vladextremelife": (3, "склад КРС", "КРС"),
+    }
+    adapter = str(warehouse.get("adapter_type") or "").strip().lower()
+    mapping = approved.get(adapter)
+    if mapping is not None and str(warehouse.get("code") or "") == mapping[2]:
+        # Preserve the existing OWNER-approved public slot for RF39 suppliers.
+        return mapping[0], mapping[1]
+    # For new verified warehouses, the public slot is the stable database ID.
+    # Fail closed on mismatched labels, inactive records and unknown identities.
+    internal_name = str(warehouse.get("internal_name") or "").strip()
+    if (internal_id <= 3
+        or str(warehouse.get("public_name") or "") != f"\u0421\u043a\u043b\u0430\u0434 {internal_id}"
+        or not internal_name or len(internal_name) > 128
+        or not str(warehouse.get("code") or "").strip()):
+        raise HTTPException(status_code=409, detail={"code": "warehouse_identity_unverified"})
+    return internal_id, internal_name
+
+
 @app.post("/api/v1/handoff")
 def create_telegram_handoff(payload: HandoffRequest) -> dict[str, Any]:
-    verified_items = []
-    for item in payload.items:
-        card = build_oem_card(item.oem, item.manufacturer)
-        source = str(item.offer_source or "usa").strip().lower()
-        if source not in {"usa", "warehouse"}:
-            raise HTTPException(status_code=400, detail={"code": "invalid_offer_source"})
-
-        selected_offer = None
-        if source == "usa":
-            selected_offer = next(
-                (x for x in card.get("offers", []) if x.get("source") == "usa"),
-                None,
-            )
-        else:
-            if item.warehouse_id is None:
+    """Cache-only verified offers -> bounded in-process V2 token. NO Orders WRITE."""
+    if not 1 <= len(payload.items) <= 20:
+        raise HTTPException(status_code=400, detail={"code": "invalid_cart_size"})
+    verified_items: list[dict[str, Any]] = []
+    context_token = _WEB_CACHE_ONLY.set(True)
+    try:
+        for item in payload.items:
+            if (not isinstance(item.manufacturer, str)
+                or not 1 <= len(item.manufacturer.strip()) <= 80
+                or not isinstance(item.oem, str)
+                or not 1 <= len(item.oem.strip()) <= 80
+                or type(item.qty) is not int or not 1 <= item.qty <= 99):
+                raise HTTPException(status_code=400, detail={"code": "invalid_cart_item"})
+            source = str(item.offer_source or "").strip().lower()
+            if source == "warehouse" and item.warehouse_id in (1, 2, 3):
+                from rf39_pilot.rf_supplier_data39 import preview_lookup, RF39Stop
+                from rf39_pilot.rf_offer_bot_handler22 import _SITE_CHOICES, _SITE_PREVIEW_KEYS
+                slot=item.warehouse_id
+                matches=[(adapter,internal) for adapter,internal,_ in _SITE_CHOICES.values()
+                         if _SITE_PREVIEW_KEYS.get(adapter)==slot
+                         and item.supplier_internal_warehouse==internal]
+                if len(matches)!=1:
+                    raise HTTPException(status_code=409,detail={"code":"rf_site_identity_mismatch"})
+                adapter,internal=matches[0]
+                oem=item.oem.strip().upper().replace(" ","")
+                brand=item.manufacturer.strip()
+                if not re.fullmatch(r"[A-Z0-9._/-]{2,80}",oem) or len(brand)>80:
+                    raise HTTPException(status_code=400,detail={"code":"invalid_oem"})
+                try:
+                    quote=preview_lookup(adapter_type=adapter,manufacturer=brand,oem=oem,
+                                         warehouse_id=slot,supplier_internal_warehouse=internal,
+                                         verified_warehouse_map=_SITE_PREVIEW_KEYS)
+                except (RF39Stop,OSError,ValueError,TimeoutError,KeyError):
+                    raise HTTPException(status_code=409,detail={"code":"site_recheck_failed"}) from None
+                price=quote.get("price_rub_preliminary")
+                qty=quote.get("site_quantity_observed")
+                unknown=qty is None and quote.get("site_in_stock_without_quantity") is True
+                if (quote.get("can_add_to_cart_preview") is not True
+                    or quote.get("site_evidence_status")!="SITE_OFFER_OBSERVED"
+                    or quote.get("site_warehouse_row_matched") is not True
+                    or quote.get("warehouse_id")!=slot
+                    or quote.get("supplier_internal_warehouse")!=internal
+                    or type(price) is not int or price<=0
+                    or type(item.expected_price_rub) is not int
+                    or item.expected_price_rub != price
+                    or (unknown and item.qty!=1)
+                    or (not unknown and (type(qty) is not int or qty<item.qty))):
+                    raise HTTPException(status_code=409,detail={"code":"site_offer_changed"})
+                verified_items.append({
+                    "manufacturer":brand,"oem":oem,
+                    "requested_oem":item.requested_oem or oem,
+                    "offer_source":"warehouse","warehouse_id":slot,
+                    "supplier_internal_warehouse":internal,
+                    "warehouse_public_name":f"\u0421\u043a\u043b\u0430\u0434 {slot}",
+                    "price_snapshot_rub":price,"available_snapshot":qty,"qty":item.qty,
+                    "price_status":"PARSED_UNVERIFIED","checkout_allowed":False})
+                continue
+            card = build_oem_card(item.oem, item.manufacturer)
+            manufacturer = str(card.get("manufacturer") or "").strip()
+            current_oem = str(card.get("oem") or "").strip()
+            requested_oem = str(item.requested_oem or card.get("requested_oem") or item.oem).strip()
+            if (not manufacturer or not current_oem or not requested_oem
+                or max(len(manufacturer), len(current_oem), len(requested_oem)) > 80):
+                raise HTTPException(status_code=409, detail={"code": "oem_not_verified"})
+            source = str(item.offer_source or "").strip().lower()
+            if source not in {"usa", "warehouse"}:
+                raise HTTPException(status_code=400, detail={"code": "invalid_offer_source"})
+            if source == "usa" and item.warehouse_id is not None:
+                raise HTTPException(status_code=400, detail={"code": "usa_warehouse_mismatch"})
+            if source == "warehouse" and (type(item.warehouse_id) is not int or item.warehouse_id <= 0):
                 raise HTTPException(status_code=400, detail={"code": "warehouse_required"})
-            selected_offer = next(
-                (
-                    x for x in card.get("offers", [])
-                    if x.get("source") == "warehouse"
-                    and int(x.get("warehouse_id") or 0) == int(item.warehouse_id)
-                ),
-                None,
-            )
+            matching = [
+                offer for offer in card.get("offers", [])
+                if isinstance(offer, dict)
+                and offer.get("source") == source
+                and offer.get("warehouse_id") == (None if source == "usa" else item.warehouse_id)
+            ]
+            if len(matching) != 1 or matching[0].get("can_add") is not True:
+                raise HTTPException(status_code=409, detail={"code": "offer_unavailable"})
+            offer = matching[0]
+            price = _web_handoff_price_rub(offer.get("price_rub"))
+            available = offer.get("available_quantity")
+            if source == "warehouse":
+                if (type(available) not in (int, float)
+                    or not (0 < float(available) < 1_000_000_000)
+                    or float(available) < item.qty):
+                    raise HTTPException(status_code=409, detail={"code": "stock_unverified"})
+                public_slot, supplier_internal = _web_public_rf_warehouse(offer)
+                public_name = f"Склад {public_slot}"
+            else:
+                if available is not None and (
+                    type(available) not in (int, float)
+                    or not (item.qty <= float(available) < 1_000_000_000)
+                ):
+                    raise HTTPException(status_code=409, detail={"code": "stock_unverified"})
+                public_slot, supplier_internal, public_name = None, None, None
+            verified_items.append({
+                "manufacturer": manufacturer, "oem": current_oem,
+                "requested_oem": requested_oem, "offer_source": source,
+                "warehouse_id": public_slot,
+                **({"supplier_internal_warehouse": supplier_internal} if source == "warehouse" else {}),
+                "warehouse_public_name": public_name,
+                "price_snapshot_rub": price, "available_snapshot": available,
+                "qty": item.qty,
+            })
+    except (sqlite3.Error, OSError):
+        raise HTTPException(status_code=503, detail={"code": "cache_unavailable"}) from None
+    finally:
+        _WEB_CACHE_ONLY.reset(context_token)
 
-        if not selected_offer or not selected_offer.get("can_add"):
-            raise HTTPException(status_code=409, detail={"code": "offer_unavailable"})
-        available = selected_offer.get("available_quantity")
-        if available is not None and float(available) < int(item.qty):
-            raise HTTPException(status_code=409, detail={"code": "insufficient_stock"})
-
-        verified_items.append({
-            "manufacturer": card["manufacturer"],
-            "oem": card["oem"],
-            "requested_oem": item.requested_oem or card["requested_oem"],
-            "offer_source": source,
-            "warehouse_id": selected_offer.get("warehouse_id"),
-            "warehouse_public_name": (
-                selected_offer.get("label") if source == "warehouse" else None
-            ),
-            "price_snapshot_rub": selected_offer.get("price_rub"),
-            "available_snapshot": available,
-            "qty": item.qty,
-        })
-
-    token = web_handoff.create_handoff(
-        verified_items,
-        db_file=core.ORDERS_DB_FILE,
-    )
+    result = {"version": 2, "items": verified_items}
+    if len(json.dumps(result, ensure_ascii=False)) > 65536:
+        raise HTTPException(status_code=413, detail={"code": "handoff_payload_too_large"})
+    with _WEB_HANDOFF_RAM_LOCK:
+        now = time.monotonic()
+        _web_ram_prune(now)
+        if len(_WEB_HANDOFF_RAM) >= _WEB_HANDOFF_RAM_MAX:
+            raise HTTPException(status_code=503, detail={"code": "handoff_capacity_full"})
+        token = secrets.token_urlsafe(24)
+        while token in _WEB_HANDOFF_RAM:
+            token = secrets.token_urlsafe(24)
+        _WEB_HANDOFF_RAM[token] = (now + _WEB_HANDOFF_RAM_TTL, result)
     return {
         "ok": True,
         "telegram_url": f"https://t.me/{BOT_USERNAME}?start=web_{token}",
-        "expires_in_minutes": web_handoff.DEFAULT_TTL_MINUTES,
+        "expires_in_minutes": 60,
     }
 
+
+class RemoteHandoffConsumeRequest(BaseModel):
+    token: str = Field(min_length=16, max_length=128, pattern=r"^[A-Za-z0-9_-]+$")
+    telegram_user_id: int = Field(gt=0)
+
+
+def _require_web_handoff_bridge_key(request: Request) -> None:
+    key = os.getenv("EXTREMIZER_WEB_HANDOFF_BRIDGE_KEY", "").strip()
+    if len(key) < 32:
+        raise HTTPException(status_code=503, detail={"code": "bridge_disabled"})
+    if not hmac.compare_digest(request.headers.get("authorization", ""), "Bearer " + key):
+        raise HTTPException(status_code=401, detail={"code": "unauthorized"})
+
+
+@app.post("/api/v1/handoff/remote/consume", include_in_schema=False)
+def consume_remote_web_handoff(payload: RemoteHandoffConsumeRequest, request: Request):
+    _require_web_handoff_bridge_key(request)
+    with _WEB_HANDOFF_RAM_LOCK:
+        now = time.monotonic()
+        _web_ram_prune(now)
+        entry = _WEB_HANDOFF_RAM.pop(payload.token, None)
+        if entry is None or entry[0] <= now:
+            raise HTTPException(status_code=410, detail={"code": "handoff_unavailable"})
+        result = entry[1]
+    # Atomic single claim: after pop, no other user can consume this token.
+    return JSONResponse(
+        {"ok": True, "payload": result},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.post("/api/v1/handoff/remote/link", include_in_schema=False)
+def link_remote_web_handoff_hold():
+    # Checkout/Orders HOLD. No SQLite writes and no external side effects.
+    raise HTTPException(status_code=423, detail={"code": "checkout_orders_hold"})
 
 
 @app.post("/vk-auth/exchange")
