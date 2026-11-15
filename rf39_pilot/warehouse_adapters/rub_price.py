@@ -55,6 +55,54 @@ def parse_rub_price(page_html: str) -> RubPriceParse:
         price = _amount(clean)
         if price is not None:
             candidates.append(price)
+    # RF2 / Motoservice76: price and RUB currency appear as two adjacent
+    # spans inside one explicitly current <p class="price"> block.
+    # Do not mix attributes from other blocks, old prices, or unrelated prices.
+    for container in re.finditer(r"<p\b([^>]*)>(.*?)</p\s*>", page_html, re.I | re.S):
+        attrs, body = container.groups()
+        class_match = re.search(r"\bclass\s*=\s*(['\"])(.*?)\1", attrs, re.I | re.S)
+        if not class_match or "price" not in class_match.group(2).lower().split():
+            continue
+        if re.search(
+            r"\b(?:old|previous|cross|strike|compare|original|discount-old)\b",
+            attrs, re.I,
+        ) or re.search(r"<(?:del|s|strike)\b", body, re.I):
+            continue
+        if not re.search(
+            r"<strong>\s*\u0426\u0435\u043d\u0430\s*:\s*</strong>",
+            body, re.I,
+        ):
+            continue
+        values, rub_currency_spans = [], 0
+        for span in re.finditer(
+            r"<span\b([^>]*)>([^<]{1,120})</span\s*>", body, re.I | re.S
+        ):
+            span_attrs, span_text = span.groups()
+            prop = re.search(
+                r"\bitemprop\s*=\s*(['\"])(price|priceCurrency)\1",
+                span_attrs, re.I,
+            )
+            if not prop:
+                continue
+            if prop.group(2).lower() == "price":
+                amount = _amount(span_text.strip())
+                if amount is not None:
+                    values.append(amount)
+                continue
+            currency = re.search(
+                r"\bcontent\s*=\s*(['\"])(RUB)\1", span_attrs, re.I
+            )
+            visible = html.unescape(span_text).strip()
+            if currency and re.fullmatch(
+                r"(?:\u0440\.?|\u0440\u0443\u0431\.?|RUB|\u20bd)",
+                visible, re.I,
+            ):
+                rub_currency_spans += 1
+        if len(values) == 1 and rub_currency_spans == 1:
+            candidates.append(values[0])
+        elif values or rub_currency_spans:
+            # Ambiguous or incomplete block must not be borrowed from.
+            return RubPriceParse(None, "UNKNOWN")
     if len(candidates) != 1:
         return RubPriceParse(None, "UNKNOWN")
     return RubPriceParse(candidates[0], "PARSED_UNVERIFIED", "explicit_rub_price_element")
