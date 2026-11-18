@@ -51,9 +51,19 @@ def _server(request:Request):
         _deny("BOT_BRIDGE_AUTH_REQUIRED",401)
 
 
-def _session(request:Request,*,write=False):
-    if request.url.scheme!="https":
+def _https_edge(request:Request):
+    # Railway terminates TLS at its edge. The app may see HTTP internally.
+    # Accept only this one public hostname and an explicit HTTPS edge protocol.
+    host=request.headers.get("host","").split(":")[0].lower()
+    if host!="dcp-railway-test-production.up.railway.app":
+        _deny("PILOT_HOST_NOT_ALLOWED")
+    forwarded=request.headers.get("x-forwarded-proto","").split(",")[0].strip().lower()
+    if request.url.scheme!="https" and forwarded!="https":
         _deny("HTTPS_REQUIRED")
+
+
+def _session(request:Request,*,write=False):
+    _https_edge(request)
     cookie=request.cookies.get(COOKIE,"")
     if not cookie or len(cookie)<32:
         _deny("LINKED_SESSION_REQUIRED",401)
@@ -64,7 +74,7 @@ def _session(request:Request,*,write=False):
         _deny("SESSION_EXPIRED",401)
     if write:
         origin=request.headers.get("origin","")
-        if origin != str(request.base_url).rstrip("/"):
+        if origin != "https://dcp-railway-test-production.up.railway.app":
             _deny("SAME_ORIGIN_REQUIRED")
         token=request.headers.get("x-ext-t1-csrf","")
         if not hmac.compare_digest(token,record["csrf"]):
@@ -204,8 +214,7 @@ def attach(app:FastAPI)->None:
 
     @router.get("/web2/t1-cart-link")
     def link(ticket:str,request:Request):
-        if request.url.scheme!="https":
-            _deny("HTTPS_LINK_ONLY")
+        _https_edge(request)
         parts=ticket.split(".")
         if len(parts)!=4:
             _deny("MALFORMED_LINK")
